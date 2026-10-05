@@ -32,8 +32,14 @@ def apply_cmd(patch: str) -> str:
     return "git apply --whitespace=nowarn - <<'GOLD_PATCH_EOF'\n" + patch + "\nGOLD_PATCH_EOF\ngit diff --stat"
 
 
-def build_script(patch: str) -> dict:
+def build_script(patch: str, variant: str = 'b') -> dict:
     cmd = apply_cmd(patch)
+    if variant == 'c':
+        import smoke_test_c as sc
+        script = dict(sc.SCRIPT)
+        script['FIX stage'] = [[('call', 'run_command', {'command': cmd}), ('text', 'EDITED: gold patch')],
+                               [('text', 'NOOP')], [('text', 'NOOP')]]
+        return script
     script = dict(st.SCRIPT)
     # pipeline B: the fixer applies the gold patch, the checker passes it, the finalizer submits
     script['FIX stage'] = [[('call', 'run_command', {'command': cmd}), ('text', 'EDITED: gold patch')],
@@ -50,7 +56,7 @@ def build_script(patch: str) -> dict:
 async def main(sub: Path, data: Path, instance_id: str | None) -> None:
     tasks = load_tasks(data / 'tasks.jsonl')
     task = next(t for t in tasks if instance_id in (None, t.instance_id))
-    script = build_script(task.patch)
+    script = build_script(task.patch, 'c' if 'c_pipeline' in sub.name else 'b')
     st.SCRIPT.clear()
     st.SCRIPT.update(script)
 

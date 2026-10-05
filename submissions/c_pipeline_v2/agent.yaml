@@ -1,0 +1,9 @@
+agent_class: SequentialAgent
+name: swe_pipeline_v2
+description: Locator committee, merge, repro gate, fix/check loop, finalizer.
+sub_agents:
+  - config_path: sub_agents/loc_committee.yaml
+  - config_path: sub_agents/merge.yaml
+  - config_path: sub_agents/repro.yaml
+  - config_path: sub_agents/fix_loop.yaml
+  - config_path: sub_agents/finalizer.yaml
