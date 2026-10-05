@@ -1,0 +1,7 @@
+name: triage
+description: triage stage of the bug-fixing pipeline.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/triage.md
+output_key: locus
+tools: [read_file, run_command, search_similar_code, get_code_neighbors, get_code_subgraph]
+generate_content_config: !include ../configs/sampling_fast.yaml
