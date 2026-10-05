@@ -1,0 +1,8 @@
+name: merge
+description: Votes between the locators and confirms the edit site.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/merge.md
+include_contents: none
+output_key: locus
+tools: [read_file, run_command]
+generate_content_config: !include ../configs/sampling_fast.yaml

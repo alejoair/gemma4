@@ -1,0 +1,7 @@
+agent_class: SequentialAgent
+name: swe_pipeline
+description: Triage, then a fix/check loop, then a finalizer that submits the patch.
+sub_agents:
+  - config_path: sub_agents/triage.yaml
+  - config_path: sub_agents/fix_loop.yaml
+  - config_path: sub_agents/finalizer.yaml

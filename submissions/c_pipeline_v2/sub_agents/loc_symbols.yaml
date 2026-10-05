@@ -1,0 +1,7 @@
+name: loc_symbols
+description: Read-only locator (loc_symbols strategy).
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/loc_symbols.md
+output_key: loc_a
+tools: [read_file, run_command, search_similar_code, get_code_neighbors, get_code_subgraph]
+generate_content_config: !include ../configs/sampling_fast.yaml
