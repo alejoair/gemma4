@@ -1,16 +1,12 @@
-"""Offline smoke test for a pipeline submission, no GPU and no real model.
+"""Offline smoke test for the submission (locator committee, merge, repro gate, fix loop, finalizer).
 
-Compiles the submission with the competition's compiler, swaps the model for a
-scripted fake LLM and stub tools, runs it through ADK's Runner and checks how
-information moves between stages:
+Scripted LLM, stub tools, real compiler and ADK Runner. Checks:
+  * the three parallel locators all run and each writes its own output_key
+  * merge sees all three reports; repro sees the merged locus
+  * fixer and checker see the repro; the checker gate reads it
+  * submit_patch is called once, by the last stage
 
-  * output_key text lands in session.state and is injected as {variable}
-  * the optional {verdict?} is empty on the first loop round
-  * include_contents: none hides earlier tool traffic
-  * submit_patch is called exactly once, by the last stage
-  * every stage sees {problem_description}
-
-Usage: python bench/smoke_test.py submissions/b_pipeline
+Usage: python bench/smoke_test.py submission
 """
 
 from __future__ import annotations
@@ -19,25 +15,27 @@ import asyncio
 import sys
 from pathlib import Path
 
-from adk_submission import ModelRegistry, ToolRegistry, compile_submission
-from google.adk.models import BaseLlm, LlmRequest, LlmResponse
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-from swegemma.config import build_submission_limits
+sys.path.insert(0, str(Path(__file__).parent))
+import scripted_llm as st  # noqa: E402
+from adk_submission import ModelRegistry, ToolRegistry, compile_submission  # noqa: E402
+from google.adk.runners import Runner  # noqa: E402
+from google.adk.sessions import InMemorySessionService  # noqa: E402
+from google.genai import types  # noqa: E402
+from swegemma.config import build_submission_limits  # noqa: E402
 
-MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
-PROBLEM = 'PROBLEM-MARKER: Foo.bar() raises KeyError instead of ValueError'
+LOC_A = '1. pkg/foo.py :: Foo.bar - named in the statement'
+LOC_B = '1. pkg/foo.py :: Foo.bar - error text matches\n2. pkg/util.py :: helper - same string'
+LOC_C = '1. pkg/foo.py :: Foo.bar - test calls it\nTEST: pytest tests/test_foo.py -q'
+LOCUS = ('FILE: pkg/foo.py\nSYMBOL: Foo.bar\nLINES: 10-20\nCAUSE: wrong exception\nCHANGE: raise ValueError\n'
+         'ALT: pkg/util.py :: helper\nTEST: pytest tests/test_foo.py -q')
+REPRO = 'STATUS: FAILS_BEFORE\nCMD: cd /workspace && python /tmp/repro.py\nEXPECTED: ValueError is raised'
 
-TRIAGE_REPORT = (
-    'FILE: pkg/foo.py\nSYMBOL: Foo.bar\nLINES: 10-20\nCAUSE: wrong exception\n'
-    'CHANGE: raise ValueError\nTEST: pytest tests/test_foo.py -q'
-)
-
-# stage marker in the system instruction -> list of scripted turns.
-# A turn is a list of steps: ('call', tool, args) or ('text', str).
 SCRIPT = {
-    'TRIAGE stage': [[('call', 'read_file', {'filepath': 'pkg/foo.py'}), ('text', TRIAGE_REPORT)]],
+    'LOCATOR-SYMBOLS': [[('call', 'search_similar_code', {'query': 'Foo'}), ('text', LOC_A)]],
+    'LOCATOR-TEXT': [[('call', 'run_command', {'command': 'grep -rn KeyError pkg | head'}), ('text', LOC_B)]],
+    'LOCATOR-TESTS': [[('call', 'run_command', {'command': 'grep -rln bar tests | head'}), ('text', LOC_C)]],
+    'MERGE stage': [[('call', 'read_file', {'filepath': 'pkg/foo.py'}), ('text', LOCUS)]],
+    'REPRO stage': [[('call', 'run_command', {'command': "cat > /tmp/repro.py <<'EOF'\nprint('repro')\nEOF"}), ('text', REPRO)]],
     'FIX stage': [
         [('call', 'edit_file', {'filepath': 'pkg/foo.py', 'old_string': 'a', 'new_string': 'b'}),
          ('text', 'EDITED: pkg/foo.py - ValueError')],
@@ -45,93 +43,34 @@ SCRIPT = {
         [('text', 'NOOP')],
     ],
     'CHECK stage': [
-        [('call', 'run_command', {'command': 'pytest'}),
-         ('text', 'VERDICT: FAIL\nEVIDENCE: still KeyError\nNEXT: also fix bar2')],
-        [('call', 'run_command', {'command': 'pytest'}),
-         ('text', 'VERDICT: PASS\nEVIDENCE: ok\nNEXT: none')],
+        [('call', 'run_command', {'command': 'python /tmp/repro.py'}),
+         ('text', 'VERDICT: PASS\nEVIDENCE: repro ok\nNEXT: none')],
+        [('text', 'VERDICT: PASS (unchanged)')],
         [('text', 'VERDICT: PASS (unchanged)')],
     ],
-    'FINAL stage': [[('call', 'run_command', {'command': 'git status'}),
-                     ('call', 'submit_patch', {}), ('text', 'Done: raise ValueError')]],
+    'FINAL stage': [[('call', 'submit_patch', {}), ('text', 'Done')]],
 }
-
-calls: list[tuple[str, str]] = []  # (stage, tool)
-requests: list[tuple[str, str, str]] = []  # (stage, system_instruction, contents_text)
-progress: dict[str, list[int]] = {}  # stage -> [turn_idx, step_idx]
-
-
-def _system_text(req: LlmRequest) -> str:
-    si = req.config.system_instruction if req.config else ''
-    if isinstance(si, str):
-        return si
-    parts = getattr(si, 'parts', None) or []
-    return '\n'.join(p.text or '' for p in parts)
-
-
-def _contents_text(req: LlmRequest) -> str:
-    out = []
-    for c in req.contents or []:
-        for p in c.parts or []:
-            if p.text:
-                out.append(p.text)
-            if p.function_call:
-                out.append(f'<call {p.function_call.name}>')
-            if p.function_response:
-                out.append(f'<resp {p.function_response.name}>')
-    return '\n'.join(out)
-
-
-class ScriptedLlm(BaseLlm):
-    model: str = 'scripted'
-
-    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False):
-        system = _system_text(llm_request)
-        stage = next((k for k in SCRIPT if k in system), None)
-        assert stage, f'unknown stage, instruction starts: {system[:80]!r}'
-        requests.append((stage, system, _contents_text(llm_request)))
-        turns = SCRIPT[stage]
-        turn_idx, step_idx = progress.setdefault(stage, [0, 0])
-        turn = turns[min(turn_idx, len(turns) - 1)]
-        kind, *rest = turn[step_idx]
-        if kind == 'call':
-            tool, args = rest
-            progress[stage][1] += 1
-            calls.append((stage, tool))
-            part = types.Part(function_call=types.FunctionCall(name=tool, args=args))
-        else:
-            progress[stage] = [turn_idx + 1, 0]
-            part = types.Part(text=rest[0])
-        yield LlmResponse(content=types.Content(role='model', parts=[part]))
-
-
-def _stub(name: str):
-    def tool(*args, **kwargs) -> str:
-        return '{"status": "ok"}'
-
-    tool.__name__ = name
-    return tool
 
 
 async def run(path: Path) -> None:
+    st.SCRIPT.clear()
+    st.SCRIPT.update(SCRIPT)
     limits, constraints = build_submission_limits()
     models = ModelRegistry()
-    models.register(MODEL, ScriptedLlm())
+    models.register(st.MODEL, st.ScriptedLlm())
     tools = ToolRegistry()
-    for n in ['run_command', 'submit_patch', 'get_status', 'read_file', 'edit_file',
-              'write_file', 'get_code_neighbors', 'search_similar_code', 'get_code_subgraph']:
-        tools.register(n, _stub(n))
+    for n in ['run_command', 'submit_patch', 'get_status', 'read_file', 'edit_file', 'write_file',
+              'get_code_neighbors', 'search_similar_code', 'get_code_subgraph']:
+        tools.register(n, st._stub(n))
     agent = compile_submission(path, tools, models, limits=limits, generation_constraints=constraints)
 
     svc = InMemorySessionService()
-    session = await svc.create_session(
-        app_name='smoke', user_id='u', state={'problem_description': PROBLEM}
-    )
+    session = await svc.create_session(app_name='smoke', user_id='u', state={'problem_description': st.PROBLEM})
     runner = Runner(agent=agent, app_name='smoke', session_service=svc)
-    msg = types.Content(role='user', parts=[types.Part(text=f'Fix this: {PROBLEM}')])
+    msg = types.Content(role='user', parts=[types.Part(text=f'Fix this: {st.PROBLEM}')])
     async for _ in runner.run_async(user_id='u', session_id=session.id, new_message=msg):
         pass
-    final = await svc.get_session(app_name='smoke', user_id='u', session_id=session.id)
-    state = final.state
+    state = (await svc.get_session(app_name='smoke', user_id='u', session_id=session.id)).state
 
     failures: list[str] = []
 
@@ -140,36 +79,31 @@ async def run(path: Path) -> None:
         if not cond:
             failures.append(label)
 
-    check(state.get('locus') == TRIAGE_REPORT, 'triage final text saved in state["locus"]')
-    check(str(state.get('verdict', '')).startswith('VERDICT: PASS'), 'last checker text saved in state["verdict"]')
+    by_stage: dict[str, list[str]] = {}
+    for stage, system, _ in st.requests:
+        by_stage.setdefault(stage, []).append(system)
 
-    by_stage: dict[str, list[tuple[str, str]]] = {}
-    for stage, system, contents in requests:
-        by_stage.setdefault(stage, []).append((system, contents))
-
-    check(all(PROBLEM in s for s, _ in sum(by_stage.values(), [])),
-          '{problem_description} injected into every stage prompt')
-    fixer = by_stage['FIX stage']
-    check('FILE: pkg/foo.py' in fixer[0][0], '{locus} injected into the fixer prompt')
-    check('VERDICT' not in fixer[0][0].split('Latest check result')[1][:60],
-          '{verdict?} empty on the first fixer round')
-    check(any('VERDICT: FAIL' in s for s, _ in fixer[1:]), 'fixer round 2 sees the failed verdict')
-    check(all('<call read_file>' not in c for _, c in by_stage['FIX stage']),
-          'include_contents none: triage tool calls are hidden from the fixer')
-    check(all('<call' not in c for _, c in by_stage['FINAL stage'][:1]),
-          'include_contents none: finalizer starts without earlier tool calls')
-
-    submit_stages = [s for s, t in calls if t == 'submit_patch']
-    check(submit_stages == ['FINAL stage'], f'submit_patch called once, by the last stage ({submit_stages})')
-    order = [s for s, _ in calls]
-    check(order[-1] == 'FINAL stage', 'last tool call belongs to the finalizer')
-    rounds = len(fixer)
-    print(f'       loop rounds executed: {rounds}; tool calls: {len(calls)}')
-
+    check(state.get('loc_a') == LOC_A and state.get('loc_b') == LOC_B and state.get('loc_c') == LOC_C,
+          'each parallel locator wrote its own output_key (loc_a, loc_b, loc_c)')
+    check(all(k in by_stage for k in ('LOCATOR-SYMBOLS', 'LOCATOR-TEXT', 'LOCATOR-TESTS')),
+          'all three locators ran')
+    merge = by_stage['MERGE stage'][0]
+    check(LOC_A in merge and LOC_B in merge and LOC_C in merge, 'merge prompt contains all three locator reports')
+    check(state.get('locus') == LOCUS, 'merge final text saved in state["locus"]')
+    check('Foo.bar' in by_stage['REPRO stage'][0], 'repro prompt contains the merged locus')
+    check(state.get('repro') == REPRO, 'repro final text saved in state["repro"]')
+    check('FAILS_BEFORE' in by_stage['FIX stage'][0], 'fixer prompt contains the repro')
+    check('FAILS_BEFORE' in by_stage['CHECK stage'][0], 'checker prompt contains the repro')
+    check(str(state.get('verdict', '')).startswith('VERDICT: PASS'), 'verdict saved')
+    submits = [s for s, t in st.calls if t == 'submit_patch']
+    check(submits == ['FINAL stage'], f'submit_patch called once, by the last stage ({submits})')
+    check(st.calls[-1][0] == 'FINAL stage', 'last tool call belongs to the finalizer')
+    first_three = {s for s, _ in st.calls[:3]}
+    print(f'       first three tool calls came from: {sorted(first_three)}')
     if failures:
         sys.exit(f'{len(failures)} check(s) failed')
     print('SMOKE OK')
 
 
 if __name__ == '__main__':
-    asyncio.run(run(Path(sys.argv[1] if len(sys.argv) > 1 else 'submissions/b_pipeline').resolve()))
+    asyncio.run(run(Path(sys.argv[1] if len(sys.argv) > 1 else 'submission').resolve()))

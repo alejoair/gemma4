@@ -7,7 +7,7 @@ without a GPU or a real model. It does NOT measure agent quality.
 Data dir must hold: snapshots/<id>.tgz, graphs/, embeddings/, sandbox/setup.py,
 wheels/, and a tasks.jsonl with the task(s) to run.
 
-Usage: python bench/e2e_gold.py submissions/b_pipeline /path/to/data_dir [instance_id]
+Usage: python bench/e2e_gold.py submission /path/to/data_dir [instance_id]
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from swegemma.evaluate import Evaluator
 from swegemma.models import load_tasks
 
 sys.path.insert(0, str(Path(__file__).parent))
-import smoke_test as st  # noqa: E402
+import scripted_llm as st  # noqa: E402
 
 MODEL = st.MODEL
 
@@ -32,31 +32,20 @@ def apply_cmd(patch: str) -> str:
     return "git apply --whitespace=nowarn - <<'GOLD_PATCH_EOF'\n" + patch + "\nGOLD_PATCH_EOF\ngit diff --stat"
 
 
-def build_script(patch: str, variant: str = 'b') -> dict:
-    cmd = apply_cmd(patch)
-    if variant == 'c':
-        import smoke_test_c as sc
-        script = dict(sc.SCRIPT)
-        script['FIX stage'] = [[('call', 'run_command', {'command': cmd}), ('text', 'EDITED: gold patch')],
-                               [('text', 'NOOP')], [('text', 'NOOP')]]
-        return script
-    script = dict(st.SCRIPT)
-    # pipeline B: the fixer applies the gold patch, the checker passes it, the finalizer submits
-    script['FIX stage'] = [[('call', 'run_command', {'command': cmd}), ('text', 'EDITED: gold patch')],
+def build_script(patch: str) -> dict:
+    """Pipeline script where the fixer applies the gold patch and the checker passes it."""
+    import smoke_test as sc
+
+    script = dict(sc.SCRIPT)
+    script['FIX stage'] = [[('call', 'run_command', {'command': apply_cmd(patch)}), ('text', 'EDITED: gold patch')],
                            [('text', 'NOOP')], [('text', 'NOOP')]]
-    script['CHECK stage'] = [[('call', 'run_command', {'command': 'git diff --stat'}),
-                              ('text', 'VERDICT: PASS\nEVIDENCE: applied\nNEXT: none')],
-                             [('text', 'VERDICT: PASS (unchanged)')], [('text', 'VERDICT: PASS (unchanged)')]]
-    # baseline A: one agent applies the patch and submits
-    script['expert autonomous software engineer'] = [[
-        ('call', 'run_command', {'command': cmd}), ('call', 'submit_patch', {}), ('text', 'Done')]]
     return script
 
 
 async def main(sub: Path, data: Path, instance_id: str | None) -> None:
     tasks = load_tasks(data / 'tasks.jsonl')
     task = next(t for t in tasks if instance_id in (None, t.instance_id))
-    script = build_script(task.patch, 'c' if 'c_pipeline' in sub.name else 'b')
+    script = build_script(task.patch)
     st.SCRIPT.clear()
     st.SCRIPT.update(script)
 

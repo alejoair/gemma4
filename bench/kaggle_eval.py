@@ -6,10 +6,10 @@ competition model, then swegemma's Evaluator (phase 1 agent + phase 2 verificati
 
 Setup in the notebook
   1. Add inputs: the competition, the dataset metric/gemma-4-developer-agent-wheelhouse, the Gemma 4
-     model, and a dataset holding this repo's `submissions/` and `bench/` folders.
-  2. Run:  python bench/kaggle_eval.py --submission <path>/submissions/c_pipeline_v2 --n 20 --out /kaggle/working/c.csv
-     Use the same --n and --seed for every variant so the task sample is paired.
-  3. Compare:  python bench/compare.py a.csv b.csv c.csv
+     model, and a dataset holding this repo's `submission/` and `bench/` folders.
+  2. Run:  python bench/kaggle_eval.py --submission <path>/submission --n 20 --out /kaggle/working/run1.csv
+     Re-run after each change with the same --n and --seed so the task sample is paired.
+  3. Compare two runs:  python bench/compare.py before.csv after.csv
 
 Not tested here: it needs a GPU and vLLM, which the authoring environment does not have.
 """

@@ -1,7 +1,0 @@
-agent_class: LoopAgent
-name: fix_loop
-description: Edit then check, at most three rounds. Later rounds are no-ops once a check passes.
-max_iterations: 3
-sub_agents:
-  - config_path: fixer.yaml
-  - config_path: checker.yaml

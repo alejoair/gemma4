@@ -21,6 +21,7 @@ SYMBOL: <function or class>
 LINES: <start-end>
 CAUSE: <one or two sentences>
 CHANGE: <the minimal change to make, one to three sentences>
+ALSO: <other source files that must change for the fix to be complete, at most 2, or NONE>
 ALT: <second most likely file :: symbol, or NONE>
 TEST: <pytest command for the most relevant existing test file, or NONE>
 Run every command non-interactively: a command that waits for input hangs until the timeout, so add </dev/null when in doubt and never start a REPL.
