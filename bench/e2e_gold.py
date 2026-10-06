@@ -33,10 +33,11 @@ def apply_cmd(patch: str) -> str:
 
 
 def build_script(patch: str) -> dict:
-    """Single agent: apply the gold patch with a shell command, then submit."""
+    """Locator answers at once; fixer: apply the gold patch with a shell command, then submit."""
     import smoke_test as sc
 
-    return {sc.MARKER: [[('call', 'run_command', {'command': apply_cmd(patch)}),
+    return {sc.LOC: [[('text', 'FILE: x\nSYMBOL: x\nLINES: 1-2\nCAUSE: x\nCHANGE: x\nALSO: NONE')]],
+            sc.MARKER: [[('call', 'run_command', {'command': apply_cmd(patch)}),
                          ('call', 'submit_patch', {}), ('text', 'Done')]]}
 
 

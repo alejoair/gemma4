@@ -1,13 +1,6 @@
-name: swe_agent
-description: Single fast agent that localizes, edits, verifies and submits.
-model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include prompts/system.md
-tools:
-  - get_code_neighbors
-  - get_code_subgraph
-  - run_command
-  - read_file
-  - edit_file
-  - get_status
-  - submit_patch
-generate_content_config: !include configs/sampling.yaml
+agent_class: SequentialAgent
+name: swe_pipeline
+description: Locator (graph and read only) followed by a fixer that edits and submits.
+sub_agents:
+  - config_path: sub_agents/locator.yaml
+  - config_path: sub_agents/fixer.yaml

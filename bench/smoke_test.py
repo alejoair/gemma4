@@ -21,11 +21,15 @@ from google.adk.sessions import InMemorySessionService  # noqa: E402
 from google.genai import types  # noqa: E402
 from swegemma.config import build_submission_limits  # noqa: E402
 
-MARKER = 'expert autonomous software engineer'
+MARKER = 'FIXER of a bug-fixing pipeline'
+LOC = 'LOCATOR of a bug-fixing pipeline'
 SCRIPT = {
-    MARKER: [[
-        ('call', 'run_command', {'command': 'grep -rn Foo pkg | head -5'}),
+    LOC: [[
+        ('call', 'get_code_subgraph', {'nodes': ['Foo']}),
         ('call', 'read_file', {'filepath': 'pkg/foo.py'}),
+        ('text', 'FILE: pkg/foo.py\nSYMBOL: Foo\nLINES: 1-5\nCAUSE: x\nCHANGE: y\nALSO: NONE'),
+    ]],
+    MARKER: [[
         ('call', 'edit_file', {'filepath': 'pkg/foo.py', 'old_string': 'a', 'new_string': 'b'}),
         ('call', 'run_command', {'command': 'PYTHONPATH=/workspace:/workspace/src python -c "import pkg"'}),
         ('call', 'submit_patch', {}),
@@ -60,15 +64,17 @@ async def run(path: Path) -> None:
         if not cond:
             failures.append(label)
 
-    systems = [system for _, system, _ in st.requests]
-    check(bool(systems) and all('{' not in s and 'You are an expert autonomous software engineer' in s for s in systems),
-          'prompt compiles with no unresolved placeholders')
-    check(all('get_status' in s and 'budget_warning' in s for s in systems), 'prompt tells the agent to watch its budget')
-    check(all('PYTHONPATH' in s for s in systems), 'prompt warns about running against the workspace code')
+    loc = [x for _, x, _ in st.requests if LOC in x]
+    fix = [x for _, x, _ in st.requests if MARKER in x]
+    check(bool(loc) and bool(fix), 'both stages ran')
+    check(all('{' not in x for x in loc + fix), 'prompts compile with no unresolved placeholders')
+    check(all('FILE: pkg/foo.py' in x for x in fix), 'fixer receives the locator report')
+    check(all(st.PROBLEM[:30] in x for x in loc + fix), 'both stages see the problem statement')
+    check(all('get_status' in x and 'PYTHONPATH' in x for x in fix), 'fixer prompt covers budget and workspace path')
     tool_names = [t for _, t in st.calls]
-    check(tool_names[-1] == 'submit_patch' and tool_names.count('submit_patch') == 1,
-          f'submit_patch called once, last ({tool_names})')
-    check(len(agent.sub_agents) == 0, 'single agent, no sub-agents')
+    check(tool_names[:2] == ['get_code_subgraph', 'read_file'], f'locator used only graph + read ({tool_names})')
+    check(tool_names[-1] == 'submit_patch' and tool_names.count('submit_patch') == 1, 'submit_patch called once, last')
+    check([a.name for a in agent.sub_agents] == ['locator', 'fixer'], 'sequential locator -> fixer')
     if failures:
         sys.exit(f'{len(failures)} check(s) failed')
     print('SMOKE OK')

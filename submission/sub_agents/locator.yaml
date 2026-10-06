@@ -1,0 +1,7 @@
+name: locator
+description: Finds where the fix belongs using only the code graph and file reads.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/locator.md
+output_key: locus
+tools: [get_code_subgraph, read_file]
+generate_content_config: !include ../configs/sampling.yaml
