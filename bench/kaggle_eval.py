@@ -64,6 +64,20 @@ def install_wheels() -> None:
     importlib.invalidate_caches()
 
 
+def check_gpus(min_total_mib: int = 28000) -> None:
+    """Fail fast if the GPUs cannot hold the 31B INT4 model (~17 GB weights plus KV cache)."""
+    try:
+        out = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
+                             capture_output=True, text=True, check=True).stdout.strip().splitlines()
+    except Exception as e:  # no GPU or no nvidia-smi
+        raise SystemExit(f'NO GPU FOUND ({e}). Enable a GPU accelerator in the notebook settings.')
+    mems = [int(line.split(',')[1]) for line in out]
+    print('GPUs:', [line.strip() for line in out], flush=True)
+    if sum(mems) < min_total_mib:
+        raise SystemExit(f'NOT ENOUGH GPU MEMORY: {sum(mems)} MiB in total, need about {min_total_mib}. '
+                         'Pick an accelerator with two GPUs (for example T4 x2).')
+
+
 def pick_tasks(tasks, n: int, seed: int):
     """Stratified by repo, deterministic: identical for every variant given the same n and seed."""
     by_repo = defaultdict(list)
@@ -98,6 +112,7 @@ def main() -> None:
     ap.add_argument('--skip-install', action='store_true')
     args = ap.parse_args()
 
+    check_gpus()
     if not args.skip_install:
         install_wheels()
     os.environ.update(ENV)
