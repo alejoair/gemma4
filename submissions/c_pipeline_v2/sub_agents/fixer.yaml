@@ -1,8 +1,0 @@
-name: fixer
-description: Applies the smallest source edit that fixes the issue.
-model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include ../prompts/fixer.md
-include_contents: none
-output_key: edit_summary
-tools: [read_file, edit_file, run_command, get_status]
-generate_content_config: !include ../configs/sampling_fix.yaml
