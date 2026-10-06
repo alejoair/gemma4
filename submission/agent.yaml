@@ -1,9 +1,15 @@
-agent_class: SequentialAgent
-name: swe_pipeline_v2
-description: Locator committee, merge, repro gate, fix/check loop, finalizer.
-sub_agents:
-  - config_path: sub_agents/loc_committee.yaml
-  - config_path: sub_agents/merge.yaml
-  - config_path: sub_agents/repro.yaml
-  - config_path: sub_agents/fix_loop.yaml
-  - config_path: sub_agents/finalizer.yaml
+name: swe_agent
+description: Single fast agent that localizes, edits, verifies and submits.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include prompts/system.md
+tools:
+  - search_similar_code
+  - get_code_neighbors
+  - get_code_subgraph
+  - run_command
+  - read_file
+  - edit_file
+  - write_file
+  - get_status
+  - submit_patch
+generate_content_config: !include configs/sampling.yaml

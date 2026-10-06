@@ -1,7 +1,0 @@
-name: finalizer
-description: finalizer stage of the bug-fixing pipeline.
-model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include ../prompts/finalizer.md
-include_contents: none
-tools: [run_command, read_file, edit_file, submit_patch, get_status]
-generate_content_config: !include ../configs/sampling_fast.yaml

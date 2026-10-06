@@ -33,13 +33,11 @@ def apply_cmd(patch: str) -> str:
 
 
 def build_script(patch: str) -> dict:
-    """Pipeline script where the fixer applies the gold patch and the checker passes it."""
+    """Single agent: apply the gold patch with a shell command, then submit."""
     import smoke_test as sc
 
-    script = dict(sc.SCRIPT)
-    script['FIX stage'] = [[('call', 'run_command', {'command': apply_cmd(patch)}), ('text', 'EDITED: gold patch')],
-                           [('text', 'NOOP')], [('text', 'NOOP')]]
-    return script
+    return {sc.MARKER: [[('call', 'run_command', {'command': apply_cmd(patch)}),
+                         ('call', 'submit_patch', {}), ('text', 'Done')]]}
 
 
 async def main(sub: Path, data: Path, instance_id: str | None) -> None:

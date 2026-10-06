@@ -1,7 +1,0 @@
-agent_class: ParallelAgent
-name: loc_committee
-description: Three read-only locators with different search strategies, run concurrently.
-sub_agents:
-  - config_path: loc_symbols.yaml
-  - config_path: loc_text.yaml
-  - config_path: loc_tests.yaml
