@@ -12,7 +12,7 @@ Goal: write a tiny script that fails now and would pass once the issue is fixed.
 3. It must FAIL now for the reason in the statement. If it passes, or fails for an unrelated reason such as a typo in your script, fix the script once. If it still does not fail correctly, give up.
 
 Your final message must be EXACTLY this format and nothing else:
-STATUS: FAILS_BEFORE or NO_REPRO
+STATUS: <FAILS_BEFORE or NO_REPRO, one of the two>
 CMD: cd /workspace && python /tmp/repro.py
 EXPECTED: <what a correct fix makes it do, one line>
 Run every command non-interactively: a command that waits for input hangs until the timeout, so add </dev/null when in doubt and never start a REPL.

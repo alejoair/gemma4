@@ -6,7 +6,7 @@ Problem statement:
 Triage report:
 {locus}
 
-Reproduction (a script in /tmp that failed before the fix):
+Reproduction (STATUS FAILS_BEFORE means the script in /tmp failed before the fix; NO_REPRO means there is none):
 {repro}
 
 Latest check result (empty on the first round):

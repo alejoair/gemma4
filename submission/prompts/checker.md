@@ -23,6 +23,6 @@ Failures in unrelated tests that existed before are not your concern; judge only
 Run every command non-interactively: a command that waits for input hangs until the timeout, so add </dev/null when in doubt and never start a REPL.
 
 Your final message must be EXACTLY:
-VERDICT: PASS or FAIL
+VERDICT: <PASS or FAIL, one word>
 EVIDENCE: <what you ran and saw, at most 3 lines>
 NEXT: <if FAIL, the specific correction needed, at most 3 lines; otherwise none>
