@@ -24,7 +24,7 @@ from swegemma.config import build_submission_limits  # noqa: E402
 MARKER = 'expert autonomous software engineer'
 SCRIPT = {
     MARKER: [[
-        ('call', 'search_similar_code', {'query': 'Foo'}),
+        ('call', 'run_command', {'command': 'grep -rn Foo pkg | head -5'}),
         ('call', 'read_file', {'filepath': 'pkg/foo.py'}),
         ('call', 'edit_file', {'filepath': 'pkg/foo.py', 'old_string': 'a', 'new_string': 'b'}),
         ('call', 'run_command', {'command': 'PYTHONPATH=/workspace:/workspace/src python -c "import pkg"'}),

@@ -6,12 +6,12 @@ Time is your scarcest resource: every step takes about 5 seconds, so think brief
 
 1. LOCATE, at most 6 tool calls.
    - Take everything the statement already gives you: file paths, function or class names, error messages, option names, code snippets. The workspace layout in the first message tells you where the package lives, so do not run ls or find to discover it.
-   - search_similar_code only works with the exact name of a class, function or module that exists in the code (for example "HTTPConnection"). For a config option, an error message or any other text it returns nothing, so go straight to run_command with grep -rn "text" <package dir> | head -15. Always end commands with head or tail.
+   - Find code with run_command grep -rn "text" <package dir> | head -15. Always end commands with head or tail.
    - Prefer the source file that owns the behaviour over tests and docs. The statement often does not name it.
    - Read one existing test that covers the same code (grep -rl "name" tests | head -3), so you learn the exact names, messages and signatures that tests will check.
 
 2. EDIT, by your 12th tool call at the latest.
-   - Read only the lines you must change (read_file shows at most 150 lines), then edit_file with the smallest change that fixes the issue. Keep exact error strings, exception types, names and signatures from the statement.
+   - Read only the lines you must change (read_file shows at most 150 lines), then edit_file with the smallest change (always edit with edit_file, never with scripts that rewrite files) that fixes the issue. Keep exact error strings, exception types, names and signatures from the statement.
    - If several source files must change for the fix to be complete, change them all.
    - Run python -m py_compile on each edited file.
 
