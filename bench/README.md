@@ -7,8 +7,6 @@ dataset `metric/gemma-4-developer-agent-wheelhouse` (plus `pytest`, `pytest-http
 | Script | What it proves | Needs |
 |---|---|---|
 | `../tools/validate_submission.py submission [--zip out.zip]` | The competition's own validators and compiler accept the submission | nothing else |
-| `smoke_test.py submission` | The single agent compiles, sees the problem statement, uses its tools and calls `submit_patch` last | nothing else |
-| `e2e_gold.py submission <data_dir>` | Full harness run (sandbox, tools, patch extraction, phase 2) with a scripted LLM that applies the gold patch | one task's snapshot, graph, embeddings, `sandbox/setup.py` and `wheels/` |
 | `loc_bench.py <data_dir>` | Offline localization benchmark: how often BM25 + identifiers over the code graph ranks a gold file first | tasks.jsonl and graphs/ |
 
 None of these measure agent quality. `kaggle_eval.py` does: it runs the submission on a fixed,
