@@ -61,7 +61,9 @@ async def run(path: Path) -> None:
             failures.append(label)
 
     systems = [system for _, system, _ in st.requests]
-    check(bool(systems) and all(st.PROBLEM in s for s in systems), '{problem_description} injected into the prompt')
+    check(bool(systems) and all('{' not in s and 'You are an expert autonomous software engineer' in s for s in systems),
+          'prompt compiles with no unresolved placeholders')
+    check(all('get_status' in s and 'budget_warning' in s for s in systems), 'prompt tells the agent to watch its budget')
     check(all('PYTHONPATH' in s for s in systems), 'prompt warns about running against the workspace code')
     tool_names = [t for _, t in st.calls]
     check(tool_names[-1] == 'submit_patch' and tool_names.count('submit_patch') == 1,
