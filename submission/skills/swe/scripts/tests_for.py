@@ -107,11 +107,13 @@ def main():
     files = find_tests(root, args[0])
     if not files:
         print(f'No test files reference {args[0]}.')
+        print('NEXT: run check.py after your edit; it also finds tests by the names on the changed lines.')
         return
     out = ['Test files for ' + args[0] + ':'] + ['  ' + f for f in files]
     if '--run' in sys.argv:
         code, summary = run_pytest(root, files[:2])
-        out += [f'pytest on {", ".join(files[:2])} (exit {code}):', summary]
+        out += [f'pytest on {", ".join(files[:2])} (exit {code}):', summary,
+                'NEXT: if these tests fail because of your edit, fix it; check.py tells which failures are new.']
     else:
         out.append('NEXT: run tests_for.py ' + args[0] + ' --run after your edit to check them.')
     print(clip('\n'.join(out)))

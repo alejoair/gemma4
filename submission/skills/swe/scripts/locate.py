@@ -50,6 +50,8 @@ def extract_terms(text):
             add(tok, 4)
         elif tok.isupper() and len(tok) > 3:
             add(tok, 3)
+        elif tok[:1].isupper() and len(tok) >= 3:
+            add(tok, 2)
         elif len(tok) >= 5:
             add(tok.lower(), 1)
     return terms
@@ -68,6 +70,10 @@ def main():
         os.execv(sys.executable, [sys.executable, show] + args)
     repeat_guard('pick the best candidate from the earlier output and write the report, or run show.py <file> <symbol>.')
     root = repo_root()
+    m = re.fullmatch(r'(?:async\s+)?(?:class|def)\s+([A-Za-z_][\w.]*)\W*', text)
+    if m:
+        text = m.group(1)
+        sys.argv[1:] = [text]
     if len(sys.argv) == 2 and is_symbol_name(text):
         defs = find_definitions(root, text)
         if defs:
@@ -87,6 +93,7 @@ def main():
     terms = extract_terms(text)
     if not terms:
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')
+        print('NEXT: run locate.py again with the identifiers, option names or error message of the statement.')
         return
     strong = [t for t, w in terms.items() if w >= 3]
     files = {}

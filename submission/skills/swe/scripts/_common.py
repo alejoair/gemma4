@@ -85,7 +85,7 @@ def repeat_guard(next_step):
             # After the code (never instead of it), built at exit so it includes the symbol this call shows: a
             # looping locator still gets a finished report.
             def tail():
-                report = last_candidate_report()
+                report = last_candidate_report(with_code=False)
                 if report:
                     print(f'\nYou have viewed this {count + 1} times. If you are the locator, stop and write this '
                           f'report now:\n{report}\nIf you are the fixer, call edit_file now.')
@@ -124,7 +124,7 @@ def remember_candidate(rel, name, start, end, code_lines, weak=False):
         pass
 
 
-def last_candidate_report():
+def last_candidate_report(with_code=True):
     try:
         with open(CANDIDATE) as fh:
             c = json.load(fh)
@@ -138,7 +138,9 @@ def last_candidate_report():
     # Other places already viewed (often a second file the statement also asks to change) go into ALSO.
     also = [v for v in viewed if v != f"{c['file']} :: {c['symbol']}"][-3:]
     return '\n'.join([f"FILE: {c['file']}", f"SYMBOL: {c['symbol']}", f"GRAPH_ID: {c['graph_id']}",
-                      f"LINES: {c['start']}-{c['end']}", 'CODE:'] + c['code'] + ['ALSO: ' + ('; '.join(also) or 'NONE')])
+                      f"LINES: {c['start']}-{c['end']}"] + (['CODE:'] + c['code'] if with_code else
+                                                            ['CODE: the first lines of the code shown above']) +
+                     ['ALSO: ' + ('; '.join(also) or 'NONE')])
 
 
 def repo_root():
@@ -235,9 +237,18 @@ def find_symbol(syms, wanted):
 
 
 def clip(text, limit=MAX_OUT):
+    """Cut long output, but keep the closing instruction lines (NEXT, VERDICT, "more lines" hints, missing terms)
+    that tell the model what to do next."""
     if len(text) <= limit:
         return text
-    return text[:limit] + '\n[... output clipped ...]'
+    lines = text.splitlines()
+    tail = []
+    while lines and (lines[-1].startswith(('NEXT', 'VERDICT', '-----', 'Terms not found', 'Most matching')) or not lines[-1].strip()):
+        tail.insert(0, lines.pop())
+    head = '\n'.join(lines)
+    room = max(500, limit - sum(len(t) + 1 for t in tail) - 30)
+    cut = head[:room].rsplit('\n', 1)[0]
+    return '\n'.join([cut, '[... output clipped ...]'] + tail)
 
 
 WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')

@@ -5,12 +5,13 @@ without line-number prefixes, so a piece of it can be copied as old_string for e
 """
 import ast
 import difflib
+import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (clip, find_definitions, find_symbol, graph_id, is_symbol_name, parse, read_text,  # noqa: E402
+from _common import (SKIP_DIRS, clip, find_definitions, find_symbol, graph_id, is_symbol_name, parse, read_text,  # noqa: E402
                      remember_candidate, repeat_guard, repo_root, symbols)
 
 MAX_LINES = 90
@@ -63,35 +64,85 @@ def collapse_strings(src, lines, start, end):
     return out
 
 
+PLACEHOLDERS = {'start-end', '<start>-<end>', 'symbol', '<symbol>', 'file', '<file>', '.'}
+
+
+def all_files(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith('.')]
+        for fn in filenames:
+            yield os.path.relpath(os.path.join(dirpath, fn), root)
+
+
+def resolve_file(root, given):
+    """(path, extra symbol parts) for a file argument written as a path, a wrong path or a dotted module name."""
+    p = given[2:] if given.startswith('./') else given
+    p = os.path.relpath(p, root) if os.path.isabs(p) else p
+    if os.path.isfile(os.path.join(root, p)):
+        return p, []
+    candidates = [p[:-3] + '/__init__.py' if p.endswith('.py') else p + '/__init__.py', 'src/' + p, 'lib/' + p]
+    if '/' not in p and '.' in p and not p.endswith('.py'):
+        parts = p.split('.')
+        for k in range(len(parts), 0, -1):
+            base = '/'.join(parts[:k])
+            for c in (base + '.py', base + '/__init__.py', 'src/' + base + '.py', 'src/' + base + '/__init__.py'):
+                if os.path.isfile(os.path.join(root, c)):
+                    return c, parts[k:]
+    for c in candidates:
+        if os.path.isfile(os.path.join(root, c)):
+            return c, []
+    name = os.path.basename(p)
+    same = sorted(f for f in all_files(root) if os.path.basename(f) == name)
+    if len(same) == 1:
+        return same[0], []
+    return None, same[:5]
+
+
 def main():
-    args = sys.argv[1:]
+    # Drop shell flags and placeholders copied from the usage text; split "file symbol" given as one argument.
+    args = [a for a in sys.argv[1:] if not a.startswith('-') and a.strip() not in PLACEHOLDERS]
+    if len(args) == 1 and ' ' in args[0].strip() and args[0].split()[0].endswith('.py'):
+        args = args[0].split(None, 1)
     repeat_guard('use the code printed earlier: copy old_string from it, or write your report.')
     root = repo_root()
-    if len(args) == 1 and args[0].endswith('.py'):
-        rel = args[0][2:] if args[0].startswith('./') else args[0]
-        syms = symbols(parse(read_text(root, rel)))
-        if not syms:
-            print(f'File not found or has no functions: {rel}. Use locate.py to find the right path.')
-            return
-        print(f'Symbols in {rel} (name kind lines):')
-        print(clip('\n'.join(f'  {n} {k} {s}-{e}' for n, k, s, e in syms)))
-        print(f'NEXT: run show.py {rel} <symbol> with one of the names above.')
-        return
-    if len(args) == 1:
-        defs = find_definitions(root, args[0])
-        if not defs:
-            print(f'usage: show.py <file> <symbol>. No definition of {args[0]} found; run locate.py first.')
-            return
-        args = [defs[0][0], args[0]]
-    if len(args) < 2:
+    if not args:
         print('usage: show.py <file> <symbol>  |  show.py <file> <start>-<end>  |  show.py <file> "<a line of code>"')
+        print('NEXT: call show.py with a file path and a function name, for example ["pkg/module.py", "Class.method"].')
         return
-    rel = (args[0][2:] if args[0].startswith('./') else args[0]) if not os.path.isabs(args[0]) else os.path.relpath(args[0], root)
+    looks_like_file = '/' in args[0] or re.search(r'\.(py|toml|cfg|ini|txt|md|rst|ya?ml|json)$', args[0])
+    if len(args) == 1 and not looks_like_file:
+        resolved, extra = resolve_file(root, args[0]) if '.' in args[0] else (None, [])
+        if resolved and extra:
+            args = [resolved, '.'.join(extra)]
+        else:
+            defs = find_definitions(root, args[0])
+            if not defs:
+                print(f'No definition of {args[0]} found in the source files.')
+                print('NEXT: run locate.py with this name and words from the statement to find where it lives.')
+                return
+            args = [defs[0][0], args[0]]
+    rel, extra = resolve_file(root, args[0])
+    if rel is None:
+        if extra:
+            print(f'File not found: {args[0]}. Files with that name: {", ".join(extra)}')
+            print(f'NEXT: call show.py with one of these paths, for example ["{extra[0]}"{", " + json.dumps(args[1]) if len(args) > 1 else ""}].')
+        else:
+            print(f'File not found: {args[0]}.')
+            print('NEXT: run locate.py with the function or class name to find the right file.')
+        return
+    if extra and len(args) == 1:
+        args = [rel, '.'.join(extra)]
     src = read_text(root, rel)
-    if not src:
-        print(f'File not found or empty: {rel}. Use locate.py to find the right path.')
-        return
     lines = src.splitlines()
+    syms = symbols(parse(src)) if rel.endswith('.py') else []
+    if len(args) == 1:
+        if syms:
+            print(f'Symbols in {rel} (name kind lines):')
+            print(clip('\n'.join(f'  {n} {k} {s}-{e}' for n, k, s, e in syms)))
+            print(f'NEXT: run show.py {rel} <symbol> with one of the names above.')
+            return
+        args = [rel, f'1-{min(len(lines), MAX_LINES)}']
+    args[0] = rel
     spec = ' '.join(args[1:])
     rng = re.fullmatch(r'\s*(\d+)\s*(?:[-:,]|\s)\s*(\d+)\s*', spec)
     if rng:
@@ -101,8 +152,17 @@ def main():
         start, end = max(1, int(args[1]) - 15), min(len(lines), int(args[1]) + 25)
         label = f'{rel} lines {start}-{end}'
     else:
-        syms = symbols(parse(src))
         found = find_symbol(syms, args[1]) if is_symbol_name(args[1]) else []
+        if not found and is_symbol_name(args[1]):
+            # The symbol lives in another file: show it from there instead of failing.
+            defs = [d for d in find_definitions(root, args[1]) if d[0] != rel]
+            if defs:
+                print(f'{args[1]} is not defined in {rel}; it is defined in {defs[0][0]}:')
+                rel = defs[0][0]
+                src = read_text(root, rel)
+                lines = src.splitlines()
+                syms = symbols(parse(src))
+                found = find_symbol(syms, args[1])
         if found:
             name, kind, start, end = found[0]
             remember_candidate(rel, name, start, end, lines[start - 1:end])
@@ -115,8 +175,11 @@ def main():
             hit = best_match(lines, spec)
             if hit is None:
                 names = [s[0] for s in syms if args[1].split('.')[-1].lower() in s[0].lower()][:10]
-                print(f'Symbol or text {args[1]!r} not found in {rel}.' + (f' Similar symbols: {", ".join(names)}' if names else
-                      ' Top-level symbols: ' + ', '.join(s[0] for s in syms if '.' not in s[0])[:600]))
+                top = ', '.join(s[0] for s in syms if '.' not in s[0])[:600]
+                print(f'Symbol or text {args[1]!r} not found in {rel}.' + (f' Similar symbols: {", ".join(names)}' if names
+                      else (f' Top-level symbols: {top}' if top else f' The file has {len(lines)} lines.')))
+                print(f'NEXT: call show.py {rel} with one of those names, or with a line range such as 1-{min(len(lines), MAX_LINES)}.'
+                      if syms or lines else 'NEXT: run locate.py with the name to find the right file.')
                 return
             first, last, score = hit
             start, end = max(1, first - 3), min(len(lines), last + 3)

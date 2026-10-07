@@ -65,7 +65,7 @@ def main():
     print(f'{len(found[:6]) + 1}. Keep exact names, messages and exception types written in the statement.')
     if names:
         print('Names written in the statement: ' + ', '.join(dict.fromkeys(names))[:400])
-    print('NEXT: run locate.py with those names.')
+    print('NEXT: continue your procedure and cover every item of this checklist that applies to the statement.')
 
 
 if __name__ == '__main__':
