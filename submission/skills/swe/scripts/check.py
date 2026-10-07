@@ -3,13 +3,18 @@
 Verifies the current edit in one call: lists the changed files (git diff --stat), compiles every changed Python
 file in memory, runs the tests that exercise the changed source files, and ends with a verdict line.
 """
+import builtins
+import keyword
 import os
+import re
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import clip, is_test_path, read_text, repo_root  # noqa: E402
-from tests_for import failed_ids, find_tests, run_pytest  # noqa: E402
+from tests_for import failed_ids, find_tests, find_tests_for_names, run_pytest  # noqa: E402
+
+BUILTINS = set(dir(builtins)) | {'self', 'return', 'None', 'True', 'False'}
 
 
 def git(root, *args):
@@ -18,6 +23,21 @@ def git(root, *args):
         print(f'git {" ".join(args)} failed in {root}: {r.stderr.strip()[:300]}')
         sys.exit(0)
     return r.stdout.strip()
+
+
+def changed_names(root):
+    """Identifiers on the added and removed lines of the source diff (keywords, builtins and short names left out)."""
+    r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '-U0', '--', '*.py'], cwd=root, capture_output=True,
+                       text=True, timeout=30)
+    names, current = [], ''
+    for line in r.stdout.splitlines():
+        if line.startswith('+++ '):
+            current = line[6:]
+        elif line[:1] in '+-' and not line.startswith('--- ') and not is_test_path(current):
+            for n in re.findall(r'[A-Za-z_][A-Za-z0-9_]{3,}', line[1:]):
+                if not keyword.iskeyword(n) and n not in BUILTINS and n not in names:
+                    names.append(n)
+    return names[:40]
 
 
 def failing_before(root, changed, ids):
@@ -60,15 +80,18 @@ def main():
         out.append('VERDICT: FIX THE SYNTAX ERROR above, then run check.py again.')
         print(clip('\n'.join(out)))
         return
-    tests = []
+    # Tests that use the identifiers on the changed lines come first (they exercise the changed behaviour), then
+    # the tests that import the changed module.
+    tests = find_tests_for_names(root, changed_names(root), limit=2)
     for rel in changed + untracked:
         if rel.endswith('.py') and not is_test_path(rel):
             for t in find_tests(root, rel):
                 if t not in tests:
                     tests.append(t)
+    tests = tests[:3]
     if tests:
-        code, summary = run_pytest(root, tests[:2], timeout=40)
-        out.append(f"Tests run: {', '.join(tests[:2])} (exit {code})")
+        code, summary = run_pytest(root, tests, timeout=45)
+        out.append(f"Tests run: {', '.join(tests)} (exit {code})")
         lines = summary.splitlines()
         failed_lines = [l for l in lines if l.startswith(('FAILED', 'ERROR'))]
         out += [l for l in lines if not l.startswith(('FAILED', 'ERROR'))][:6] + failed_lines[:8]

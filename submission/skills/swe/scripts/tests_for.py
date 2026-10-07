@@ -4,6 +4,7 @@ Finds the test files that exercise a source file or symbol. With --run it runs t
 first failure, short output) and prints a short summary, without writing caches into the repository.
 """
 import collections
+import math
 import os
 import re
 import subprocess
@@ -39,6 +40,25 @@ def find_tests(root, target):
             if short and short.lstrip('_') in base:
                 scores[rel] += 4
     return [r for r, _ in scores.most_common(5)]
+
+
+def find_tests_for_names(root, names, limit=3):
+    """Rank test files by the identifiers an edit touched, rare identifiers first (log inverse document frequency),
+    so the tests that exercise the changed behaviour run even when they never name the changed module."""
+    texts = {}
+    for rel in iter_py(root, tests=True, docs=False):
+        if is_test_path(rel) and os.path.basename(rel) != 'conftest.py':
+            texts[rel] = read_text(root, rel)
+    if not texts or not names:
+        return []
+    df = {n: sum(1 for t in texts.values() if re.search(r'\b' + re.escape(n) + r'\b', t)) for n in names}
+    weights = {n: math.log(1 + len(texts) / df[n]) for n in names if 0 < df[n] <= max(3, len(texts) // 4)}
+    scores = collections.Counter()
+    for rel, text in texts.items():
+        for n, w in weights.items():
+            if re.search(r'\b' + re.escape(n) + r'\b', text):
+                scores[rel] += w
+    return [r for r, _ in scores.most_common(limit)]
 
 
 def code_path(root):

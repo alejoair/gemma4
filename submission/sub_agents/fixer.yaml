@@ -7,6 +7,6 @@ output_key: edit_summary
 tools:
   - agent_tool:
       config_path: apply_edit.yaml
-      skip_summarization: true
+      skip_summarization: false
 skills: [skills/swe]
 generate_content_config: !include ../configs/sampling_fixer.yaml
