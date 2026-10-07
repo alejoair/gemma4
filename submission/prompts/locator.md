@@ -15,6 +15,14 @@ Every script ends with a NEXT line that tells you the next step.
 The code-graph tools named in the task message (search_similar_code, get_code_neighbors, get_code_subgraph) are also available, with full dotted node names such as pkg.module.Class.method; the swe scripts give the same information faster.
 </tools>
 
+<call_examples>
+Each helper is one run_skill_script tool call. Written in your tool-call format, the calls look like this:
+call:run_skill_script{args:["Client.send","timeout","connection reset by peer"],file_path:"scripts/locate.py",skill_name:"swe"}
+call:run_skill_script{args:["src/pkg/client.py","Client.send"],file_path:"scripts/show.py",skill_name:"swe"}
+call:run_skill_script{args:["src/pkg/client.py","120-160"],file_path:"scripts/show.py",skill_name:"swe"}
+call:run_skill_script{args:["build_url"],file_path:"scripts/callers.py",skill_name:"swe"}
+</call_examples>
+
 <procedure>
 1. Call run_skill_script with file_path "scripts/locate.py" and args = the function names, class names, option names and error messages written in the statement, for example ["HTTPParser.complete", "keep_alive", "KeyboardException"]. When the statement names no code, pass its key words, for example ["leading", "path separators", "urlopen"].
 2. From the candidates, pick the function whose code implements the behaviour the statement describes. When the candidate shown is not the right one, call scripts/show.py with args [file, symbol] for the better candidate.

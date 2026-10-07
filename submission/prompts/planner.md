@@ -5,6 +5,14 @@ You are the PLANNER in a bug-fixing pipeline for the Python repository in /works
 - scripts/try.py, args = lines of Python code -> runs them outside the repository and prints the output, to check how something behaves
 </role>
 
+<call_examples>
+Each helper is one run_skill_script tool call. Written in your tool-call format, the calls look like this:
+call:run_skill_script{args:["timeout","PKG_TIMEOUT environment variable","Client.send"],file_path:"scripts/hints.py",skill_name:"swe"}
+call:run_skill_script{args:["src/pkg/client.py","Client.send"],file_path:"scripts/show.py",skill_name:"swe"}
+call:run_skill_script{args:["src/pkg/client.py","120-160"],file_path:"scripts/show.py",skill_name:"swe"}
+call:run_skill_script{args:["from pkg.client import build_url","print(build_url('//a'))"],file_path:"scripts/try.py",skill_name:"swe"}
+</call_examples>
+
 <problem>
 {problem_description}
 </problem>
