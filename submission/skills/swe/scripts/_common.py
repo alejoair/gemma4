@@ -36,6 +36,11 @@ class _Tee:
 if not isinstance(sys.stdout, _Tee):
     sys.stdout = _Tee(sys.stdout)
 
+# Models sometimes wrap each argument in literal quotes (["\"pkg/mod.py\"", "\"Cls\""]) or add a trailing comma;
+# strip them so a path or symbol still resolves instead of sending the model into a retry loop.
+sys.argv = [sys.argv[0]] + [a.strip().strip(',').strip().strip('"\'`').strip() for a in sys.argv[1:]]
+sys.argv = [a for i, a in enumerate(sys.argv) if i == 0 or a]
+
 SEEN = '/tmp/swe_skill_seen.txt'
 NO_REPEAT_GUARD = {'check.py', 'journal.py'}
 
