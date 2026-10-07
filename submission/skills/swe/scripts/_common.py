@@ -1,5 +1,6 @@
 """Shared helpers for the swe skill scripts: repository root, source-file walking and AST lookups."""
 import ast
+import atexit
 import hashlib
 import json
 import os
@@ -71,15 +72,24 @@ def repeat_guard(next_step):
             fh.write(sig + '\n')
     except OSError:
         pass
-    if count == 1:
-        # The first repeat may come from a later stage that never saw the output (the locator and the fixer share
-        # /tmp), so print the output again and only stop the third identical call.
+    if count == 1 or (count and script == 'show.py'):
+        # A repeat may come from a later stage that never saw the output (the locator and the fixer share /tmp), and
+        # show.py prints the code the fixer copies old_string from, so print the output again instead of stopping.
         print(f'NOTE: you already ran "{sig}"; same output as before:')
+        if count >= 2:
+            # After the code (never instead of it), built at exit so it includes the symbol this call shows: a
+            # looping locator still gets a finished report.
+            def tail():
+                report = last_candidate_report()
+                if report:
+                    print(f'\nYou have viewed this {count + 1} times. If you are the locator, stop and write this '
+                          f'report now:\n{report}\nIf you are the fixer, call edit_file now.')
+            atexit.register(tail)
         return
     if count:
         print(f'REPEATED CALL: you already ran "{sig}" ({count + 1} times now). Its output is in the conversation '
               f'above and has not changed.')
-        report = last_candidate_report()
+        report = last_candidate_report() if script == 'locate.py' else ''
         if report:
             print('STOP calling scripts. If you are the locator, write this as your final message now:')
             print(report)
@@ -90,14 +100,21 @@ def repeat_guard(next_step):
 
 
 CANDIDATE = _state_path('candidate.json')
+VIEWED = _state_path('viewed.txt')
 
 
-def remember_candidate(rel, name, start, end, code_lines):
-    """Store the best location found so far, so a looping model can be handed a finished report."""
+def remember_candidate(rel, name, start, end, code_lines, weak=False):
+    """Store the best location found so far, so a looping model can be handed a finished report. A weak candidate
+    (the top hit of a free-text search) never replaces a symbol the model chose to view."""
+    if weak and os.path.exists(CANDIDATE):
+        return
     try:
         with open(CANDIDATE, 'w') as fh:
             json.dump({'file': rel, 'symbol': name, 'graph_id': graph_id(rel, name), 'start': start, 'end': end,
                        'code': code_lines[:25]}, fh)
+        if not weak:
+            with open(VIEWED, 'a') as fh:
+                fh.write(f'{rel} :: {name}\n')
     except OSError:
         pass
 
@@ -108,8 +125,15 @@ def last_candidate_report():
             c = json.load(fh)
     except (OSError, ValueError):
         return ''
+    try:
+        with open(VIEWED) as fh:
+            viewed = list(dict.fromkeys(fh.read().splitlines()))
+    except OSError:
+        viewed = []
+    # Other places already viewed (often a second file the statement also asks to change) go into ALSO.
+    also = [v for v in viewed if v != f"{c['file']} :: {c['symbol']}"][-3:]
     return '\n'.join([f"FILE: {c['file']}", f"SYMBOL: {c['symbol']}", f"GRAPH_ID: {c['graph_id']}",
-                      f"LINES: {c['start']}-{c['end']}", 'CODE:'] + c['code'] + ['ALSO: NONE'])
+                      f"LINES: {c['start']}-{c['end']}", 'CODE:'] + c['code'] + ['ALSO: ' + ('; '.join(also) or 'NONE')])
 
 
 def repo_root():

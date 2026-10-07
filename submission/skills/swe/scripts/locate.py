@@ -153,7 +153,7 @@ def main():
     src_lines = read_text(root, best_rel).splitlines()
     body = src_lines[start - 1:min(end, start + 39)]
     if best_name != '<module>':
-        remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end])
+        remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
     out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
     out += body
     if end > start + 39:

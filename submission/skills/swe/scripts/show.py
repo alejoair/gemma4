@@ -3,6 +3,7 @@
 Prints the exact source of a function, method or class (found with the AST), or of a line range, verbatim and
 without line-number prefixes, so a piece of it can be copied as old_string for edit_file.
 """
+import ast
 import difflib
 import os
 import re
@@ -30,6 +31,28 @@ def best_match(lines, text):
         if best is None or score > best[2]:
             best = (i + 1, min(len(lines), i + n), score)
     return best if best and best[2] >= 0.5 else None
+
+
+def collapse_strings(src, lines, start, end):
+    """Lines start..end with the inside of long string literals (docstrings, Doc("...") texts) replaced by one
+    marker line, so the code of a long, heavily documented function fits on screen."""
+    hidden = {}
+    for node in ast.walk(parse(src) or ast.Module(body=[], type_ignores=[])):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.end_lineno - node.lineno >= 3 \
+                and start <= node.lineno and node.end_lineno <= end:
+            hidden[node.lineno + 1] = node.end_lineno - 1
+    out = []
+    i = start
+    while i <= end:
+        if i in hidden:
+            last = hidden[i]
+            indent = lines[i - 1][:len(lines[i - 1]) - len(lines[i - 1].lstrip())]
+            out.append((last, f'{indent}[... text lines {i}-{last} hidden ...]'))
+            i = last + 1
+            continue
+        out.append((i, lines[i - 1]))
+        i += 1
+    return out
 
 
 def main():
@@ -90,6 +113,18 @@ def main():
             first, last, score = hit
             start, end = max(1, first - 3), min(len(lines), last + 3)
             label = f'{rel} lines {start}-{end} (best match for the given text at lines {first}-{last}, similarity {score:.2f})'
+    if end - start + 1 > MAX_LINES and not rng and not args[1].isdigit():
+        body = collapse_strings(src, lines, start, end)
+        if len(body) < end - start + 1:
+            out = [label, '----- code (verbatim; long text strings hidden as [...]) -----'] + [t for _, t in body[:MAX_LINES]]
+            if len(body) > MAX_LINES:
+                nxt = body[MAX_LINES - 1][0] + 1
+                out.append(f'----- {end - nxt + 1} more lines: show.py {rel} {nxt}-{end} -----')
+            else:
+                out.append('----- end -----')
+            out.append('NEXT: copy 3-6 consecutive lines (not a [...] line) exactly as old_string for edit_file.')
+            print(clip('\n'.join(out), 6000))
+            return
     shown_end = min(end, start + MAX_LINES - 1)
     out = [label, '----- code (verbatim) -----'] + lines[start - 1:shown_end]
     if shown_end < end:
