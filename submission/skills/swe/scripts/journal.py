@@ -16,7 +16,7 @@ STATE = _common._state_path('journal.jsonl')
 PHASES = ['locate', 'edit', 'verify', 'submit']
 NEXT = {
     'locate': 'run locate.py with names from the statement, view the best candidate with show.py, then report it.',
-    'edit': 'view the exact code with show.py, call edit_file with 3-6 copied lines as old_string, then run check.py.',
+    'edit': 'view the numbered code with show.py, change it with edit.py [file, start, end, new lines], then run check.py.',
     'verify': 'run check.py; when the verdict is OK the change is ready.',
     'submit': 'call submit_patch once.',
 }

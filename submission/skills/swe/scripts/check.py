@@ -138,7 +138,7 @@ def main():
     untracked = [f for f in git(root, 'ls-files', '--others', '--exclude-standard').splitlines() if f.endswith('.py')]
     out = []
     if not changed and not untracked:
-        print('VERDICT: NO CHANGES. Nothing is edited yet; make the edit with edit_file first.')
+        print('VERDICT: NO CHANGES. Nothing is edited yet; make the edit with edit.py first.')
         return
     out.append('Changed files:\n' + (git(root, 'diff', '--stat') or '(none)'))
     if untracked:

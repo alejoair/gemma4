@@ -1,7 +1,7 @@
 """show.py <file> <symbol>   |   show.py <file> <start>-<end>   |   show.py <file> "<a line or lines of code>"
 
-Prints the exact source of a function, method or class (found with the AST), or of a line range, verbatim and
-without line-number prefixes, so a piece of it can be copied as old_string for edit_file.
+Prints the exact source of a function, method or class (found with the AST), or of a line range, with the line
+numbers that edit.py takes, so an edit only has to name the range and give the new lines.
 """
 import ast
 import difflib
@@ -103,7 +103,7 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-') and a.strip() not in PLACEHOLDERS]
     if len(args) == 1 and ' ' in args[0].strip() and args[0].split()[0].endswith('.py'):
         args = args[0].split(None, 1)
-    repeat_guard('use the code printed earlier: copy old_string from it, or write your report.')
+    repeat_guard('use the code printed earlier: edit it with edit.py and its line numbers, or write your report.')
     root = repo_root()
     if not args:
         print('usage: show.py <file> <symbol>  |  show.py <file> <start>-<end>  |  show.py <file> "<a line of code>"')
@@ -187,22 +187,23 @@ def main():
     if end - start + 1 > MAX_LINES and not rng and not args[1].isdigit():
         body = collapse_strings(src, lines, start, end)
         if len(body) < end - start + 1:
-            out = [label, '----- code (verbatim; long text strings hidden as [...]) -----'] + [t for _, t in body[:MAX_LINES]]
+            out = [label, '----- code (long text strings hidden as [...]) -----'] + \
+                [f'{"":>5}| {t}' if '[... text lines' in t else f'{n:>5}| {t}' for n, t in body[:MAX_LINES]]
             if len(body) > MAX_LINES:
                 nxt = body[MAX_LINES - 1][0] + 1
                 out.append(f'----- {end - nxt + 1} more lines: show.py {rel} {nxt}-{end} -----')
             else:
                 out.append('----- end -----')
-            out.append('NEXT: copy 3-6 consecutive lines (not a [...] line) exactly as old_string for edit_file.')
+            out.append('NEXT: to change lines A-B call edit.py [file, A, B, new lines]; never include a [...] line.')
             print(clip('\n'.join(out), 6000))
             return
     shown_end = min(end, start + MAX_LINES - 1)
-    out = [label, '----- code (verbatim) -----'] + lines[start - 1:shown_end]
+    out = [label, '----- code -----'] + [f'{n:>5}| {t}' for n, t in enumerate(lines[start - 1:shown_end], start)]
     if shown_end < end:
         out.append(f'----- {end - shown_end} more lines: show.py {rel} {shown_end + 1} {end} -----')
     else:
         out.append('----- end -----')
-    out.append('NEXT: copy 3-6 consecutive lines from the code above exactly as old_string for edit_file.')
+    out.append(f'NEXT: to change lines A-B call edit.py ["{rel}", A, B, new lines] with the numbers above.')
     print(clip('\n'.join(out), 6000))
 
 

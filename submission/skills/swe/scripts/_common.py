@@ -41,8 +41,14 @@ if not isinstance(sys.stdout, _Tee):
 
 # Models sometimes wrap each argument in literal quotes (["\"pkg/mod.py\"", "\"Cls\""]) or add a trailing comma;
 # strip them so a path or symbol still resolves instead of sending the model into a retry loop.
-sys.argv = [sys.argv[0]] + [a.strip().strip(',').strip().strip('"\'`').strip() for a in sys.argv[1:]]
-sys.argv = [a for i, a in enumerate(sys.argv) if i == 0 or a]
+def _clean(a):
+    return a.strip().strip(',').strip().strip('"\'`').strip()
+
+
+# edit.py keeps its new text exactly as given (indentation matters); only its file and range are cleaned.
+_keep_from = 4 if os.path.basename(sys.argv[0]) == 'edit.py' else len(sys.argv)
+sys.argv = [sys.argv[0]] + [_clean(a) if i < _keep_from else a for i, a in enumerate(sys.argv[1:], 1)]
+sys.argv = [a for i, a in enumerate(sys.argv) if i == 0 or a or i >= _keep_from]
 
 def _state_path(name):
     """Per-repository state file in /tmp, so state from one task's sandbox never leaks into another task."""
@@ -74,11 +80,11 @@ def repeat_guard(next_step):
         pass
     if count == 1 or (count and script == 'show.py'):
         # A repeat may come from a later stage that never saw the output (the locator and the fixer share /tmp), and
-        # show.py prints the code the fixer copies old_string from, so print the output again instead of stopping.
+        # show.py prints the numbered code the edits are made from, so print the output again instead of stopping.
         if count >= 2:
             print(f'STOP: this is call number {count + 1} of "{sig}". The code below is unchanged since your first call. '
                   'Do not call show.py on it again: use it now for your next step (write your report or plan, or '
-                  'call edit_file / apply_edit). To see lines below the shown part, call show.py with [file, "start-end"].')
+                  'call edit.py / apply_edit). To see lines below the shown part, call show.py with [file, "start-end"].')
         else:
             print(f'NOTE: you already ran "{sig}"; same output as before:')
         if count >= 2:
@@ -88,7 +94,7 @@ def repeat_guard(next_step):
                 report = last_candidate_report(with_code=False)
                 if report:
                     print(f'\nYou have viewed this {count + 1} times. If you are the locator, stop and write this '
-                          f'report now:\n{report}\nIf you are the fixer, call edit_file now.')
+                          f'report now:\n{report}\nIf you are the fixer, call edit.py now.')
             atexit.register(tail)
         return
     if count:
@@ -98,7 +104,7 @@ def repeat_guard(next_step):
         if report:
             print('STOP calling scripts. If you are the locator, write this as your final message now:')
             print(report)
-            print('If you are the fixer, call edit_file now with 3-6 lines copied from the code shown earlier.')
+            print('If you are the fixer, call edit.py now with the line numbers of the code shown earlier.')
         else:
             print('NEXT: ' + next_step)
         sys.exit(0)
