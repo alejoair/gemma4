@@ -101,8 +101,11 @@ def resolve_file(root, given):
 def main():
     # Drop shell flags and placeholders copied from the usage text; split "file symbol" given as one argument.
     args = [a for a in sys.argv[1:] if not a.startswith('-') and a.strip() not in PLACEHOLDERS]
-    if len(args) == 1 and ' ' in args[0].strip() and args[0].split()[0].endswith('.py'):
-        args = args[0].split(None, 1)
+    if len(args) == 1:
+        # "file symbol", "file,37-101" or "file:symbol" given as one argument.
+        m = re.fullmatch(r'\s*(\S+?\.\w+)\s*[,: ]\s*(.+)', args[0])
+        if m and '/' in m.group(1) or (m and m.group(1).endswith('.py')):
+            args = [m.group(1), m.group(2).strip()]
     repeat_guard('use the code printed earlier: edit it with edit.py and its line numbers, or write your report.')
     root = repo_root()
     if not args:
