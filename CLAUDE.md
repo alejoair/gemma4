@@ -63,4 +63,4 @@ curl -s -A swe-monitor "https://llm.rayflow.dev/_monitor/request/<id>"
 curl -s -A swe-monitor "https://llm.rayflow.dev/_monitor/events?since=<t>"
 ```
 
-Map a request to its pipeline stage by `tool_names`: skill tools + `search_similar_code` = locator, only `get_code_subgraph` = grapher, `apply_edit` + skill tools = fixer, `edit_file` + skill tools = apply_edit (the editor agent the fixer calls as a tool), `submit_patch` = submitter.
+Map a request to its pipeline stage by `tool_names`: skill tools + `search_similar_code` = locator, only `get_code_subgraph` = grapher, only skill tools = planner, only `apply_edit` = fixer, `edit_file` + skill tools = apply_edit (the editor agent the fixer calls as a tool), `submit_patch` = submitter.

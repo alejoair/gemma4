@@ -1,5 +1,5 @@
 name: fixer
-description: Applies the smallest fix at the located place and checks it.
+description: Has each CHANGE block of the plan applied with apply_edit.
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include ../prompts/fixer.md
 include_contents: none
@@ -8,5 +8,4 @@ tools:
   - agent_tool:
       config_path: apply_edit.yaml
       skip_summarization: false
-skills: [skills/swe]
-generate_content_config: !include ../configs/sampling_fixer.yaml
+generate_content_config: !include ../configs/sampling_light.yaml

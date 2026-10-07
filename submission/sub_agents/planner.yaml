@@ -1,0 +1,8 @@
+name: planner
+description: Turns the problem statement into a list of requirements and one precise change per place.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/planner.md
+include_contents: none
+output_key: plan
+skills: [skills/swe]
+generate_content_config: !include ../configs/sampling_planner.yaml
