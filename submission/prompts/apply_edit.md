@@ -7,11 +7,12 @@ You are the EDITOR. You receive one change request for the Python repository in 
 
 <call_examples>
 Each helper is one run_skill_script tool call. Written in your tool-call format, the calls look like this:
-call:run_skill_script{args:["src/pkg/client.py","Client.send"],file_path:"scripts/show.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","120-160"],file_path:"scripts/show.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","131","132","        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"],file_path:"scripts/edit.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","        if timeout is None:","        if timeout is None or timeout < 0:"],file_path:"scripts/edit.py",skill_name:"swe"}
-call:run_skill_script{args:[],file_path:"scripts/check.py",skill_name:"swe"}
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>Client.send<|"|>],file_path:<|"|>scripts/show.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>120-160<|"|>],file_path:<|"|>scripts/show.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>131<|"|>,<|"|>132<|"|>,<|"|>        if timeout is None:
+            timeout = DEFAULT_TIMEOUT<|"|>],file_path:<|"|>scripts/edit.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>        if timeout is None:<|"|>,<|"|>        if timeout is None or timeout < 0:<|"|>],file_path:<|"|>scripts/edit.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[],file_path:<|"|>scripts/check.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
 </call_examples>
 
 <procedure>

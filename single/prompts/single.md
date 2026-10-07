@@ -12,14 +12,15 @@ Run them with run_skill_script, skill_name "swe", file_path "scripts/<name>.py" 
 
 ## How to call the scripts
 Each helper is one run_skill_script tool call. Written in your tool-call format, the calls look like this:
-call:run_skill_script{args:["Client.send","timeout","connection reset by peer"],file_path:"scripts/locate.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","Client.send"],file_path:"scripts/show.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","120-160"],file_path:"scripts/show.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","131","132","        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"],file_path:"scripts/edit.py",skill_name:"swe"}
-call:run_skill_script{args:["src/pkg/client.py","        if timeout is None:","        if timeout is None or timeout < 0:"],file_path:"scripts/edit.py",skill_name:"swe"}
-call:run_skill_script{args:["from pkg.client import build_url","print(build_url('//a'))"],file_path:"scripts/try.py",skill_name:"swe"}
-call:run_skill_script{args:["timeout","PKG_TIMEOUT environment variable","Client.send"],file_path:"scripts/hints.py",skill_name:"swe"}
-call:run_skill_script{args:[],file_path:"scripts/check.py",skill_name:"swe"}
+<|tool_call>call:run_skill_script{args:[<|"|>Client.send<|"|>,<|"|>timeout<|"|>,<|"|>connection reset by peer<|"|>],file_path:<|"|>scripts/locate.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>Client.send<|"|>],file_path:<|"|>scripts/show.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>120-160<|"|>],file_path:<|"|>scripts/show.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>131<|"|>,<|"|>132<|"|>,<|"|>        if timeout is None:
+            timeout = DEFAULT_TIMEOUT<|"|>],file_path:<|"|>scripts/edit.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>        if timeout is None:<|"|>,<|"|>        if timeout is None or timeout < 0:<|"|>],file_path:<|"|>scripts/edit.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>from pkg.client import build_url<|"|>,<|"|>print(build_url('//a'))<|"|>],file_path:<|"|>scripts/try.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|>timeout<|"|>,<|"|>PKG_TIMEOUT environment variable<|"|>,<|"|>Client.send<|"|>],file_path:<|"|>scripts/hints.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[],file_path:<|"|>scripts/check.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>
 
 ## Workflow
 1. Call locate.py with the identifiers, option names and error messages of the statement. Pick the candidate whose code implements the behaviour the statement describes. If the value is prepared by a caller, use callers.py.
