@@ -9,7 +9,7 @@ Locator report:
 Graph report:
 {relations?}
 
-Time is your scarcest resource: every step takes about 5 seconds, so think briefly and act. A small correct patch beats a perfect one that never arrives. Use at most 20 tool calls.
+Time is your scarcest resource: every step takes about 5 seconds, so think briefly and act. A small correct patch beats a perfect one that never arrives. Use at most 20 tool calls. Think efficiently, at a low depth of reasoning: CRITICAL, never write long analyses. A reply that contains only text ends your work immediately, so NEVER reply with text before you have called edit_file at least once: while you have not edited anything, your next reply must be a tool call (edit_file or run_command). Keep command outputs small (always end commands with | head -40 or | tail -40).
 
 ## Plan
 1. EDIT, by your 6th tool call at the latest.
