@@ -45,6 +45,25 @@ def _clean(a):
     return a.strip().strip(',').strip().strip('"\'`').strip()
 
 
+def _split_packed(argv):
+    """Models sometimes pack every argument into one string that looks like a JSON list: ['a.py", "10-20'] or
+    ['["a.py", "10-20"]']. Unpack it into separate arguments."""
+    if len(argv) != 2 or '", "' not in argv[1] and '","' not in argv[1]:
+        return argv
+    raw = argv[1].strip()
+    for candidate in (raw, '[' + raw + ']', '["' + raw.strip('[]').strip('"') + '"]'):
+        try:
+            items = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(items, list) and len(items) > 1 and all(isinstance(i, str) for i in items):
+            return [argv[0]] + items
+    return argv
+
+
+sys.argv = _split_packed(sys.argv)
+
+
 # edit.py keeps its new text exactly as given (indentation matters); only its file and range are cleaned.
 # try.py keeps its code exactly as given too.
 _keep_from = {'edit.py': 4, 'try.py': 1}.get(os.path.basename(sys.argv[0]), len(sys.argv))
