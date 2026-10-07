@@ -31,9 +31,11 @@ RULES = [
     (r'\b(url|path|uri|slash|separator)\b',
      'URL/path handling: check where the string is normalised (split, join, strip, quote) and also the caller that '
      'builds the value before passing it on (callers.py).'),
-    (r'\b(env|environment variable|NO_COLOR|FORCE_COLOR|TERM)\b',
-     'Environment variable: find os.environ / getenv reads (locate.py environ) and keep the precedence rules '
-     'between explicit arguments and the variable.'),
+    (r'\b(env|environment variable|environ|[A-Z][A-Z0-9]*_[A-Z0-9_]+)\b',
+     'Environment variable: find the os.environ / getenv reads (locate.py environ) and keep the precedence between '
+     'explicit arguments and variables. For a new or boolean-like variable handle each value explicitly: "0" turns '
+     'the feature off, "1" turns it on, an empty string counts as unset, and any other value keeps the default '
+     'behaviour; check how related variables (for example NO_COLOR, FORCE_COLOR) treat empty values too.'),
     (r'\b(async|await|asyncio|anyio|sync)\b',
      'Sync/async: if the package has both sync and async versions of the code, apply the same change to both files.'),
     (r'\b(docs?|documentation|readme|typo)\b',
