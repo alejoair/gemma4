@@ -5,6 +5,7 @@ function and class of the package's source files (tests and docs excluded), and 
 with their code, so the caller only has to pick one.
 """
 import collections
+import difflib
 import math
 import os
 import re
@@ -57,6 +58,41 @@ def extract_terms(text):
     return terms
 
 
+def add_close_identifiers(terms, sources, text=''):
+    """For each code-like term that appears nowhere in the source (a plural, a wrong class name), add the closest
+    identifiers that do exist, so a statement that says `Parameters.empty` still finds `param.empty` / `Parameter`."""
+    # Same case rule as the scoring below: code-like terms (weight > 1) must match with their exact case.
+    missing = [t for t, w in terms.items() if w >= 2 and ' ' not in t and not any(t in src for src in sources.values())]
+    if not missing:
+        return {}
+    vocab = set()
+    for src in sources.values():
+        vocab.update(WORD.findall(src))
+    vocab = sorted(v for v in vocab if len(v) >= 3)
+    lower = {}
+    for v in vocab:
+        lower.setdefault(v.lower(), v)
+    replaced = {}
+    for head, attr in re.findall(r'\b([A-Za-z_]\w*)\.([A-Za-z_]\w+)\b', text):
+        # `Missing.attr`: the attribute access is what the code really contains (param.empty for Parameters.empty).
+        if head in missing and any('.' + attr in src for src in sources.values()):
+            terms['.' + attr] = max(terms.get('.' + attr, 0), terms[head])
+            replaced.setdefault(head, []).append('.' + attr)
+    for t in missing:
+        base = t.split('.')[-1]
+        found = []
+        for cand in (base[:-1] if base.endswith('s') else '', base.lower()):
+            if cand and cand.lower() in lower:
+                found.append(lower[cand.lower()])
+        found += difflib.get_close_matches(base, vocab, n=3, cutoff=0.8)
+        found = list(dict.fromkeys(f for f in found if f != t))[:3]
+        if found:
+            replaced[t] = replaced.get(t, []) + found
+            for f in found:
+                terms.setdefault(f, max(1, terms[t] - 1))
+    return replaced
+
+
 def main():
     text = ' '.join(sys.argv[1:]).strip()
     if not text:
@@ -95,11 +131,12 @@ def main():
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')
         print('NEXT: run locate.py again with the identifiers, option names or error message of the statement.')
         return
+    sources = {rel: read_text(root, rel) for rel in iter_py(root)}
+    replaced = add_close_identifiers(terms, sources, text)
     strong = [t for t, w in terms.items() if w >= 3]
     files = {}
     df = collections.Counter()
-    for rel in iter_py(root):
-        src = read_text(root, rel)
+    for rel, src in sources.items():
         if not src:
             continue
         low = src.lower()
@@ -147,7 +184,11 @@ def main():
         print('NEXT: run locate.py again with other names from the statement (an error message, option or class name).')
         return
     ranked = sorted(scores, key=lambda k: (-(scores[k] * (1 + len(hits[k]))), k))
-    out = ['Search terms: ' + ', '.join(list(terms)[:15]), '']
+    out = ['Search terms: ' + ', '.join(list(terms)[:15])]
+    if replaced:
+        out.append('Not in the code, searched the closest names instead: ' +
+                   '; '.join(f'{t} -> {", ".join(v)}' for t, v in replaced.items()))
+    out.append('')
     for n, key in enumerate(ranked[:5], 1):
         rel, name = key
         kind, start, end = info[key]
