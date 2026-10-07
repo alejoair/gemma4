@@ -119,7 +119,7 @@ def main():
             out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}']
             if len(defs) > 1:
                 out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
-            out += ['----- code -----'] + [f'{n:>5}| {l}' for n, l in enumerate(lines[start - 1:min(end, start + 59)], start)]
+            out += ['----- code -----'] + [f'{n:>5}|{l}' for n, l in enumerate(lines[start - 1:min(end, start + 59)], start)]
             if end > start + 59:
                 out.append(f'----- {end - start - 59} more lines: show.py {rel} {start + 60} {end} -----')
             out.append('NEXT: if this function implements the behaviour, write the report from this code; '
@@ -207,7 +207,7 @@ def main():
     if best_name != '<module>':
         remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
     out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
-    out += [f'{n:>5}| {l}' for n, l in enumerate(body, start)]
+    out += [f'{n:>5}|{l}' for n, l in enumerate(body, start)]
     if end > start + 39:
         out.append(f'    ... ({end - start - 39} more lines; use show.py {best_rel} {best_name})')
     out += ['', 'NEXT: pick the candidate whose code implements the behaviour in the statement. '

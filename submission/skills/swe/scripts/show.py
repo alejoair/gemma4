@@ -211,7 +211,7 @@ def main():
         body = collapse_strings(src, lines, start, end)
         if len(body) < end - start + 1:
             out = [label, '----- code (long text strings hidden as [...]) -----'] + \
-                [f'{"":>5}| {t}' if '[... text lines' in t else f'{n:>5}| {t}' for n, t in body[:MAX_LINES]]
+                [f'{"":>5}|{t}' if '[... text lines' in t else f'{n:>5}|{t}' for n, t in body[:MAX_LINES]]
             if len(body) > MAX_LINES:
                 nxt = body[MAX_LINES - 1][0] + 1
                 out.append(f'----- {end - nxt + 1} more lines: show.py {rel} {nxt}-{end} -----')
@@ -221,7 +221,7 @@ def main():
             print(clip('\n'.join(out), 5000))
             return
     shown_end = min(end, start + MAX_LINES - 1)
-    out = [label, '----- code -----'] + [f'{n:>5}| {t}' for n, t in enumerate(lines[start - 1:shown_end], start)]
+    out = [label, '----- code -----'] + [f'{n:>5}|{t}' for n, t in enumerate(lines[start - 1:shown_end], start)]
     if shown_end < end:
         out.append(f'----- {end - shown_end} more lines: show.py {rel} {shown_end + 1} {end} -----')
     else:

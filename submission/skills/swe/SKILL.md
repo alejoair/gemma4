@@ -6,7 +6,7 @@ Run each script with run_skill_script, skill_name "swe", file_path "scripts/<nam
 
 - scripts/locate.py  args: words from the problem statement -> best functions with code
 - scripts/show.py    args: [file, symbol] or [file, "start-end"] or [file, a line of code] -> the code with line numbers
-- scripts/edit.py    args: [file, start, end, new lines] -> replaces lines start..end (numbers from show.py); an edit that breaks the syntax is not applied
+- scripts/edit.py    args: [file, start, end, new lines] or [file, old lines, new lines] -> replaces those lines; an edit that breaks the syntax is not applied
 - scripts/try.py     args: lines of Python code -> runs them outside the repository (the repo's code importable) and prints the output; for experiments, leaves no files
 - scripts/callers.py args: [name] -> definition, callers and tests using it
 - scripts/tests_for.py args: [file_or_symbol] or [file_or_symbol, "--run"] -> related tests and their result
