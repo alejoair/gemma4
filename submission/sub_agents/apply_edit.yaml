@@ -1,0 +1,7 @@
+name: apply_edit
+description: 'Applies one code change in one function and verifies it. Request text: "FILE: <path>\nSYMBOL: <function or Class.method>\nCHANGE: <exactly what the new code must do>". Returns EDITED, the changed lines, and the VERDICT of check.py.'
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/apply_edit.md
+tools: [edit_file]
+skills: [skills/swe]
+generate_content_config: !include ../configs/sampling_editor.yaml
