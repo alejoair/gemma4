@@ -37,7 +37,15 @@ def collapse_strings(src, lines, start, end):
     """Lines start..end with the inside of long string literals (docstrings, Doc("...") texts) replaced by one
     marker line, so the code of a long, heavily documented function fits on screen."""
     hidden = {}
+    texts = []
     for node in ast.walk(parse(src) or ast.Module(body=[], type_ignores=[])):
+        # Only documentation text: docstrings and plain strings passed as arguments (Doc("""...""")). Never parts
+        # of f-strings or assigned strings, which are code the fix may have to edit.
+        if isinstance(node, ast.Expr):
+            texts.append(node.value)
+        elif isinstance(node, ast.Call):
+            texts.extend(node.args)
+    for node in texts:
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.end_lineno - node.lineno >= 3 \
                 and start <= node.lineno and node.end_lineno <= end:
             hidden[node.lineno + 1] = node.end_lineno - 1
