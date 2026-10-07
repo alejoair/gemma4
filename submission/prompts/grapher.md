@@ -6,7 +6,7 @@ Problem statement:
 Locator report:
 {locus?}
 
-Call get_code_subgraph once or twice with the function and class names from the locator report (the SYMBOL, and the names of any functions or classes that appear in its CODE). If a name is not found, try the bare function or class name without its module or class prefix. Time is scarce: every step takes about 5 seconds, so at most 3 tool calls and no long deliberation.
+Call get_code_subgraph EXACTLY ONCE, with the SYMBOL from the locator report (and at most two other function or class names that appear in its CODE) in the nodes list, for example nodes=["_ansi_tokenize"]. Do not call it a second time, whatever the result is: an empty or small result is a valid answer, and in that case you write NONE in the fields you cannot fill. Every tool call spends a shared budget that the next stages need, so after that single call you must write your final report immediately, without any other tool call and without explaining your reasoning.
 
 Your final message must be EXACTLY this format, under 150 words, nothing else:
 EDIT: <file :: symbol where the fix goes>
