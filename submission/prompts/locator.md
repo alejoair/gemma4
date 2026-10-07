@@ -12,6 +12,7 @@ You work with helper scripts of the skill "swe". Call each one with run_skill_sc
 - scripts/show.py, args = [file, symbol] -> the exact code of that function
 - scripts/callers.py, args = [function name] -> who calls it, to check whether the fix belongs in a caller
 Every script ends with a NEXT line that tells you the next step.
+The code-graph tools named in the task message (search_similar_code, get_code_neighbors, get_code_subgraph) are also available, with full dotted node names such as pkg.module.Class.method; the swe scripts give the same information faster.
 </tools>
 
 <procedure>
