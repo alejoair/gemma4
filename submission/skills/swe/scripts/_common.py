@@ -48,6 +48,8 @@ def _clean(a):
 def _split_packed(argv):
     """Models sometimes pack every argument into one string that looks like a JSON list: ['a.py", "10-20'] or
     ['["a.py", "10-20"]']. Unpack it into separate arguments."""
+    if len(argv) == 2 and ' | ' in argv[1] and '\n' not in argv[1]:
+        return [argv[0]] + [a.strip() for a in argv[1].split(' | ')]  # "file | 10-20"
     if len(argv) != 2 or '", "' not in argv[1] and '","' not in argv[1]:
         return argv
     raw = argv[1].strip()
