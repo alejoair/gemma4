@@ -20,7 +20,6 @@ run_skill_script(skill_name="swe", file_path="scripts/edit.py", args=["src/pkg/c
 run_skill_script(skill_name="swe", file_path="scripts/try.py", args=["from pkg.client import build_url", "print(build_url('//a'))"])
 run_skill_script(skill_name="swe", file_path="scripts/hints.py", args=["timeout", "PKG_TIMEOUT environment variable", "Client.send"])
 run_skill_script(skill_name="swe", file_path="scripts/check.py", args=[])
-Wrong calls that fail: file_path="src/pkg/client.py" (a repository file is not a script: it goes inside args); file_path="scripts/run_command.py" or any script not listed above (it does not exist); args=["src/pkg/client.py,120-160"] (give the file and the range as separate items); a call without skill_name.
 
 ## Workflow
 1. Call locate.py with the identifiers, option names and error messages of the statement. Pick the candidate whose code implements the behaviour the statement describes. If the value is prepared by a caller, use callers.py.

@@ -11,7 +11,6 @@ run_skill_script(skill_name="swe", file_path="scripts/hints.py", args=["timeout"
 run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "Client.send"])
 run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "120-160"])
 run_skill_script(skill_name="swe", file_path="scripts/try.py", args=["from pkg.client import build_url", "print(build_url('//a'))"])
-Wrong calls that fail: file_path="src/pkg/client.py" (a repository file is not a script: it goes inside args); file_path="scripts/run_command.py" or any script not listed above (it does not exist); args=["src/pkg/client.py,120-160"] (give the file and the range as separate items); a call without skill_name.
 </call_examples>
 
 <problem>
