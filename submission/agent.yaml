@@ -1,6 +1,8 @@
 agent_class: SequentialAgent
 name: swe_pipeline
-description: Locator (graph and read only) followed by a fixer that edits and submits.
+description: Locate with grep, inspect relations in the code graph, fix with edit and bash, then submit.
 sub_agents:
   - config_path: sub_agents/locator.yaml
+  - config_path: sub_agents/grapher.yaml
   - config_path: sub_agents/fixer.yaml
+  - config_path: sub_agents/submitter.yaml

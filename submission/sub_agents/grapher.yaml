@@ -1,0 +1,8 @@
+name: grapher
+description: Looks at how the located symbols relate to other code using the code graph.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include ../prompts/grapher.md
+include_contents: none
+output_key: relations
+tools: [get_code_subgraph]
+generate_content_config: !include ../configs/sampling.yaml
