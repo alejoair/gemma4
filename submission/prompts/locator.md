@@ -5,10 +5,14 @@ Problem statement:
 
 Find where the fix belongs, in at most 6 tool calls. Take the file paths, function and class names, error messages and option names that the statement mentions and find them with grep -rn "text" <package dir> | head -15 (always end with head), skipping tests and docs, then read_file (a narrow line range) on the code that must change. Run grep non-interactively and never run anything else. Time is scarce: every step takes about 5 seconds, so act without long deliberation.
 
-Your final message must be EXACTLY this format, under 200 words, nothing else:
+The next stages have no way to read files, so do not make them repeat your reading: copy the exact code that must change into your report, character for character with its indentation, from what read_file returned.
+
+Your final message must be EXACTLY this format, nothing else:
 FILE: <path>
 SYMBOL: <function or class>
 LINES: <start-end>
 CAUSE: <one or two sentences>
 CHANGE: <the minimal change to make, one to three sentences>
 ALSO: <other source files that must change for the fix to be complete, at most 2, or NONE>
+CODE:
+<the exact lines to change plus 3 lines of context on each side, at most 40 lines, verbatim; for a second file add a line "FILE: <path>" before its lines>

@@ -13,7 +13,7 @@ Time is your scarcest resource: every step takes about 5 seconds, so think brief
 
 ## Plan
 1. EDIT, by your 6th tool call at the latest.
-   - Look at the code you must change with run_command, for example sed -n 'START,ENDp' path (at most 100 lines at a time). Then edit_file with the smallest change that fixes the issue. Keep exact error strings, exception types, names and signatures from the statement.
+   - The locator report already contains the exact code to change under CODE. Do not read it again: use that text as old_string and call edit_file right away. Only if the text is missing, or edit_file says it was not found, look at the file with sed -n 'START,ENDp' path (at most 100 lines). Make the smallest change that fixes the issue. Keep exact error strings, exception types, names and signatures from the statement.
    - Edit only with edit_file, never with scripts or sed -i that rewrite files.
    - If several source files must change for the fix to be complete, change them all.
    - Run python -m py_compile on each edited file.
