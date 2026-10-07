@@ -1,0 +1,16 @@
+name: swe_single_agent
+description: One agent that locates, edits, checks and submits, using the deterministic swe scripts.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include prompts/single.md
+tools:
+  - read_file
+  - edit_file
+  - write_file
+  - run_command
+  - submit_patch
+  - get_status
+  - search_similar_code
+  - get_code_neighbors
+  - get_code_subgraph
+skills: [skills/swe]
+generate_content_config: !include configs/sampling_single.yaml
