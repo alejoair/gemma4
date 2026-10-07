@@ -166,7 +166,14 @@ def main():
             print(clip('\n'.join(out), 5000))
             return
     hi = min(len(updated), new_end + CONTEXT)
+    defs = re.compile(r'^\s*(?:async\s+)?(?:def|class)\s+(\w+)')
+    kept = {m.group(1) for m in map(defs.match, new) if m}
+    gone = [m.group(1) for m in map(defs.match, lines[start - 1:end]) if m and m.group(1) not in kept]
     out = [f'EDITED {rel}: lines {start}-{end} replaced by {len(new)} line(s){note}. Updated code:']
+    if gone:
+        out.insert(0, f'WARNING: this edit deleted the definition of {", ".join(gone)} (it was inside lines {start}-{end} '
+                      'and is not in your new text). If the statement does not ask to remove it, put it back: call '
+                      f'show.py on {rel} and re-add it with edit.py.')
     out += numbered(updated[shown_from - 1:hi], shown_from)
     out.append('NEXT: if more lines must change, call edit.py again (line numbers below this edit have shifted '
                f'by {len(new) - (end - start + 1)}); otherwise run check.py.')
