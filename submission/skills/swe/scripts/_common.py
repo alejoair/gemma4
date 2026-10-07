@@ -1,5 +1,7 @@
 """Shared helpers for the swe skill scripts: repository root, source-file walking and AST lookups."""
 import ast
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -41,7 +43,13 @@ if not isinstance(sys.stdout, _Tee):
 sys.argv = [sys.argv[0]] + [a.strip().strip(',').strip().strip('"\'`').strip() for a in sys.argv[1:]]
 sys.argv = [a for i, a in enumerate(sys.argv) if i == 0 or a]
 
-SEEN = '/tmp/swe_skill_seen.txt'
+def _state_path(name):
+    """Per-repository state file in /tmp, so state from one task's sandbox never leaks into another task."""
+    tag = hashlib.sha1((os.environ.get('PWD') or '/workspace').encode()).hexdigest()[:10]
+    return f'/tmp/swe_{name}_{tag}'
+
+
+SEEN = _state_path('seen.txt')
 NO_REPEAT_GUARD = {'check.py', 'journal.py'}
 
 
@@ -66,8 +74,37 @@ def repeat_guard(next_step):
     if count:
         print(f'REPEATED CALL: you already ran "{sig}" ({count + 1} times now). Its output is in the conversation '
               f'above and has not changed.')
-        print('NEXT: ' + next_step)
+        report = last_candidate_report()
+        if count >= 1 and report:
+            print('STOP calling scripts. If you are the locator, write this as your final message now:')
+            print(report)
+            print('If you are the fixer, call edit_file now with 3-6 lines copied from the code shown earlier.')
+        else:
+            print('NEXT: ' + next_step)
         sys.exit(0)
+
+
+CANDIDATE = _state_path('candidate.json')
+
+
+def remember_candidate(rel, name, start, end, code_lines):
+    """Store the best location found so far, so a looping model can be handed a finished report."""
+    try:
+        with open(CANDIDATE, 'w') as fh:
+            json.dump({'file': rel, 'symbol': name, 'graph_id': graph_id(rel, name), 'start': start, 'end': end,
+                       'code': code_lines[:25]}, fh)
+    except OSError:
+        pass
+
+
+def last_candidate_report():
+    try:
+        with open(CANDIDATE) as fh:
+            c = json.load(fh)
+    except (OSError, ValueError):
+        return ''
+    return '\n'.join([f"FILE: {c['file']}", f"SYMBOL: {c['symbol']}", f"GRAPH_ID: {c['graph_id']}",
+                      f"LINES: {c['start']}-{c['end']}", 'CODE:'] + c['code'] + ['ALSO: NONE'])
 
 
 def repo_root():

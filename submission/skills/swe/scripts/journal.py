@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402,F401  (tees output to the call log)
 import time
 
-STATE = '/tmp/swe_agent_journal.jsonl'
+STATE = _common._state_path('journal.jsonl')
 PHASES = ['locate', 'edit', 'verify', 'submit']
 NEXT = {
     'locate': 'run locate.py with names from the statement, view the best candidate with show.py, then report it.',

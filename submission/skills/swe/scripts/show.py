@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import (clip, find_definitions, find_symbol, graph_id, is_symbol_name, parse, read_text,  # noqa: E402
-                     repeat_guard, repo_root, symbols)
+                     remember_candidate, repeat_guard, repo_root, symbols)
 
 MAX_LINES = 90
 
@@ -64,6 +64,7 @@ def main():
         found = find_symbol(syms, args[1]) if is_symbol_name(args[1]) else []
         if found:
             name, kind, start, end = found[0]
+            remember_candidate(rel, name, start, end, lines[start - 1:end])
             label = f'{rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}'
             if len(found) > 1:
                 label += '  [also: ' + ', '.join(f'{n} {s}-{e}' for n, _, s, e in found[1:4]) + ']'

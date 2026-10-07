@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import (WORD, clip, enclosing, find_definitions, graph_id, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
-                     repeat_guard, repo_root, symbols)
+                     remember_candidate, repeat_guard, repo_root, symbols)
 
 STOP = set('''a an and are as at be been but by can could did do does for from had has have how i if in into is it its
 may might more most must no not of on or our should so some such than that the their them then there these they this
@@ -67,6 +67,7 @@ def main():
         if defs:
             rel, (name, kind, start, end) = defs[0]
             lines = read_text(root, rel).splitlines()
+            remember_candidate(rel, name, start, end, lines[start - 1:end])
             out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}']
             if len(defs) > 1:
                 out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
@@ -145,6 +146,8 @@ def main():
     kind, start, end = info[ranked[0]]
     src_lines = read_text(root, best_rel).splitlines()
     body = src_lines[start - 1:min(end, start + 39)]
+    if best_name != '<module>':
+        remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end])
     out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
     out += body
     if end > start + 39:
