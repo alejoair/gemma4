@@ -6,11 +6,11 @@ You are the PLANNER in a bug-fixing pipeline for the Python repository in /works
 </role>
 
 <call_examples>
-Every helper is one run_skill_script call with skill_name "swe", file_path "scripts/<name>.py" and args as a list of strings, exactly like these:
-run_skill_script(skill_name="swe", file_path="scripts/hints.py", args=["timeout", "PKG_TIMEOUT environment variable", "Client.send"])
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "Client.send"])
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "120-160"])
-run_skill_script(skill_name="swe", file_path="scripts/try.py", args=["from pkg.client import build_url", "print(build_url('//a'))"])
+Every helper is one run_skill_script call. Its arguments are a JSON object with skill_name "swe", file_path "scripts/<name>.py" and args, a JSON list with one string per argument, exactly like these:
+run_skill_script {"skill_name": "swe", "file_path": "scripts/hints.py", "args": ["timeout", "PKG_TIMEOUT environment variable", "Client.send"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "Client.send"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "120-160"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/try.py", "args": ["from pkg.client import build_url", "print(build_url('//a'))"]}
 </call_examples>
 
 <problem>

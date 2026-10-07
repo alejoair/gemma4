@@ -6,12 +6,12 @@ You are the EDITOR. You receive one change request for the Python repository in 
 </role>
 
 <call_examples>
-Every helper is one run_skill_script call with skill_name "swe", file_path "scripts/<name>.py" and args as a list of strings, exactly like these:
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "Client.send"])
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "120-160"])
-run_skill_script(skill_name="swe", file_path="scripts/edit.py", args=["src/pkg/client.py", "131", "132", "        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"])
-run_skill_script(skill_name="swe", file_path="scripts/edit.py", args=["src/pkg/client.py", "        if timeout is None:", "        if timeout is None or timeout < 0:"])
-run_skill_script(skill_name="swe", file_path="scripts/check.py", args=[])
+Every helper is one run_skill_script call. Its arguments are a JSON object with skill_name "swe", file_path "scripts/<name>.py" and args, a JSON list with one string per argument, exactly like these:
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "Client.send"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "120-160"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/edit.py", "args": ["src/pkg/client.py", "131", "132", "        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/edit.py", "args": ["src/pkg/client.py", "        if timeout is None:", "        if timeout is None or timeout < 0:"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/check.py", "args": []}
 </call_examples>
 
 <procedure>

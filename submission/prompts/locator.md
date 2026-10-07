@@ -16,11 +16,11 @@ The code-graph tools named in the task message (search_similar_code, get_code_ne
 </tools>
 
 <call_examples>
-Every helper is one run_skill_script call with skill_name "swe", file_path "scripts/<name>.py" and args as a list of strings, exactly like these:
-run_skill_script(skill_name="swe", file_path="scripts/locate.py", args=["Client.send", "timeout", "connection reset by peer"])
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "Client.send"])
-run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "120-160"])
-run_skill_script(skill_name="swe", file_path="scripts/callers.py", args=["build_url"])
+Every helper is one run_skill_script call. Its arguments are a JSON object with skill_name "swe", file_path "scripts/<name>.py" and args, a JSON list with one string per argument, exactly like these:
+run_skill_script {"skill_name": "swe", "file_path": "scripts/locate.py", "args": ["Client.send", "timeout", "connection reset by peer"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "Client.send"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "120-160"]}
+run_skill_script {"skill_name": "swe", "file_path": "scripts/callers.py", "args": ["build_url"]}
 </call_examples>
 
 <procedure>
