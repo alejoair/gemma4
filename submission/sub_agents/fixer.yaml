@@ -1,6 +1,6 @@
 name: fixer
 description: Applies the smallest fix at the located place and checks it.
-model: google/gemma-4-26b-a4b
+model: gemma-12b
 instruction: !include ../prompts/fixer.md
 include_contents: none
 output_key: edit_summary
