@@ -21,23 +21,15 @@ def git(root, *args):
 
 
 def failing_before(root, changed, ids):
-    """Run the failing tests on the original code (edit temporarily reverted); return the ones that pass there."""
-    saved = os.path.join('/tmp', 'swe_check_saved.diff')
-    diff = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True, text=True).stdout
-    if not diff.strip():
-        return None
-    with open(saved, 'w') as fh:
-        fh.write(diff)
-    tracked = [f for f in changed if os.path.exists(os.path.join(root, f))]
-    try:
-        subprocess.run(['git', '-c', 'safe.directory=*', 'checkout', '--', *tracked], cwd=root, capture_output=True, timeout=30)
-        code, base_summary = run_pytest(root, ids[:10], timeout=40)
-    finally:
-        subprocess.run(['git', '-c', 'safe.directory=*', 'checkout', '--', *tracked], cwd=root, capture_output=True, timeout=30)
-        r = subprocess.run(['git', '-c', 'safe.directory=*', 'apply', '--whitespace=nowarn', saved], cwd=root,
-                           capture_output=True, text=True, timeout=30)
+    """Run the failing tests against the original commit in a separate git worktree (the working tree is never
+    touched, so a timeout cannot lose the edit); return the tests that pass there."""
+    base = '/tmp/swe_check_base'
+    if not os.path.isdir(os.path.join(base, '.git')) and not os.path.isfile(os.path.join(base, '.git')):
+        r = subprocess.run(['git', '-c', 'safe.directory=*', 'worktree', 'add', '--detach', '-f', base, 'HEAD'],
+                           cwd=root, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
-            print('WARNING: could not restore the edit: ' + r.stderr[:200])
+            return None
+    code, base_summary = run_pytest(base, ids[:40], timeout=25)
     if code is None:
         return None
     still = set(failed_ids(base_summary)) if code != 0 else set()
@@ -75,8 +67,13 @@ def main():
                 if t not in tests:
                     tests.append(t)
     if tests:
-        code, summary = run_pytest(root, tests[:3])
-        out.append(f'Tests run: {", ".join(tests[:3])} (exit {code})\n{summary}')
+        code, summary = run_pytest(root, tests[:2], timeout=40)
+        out.append(f"Tests run: {', '.join(tests[:2])} (exit {code})")
+        lines = summary.splitlines()
+        failed_lines = [l for l in lines if l.startswith(('FAILED', 'ERROR'))]
+        out += [l for l in lines if not l.startswith(('FAILED', 'ERROR'))][:6] + failed_lines[:8]
+        if len(failed_lines) > 8:
+            out.append(f'... and {len(failed_lines) - 8} more failing tests')
         if code == 0:
             out.append('VERDICT: OK. The edit compiles and the related tests pass; the change is ready to submit.')
         elif code is None:
@@ -88,14 +85,16 @@ def main():
                 out.append('The same tests also fail without your edit (environment or pre-existing failure).')
                 out.append('VERDICT: OK. Your edit did not break these tests; the change is ready to submit.')
             elif new:
-                out.append('These tests pass without your edit, so your edit breaks them: ' + ', '.join(new[:5]))
+                out.append(f'{len(new)} of these tests pass without your edit, so your edit breaks them: ' + ', '.join(new[:5]))
                 out.append('VERDICT: YOUR EDIT BREAKS TESTS. Read the failure above and fix your edit, then run check.py again.')
             else:
                 out.append('VERDICT: TESTS FAIL. Read the failure above: fix it if your edit caused it, '
                            'otherwise the change is ready to submit.')
     else:
         out.append('VERDICT: OK. The edit compiles; no related tests were found. The change is ready to submit.')
-    print(clip('\n'.join(out)))
+    verdict = [l for l in out if l.startswith('VERDICT')]
+    body = [l for l in out if not l.startswith('VERDICT')]
+    print(clip('\n'.join(body), 3500) + ('\n' + verdict[-1] if verdict else ''))
 
 
 if __name__ == '__main__':
