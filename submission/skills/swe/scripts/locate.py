@@ -46,6 +46,8 @@ def extract_terms(text):
         phrase = m[0] or m[1]
         if ' ' in phrase:
             add(phrase, 4)
+    for tok in re.findall(r'\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b', text):
+        add(tok, 3)  # dotted names (pydantic.v1, Console.print) are searched whole, not only by their parts
     for tok in WORD.findall(text):
         if '_' in tok.strip('_') or re.search(r'[a-z][A-Z]', tok) or re.match(r'^[A-Z][a-z]+[A-Z]', tok):
             add(tok, 4)
@@ -217,7 +219,21 @@ def main():
         missing = [t for t in strong if not any(t in hits[k] for k in ranked[:5])]
         if missing:
             out.append('Terms not found in the top candidates: ' + ', '.join(missing[:8]))
+    imports = importing_files(sources, [t for t in terms if '.' in t.strip('.')])
+    if imports:
+        out.append('Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
     print(clip('\n'.join(out)))
+
+
+def importing_files(sources, modules):
+    """For dotted module-like terms, the source files whose import lines mention them (import lines are not scored)."""
+    found = {}
+    for t in modules:
+        pat = re.compile(r'^\s*(?:from\s+' + re.escape(t) + r'\b|import\s+' + re.escape(t) + r'\b)', re.M)
+        hits = sorted((rel for rel, src in sources.items() if pat.search(src)), key=lambda r: (is_doc_path(r), r))
+        if hits:
+            found[t] = hits[:6]
+    return found
 
 
 if __name__ == '__main__':
