@@ -166,7 +166,8 @@ def iter_py(root, tests=False, docs=False):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith('.') and not d.endswith('.egg-info'))
         for fn in sorted(filenames):
-            if not fn.endswith('.py'):
+            if not fn.endswith('.py') or fn.startswith('.'):
+                # Hidden files are not repository code (the harness drops .adk_exec_*.py runners in /workspace).
                 continue
             rel = os.path.relpath(os.path.join(dirpath, fn), root)
             if is_test_path(rel) and not tests:
