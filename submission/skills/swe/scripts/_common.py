@@ -301,7 +301,7 @@ def clip(text, limit=MAX_OUT):
         return text
     lines = text.splitlines()
     tail = []
-    while lines and (lines[-1].startswith(('NEXT', 'VERDICT', '-----', 'Terms not found', 'Most matching')) or not lines[-1].strip()):
+    while lines and (lines[-1].startswith(('NEXT', 'VERDICT', '-----', 'Terms not found', 'Most matching', 'Files that import')) or not lines[-1].strip()):
         tail.insert(0, lines.pop())
     head = '\n'.join(lines)
     room = max(500, limit - sum(len(t) + 1 for t in tail) - 30)

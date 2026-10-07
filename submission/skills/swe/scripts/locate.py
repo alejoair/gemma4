@@ -221,7 +221,9 @@ def main():
             out.append('Terms not found in the top candidates: ' + ', '.join(missing[:8]))
     imports = importing_files(sources, [t for t in terms if '.' in t.strip('.')])
     if imports:
-        out.append('Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
+        # Before the closing NEXT lines, so clipping a long output keeps both.
+        nxt = next(i for i, l in enumerate(out) if l.startswith('NEXT'))
+        out.insert(nxt, 'Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
     print(clip('\n'.join(out)))
 
 
