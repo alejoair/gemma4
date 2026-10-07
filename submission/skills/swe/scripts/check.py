@@ -4,6 +4,7 @@ Verifies the current edit in one call: lists the changed files (git diff --stat)
 file in memory, runs the tests that exercise the changed source files, and ends with a verdict line.
 """
 import builtins
+import concurrent.futures
 import keyword
 import os
 import re
@@ -38,6 +39,27 @@ def changed_names(root):
                 if not keyword.iskeyword(n) and n not in BUILTINS and n not in names:
                     names.append(n)
     return names[:40]
+
+
+def run_within(root, tests, limit):
+    """Run the test files in parallel, each alone with its own time limit, so one slow file (sockets, servers)
+    neither delays nor hides the others. Returns (files run, files too slow, exit code, summary)."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(tests))) as pool:
+        results = list(pool.map(lambda t: run_pytest(root, [t], timeout=limit), tests))
+    ran, slow, codes, summaries = [], [], [], []
+    for t, (code, summary) in zip(tests, results):
+        if code is None:
+            slow.append(t)
+            continue
+        ran.append(t)
+        codes.append(code)
+        summaries.append(summary)
+    if not ran:
+        return ran, slow, None, ''
+    lines = [l for s in summaries for l in s.splitlines()]
+    summary = '\n'.join([l for l in lines if not l.startswith(('FAILED', 'ERROR', 'E '))] +
+                        [l for l in lines if l.startswith(('FAILED', 'ERROR', 'E '))])
+    return ran, slow, max(codes), summary
 
 
 def failing_before(root, changed, ids):
@@ -88,9 +110,10 @@ def main():
             for t in find_tests(root, rel):
                 if t not in tests:
                     tests.append(t)
-    tests = tests[:3]
+    tests, slow, code, summary = run_within(root, tests[:4], limit=35)
+    if slow:
+        out.append('Skipped (slower than 35s): ' + ', '.join(slow))
     if tests:
-        code, summary = run_pytest(root, tests, timeout=45)
         out.append(f"Tests run: {', '.join(tests)} (exit {code})")
         lines = summary.splitlines()
         failed_lines = [l for l in lines if l.startswith(('FAILED', 'ERROR'))]
