@@ -36,6 +36,16 @@ def main():
     args = sys.argv[1:]
     repeat_guard('use the code printed earlier: copy old_string from it, or write your report.')
     root = repo_root()
+    if len(args) == 1 and args[0].endswith('.py'):
+        rel = args[0][2:] if args[0].startswith('./') else args[0]
+        syms = symbols(parse(read_text(root, rel)))
+        if not syms:
+            print(f'File not found or has no functions: {rel}. Use locate.py to find the right path.')
+            return
+        print(f'Symbols in {rel} (name kind lines):')
+        print(clip('\n'.join(f'  {n} {k} {s}-{e}' for n, k, s, e in syms)))
+        print(f'NEXT: run show.py {rel} <symbol> with one of the names above.')
+        return
     if len(args) == 1:
         defs = find_definitions(root, args[0])
         if not defs:

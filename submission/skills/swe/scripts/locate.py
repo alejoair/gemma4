@@ -60,6 +60,12 @@ def main():
     if not text:
         print('usage: locate.py <words from the problem statement>')
         return
+    args = sys.argv[1:]
+    if len(args) == 2 and args[0].endswith('.py') and is_symbol_name(args[1]):
+        # [file, symbol] is a show.py request: hand it over so the right symbol is shown and remembered.
+        show = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'show.py')
+        sys.stdout.flush()
+        os.execv(sys.executable, [sys.executable, show] + args)
     repeat_guard('pick the best candidate from the earlier output and write the report, or run show.py <file> <symbol>.')
     root = repo_root()
     if len(sys.argv) == 2 and is_symbol_name(text):

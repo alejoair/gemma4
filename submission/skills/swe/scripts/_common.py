@@ -71,11 +71,16 @@ def repeat_guard(next_step):
             fh.write(sig + '\n')
     except OSError:
         pass
+    if count == 1:
+        # The first repeat may come from a later stage that never saw the output (the locator and the fixer share
+        # /tmp), so print the output again and only stop the third identical call.
+        print(f'NOTE: you already ran "{sig}"; same output as before:')
+        return
     if count:
         print(f'REPEATED CALL: you already ran "{sig}" ({count + 1} times now). Its output is in the conversation '
               f'above and has not changed.')
         report = last_candidate_report()
-        if count >= 1 and report:
+        if report:
             print('STOP calling scripts. If you are the locator, write this as your final message now:')
             print(report)
             print('If you are the fixer, call edit_file now with 3-6 lines copied from the code shown earlier.')

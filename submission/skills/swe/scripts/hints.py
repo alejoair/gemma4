@@ -60,7 +60,8 @@ def main():
     for i, msg in enumerate(found[:6], 1):
         print(f'{i}. {msg}')
     if not found:
-        print('1. Find the function that produces the behaviour described, change it minimally, keep its signature.')
+        found = ['Find the function that produces the behaviour described, change it minimally, keep its signature.']
+        print(f'1. {found[0]}')
     print(f'{len(found[:6]) + 1}. Keep exact names, messages and exception types written in the statement.')
     if names:
         print('Names written in the statement: ' + ', '.join(dict.fromkeys(names))[:400])
