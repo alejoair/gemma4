@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import _state_path, clip, is_test_path, read_text, repo_root  # noqa: E402
+from _common import GOOD, _state_path, clip, is_test_path, read_text, repo_root  # noqa: E402
 from tests_for import failed_ids, find_tests, find_tests_for_names, run_pytest  # noqa: E402
 
 BUILTINS = set(dir(builtins)) | {'self', 'return', 'None', 'True', 'False'}
@@ -63,9 +63,6 @@ def run_within(root, tests, limit):
     summary = '\n'.join([l for l in lines if not l.startswith(('FAILED', 'ERROR', 'E '))] +
                         [l for l in lines if l.startswith(('FAILED', 'ERROR', 'E '))])
     return ran, slow, (max(codes) if any(codes) else 0), summary
-
-
-GOOD = _state_path('good.patch')
 
 
 def save_good(root):
@@ -153,7 +150,8 @@ def main():
         return
     out.append('Changed files:\n' + (git(root, 'diff', '--stat') or '(none)'))
     if untracked:
-        out.append('New files: ' + ', '.join(untracked[:10]))
+        out.append('New files: ' + ', '.join(untracked[:10]) + '. New files end up in the patch: if you created any '
+                   'of them only to try something, delete it (use try.py for experiments).')
     problems = []
     for rel in changed + untracked:
         if not rel.endswith('.py') or not os.path.exists(os.path.join(root, rel)):
@@ -213,6 +211,7 @@ def main():
     body = [l for l in out if not l.startswith('VERDICT')]
     if verdict and verdict[-1].startswith('VERDICT: OK'):
         save_good(root)
+        verdict[-1] += ' If the statement needs no other change, finish now as your instructions say.'
         if warning:
             verdict[-1] += (' But first read the WARNING above: if the statement does not ask to remove that code, '
                             'change it so the existing behaviour is kept.')

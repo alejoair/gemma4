@@ -46,7 +46,10 @@ def _clean(a):
 
 
 # edit.py keeps its new text exactly as given (indentation matters); only its file and range are cleaned.
-_keep_from = 4 if os.path.basename(sys.argv[0]) == 'edit.py' else len(sys.argv)
+# try.py keeps its code exactly as given too.
+_keep_from = {'edit.py': 4, 'try.py': 1}.get(os.path.basename(sys.argv[0]), len(sys.argv))
+if os.path.basename(sys.argv[0]) == 'edit.py' and len(sys.argv) > 3 and not _clean(sys.argv[3]).isdigit():
+    _keep_from = 3  # [file, "start-end", text]: the text starts at the third argument
 sys.argv = [sys.argv[0]] + [_clean(a) if i < _keep_from else a for i, a in enumerate(sys.argv[1:], 1)]
 sys.argv = [a for i, a in enumerate(sys.argv) if i == 0 or a or i >= _keep_from]
 
@@ -57,6 +60,29 @@ def _state_path(name):
 
 
 SEEN = _state_path('seen.txt')
+GOOD = _state_path('good.patch')
+
+
+def _status_note():
+    """After a history compaction the model forgets that its fix is already done. When the working tree is exactly
+    the state check.py approved, every script says so at the end of its output."""
+    if os.path.basename(sys.argv[0]) == 'check.py' or not os.path.exists(GOOD) or not os.path.getsize(GOOD):
+        return
+    try:
+        root = repo_root()
+        r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
+                           text=True, timeout=20)
+        with open(GOOD) as fh:
+            good = fh.read()
+    except Exception:  # noqa: BLE001
+        return
+    if r.returncode == 0 and r.stdout and r.stdout == good:
+        files = sorted(set(re.findall(r'^\+\+\+ b/(\S+)', good, re.M)))
+        print(f'\nSTATUS: your current changes ({", ".join(files)}) already passed check.py. If the statement needs '
+              'no other change, finish now as your instructions say.')
+
+
+atexit.register(_status_note)
 NO_REPEAT_GUARD = {'check.py', 'journal.py'}
 
 

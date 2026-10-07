@@ -36,9 +36,13 @@ def clean_text(text):
 
 def parse_range(args):
     """(start, end, rest of args) from [start, end, text...] or ["start-end", text...]."""
-    m = re.fullmatch(r'\s*(\d+)\s*[-:,]\s*(\d+)\s*', args[0]) if args else None
-    if m:
-        return int(m.group(1)), int(m.group(2)), args[1:]
+    nums = re.findall(r'\d+', args[0]) if args and re.fullmatch(r'[\d\s,:\-]+', args[0]) else []
+    if nums:
+        # "79-82", "79:82", "79, 82" or a list of the lines "79,80,81,82": the first and last number.
+        nums = [int(n) for n in nums]
+        if len(nums) == 1 and len(args) >= 2 and args[1].strip().isdigit():
+            return nums[0], int(args[1]), args[2:]
+        return min(nums), max(nums), args[1:]
     if len(args) >= 2 and args[0].strip().isdigit() and args[1].strip().isdigit():
         return int(args[0]), int(args[1]), args[2:]
     if args and args[0].strip().isdigit():
