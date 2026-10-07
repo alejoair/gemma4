@@ -75,7 +75,12 @@ def repeat_guard(next_step):
     if count == 1 or (count and script == 'show.py'):
         # A repeat may come from a later stage that never saw the output (the locator and the fixer share /tmp), and
         # show.py prints the code the fixer copies old_string from, so print the output again instead of stopping.
-        print(f'NOTE: you already ran "{sig}"; same output as before:')
+        if count >= 2:
+            print(f'STOP: this is call number {count + 1} of "{sig}". The code below is unchanged since your first call. '
+                  'Do not call show.py on it again: use it now for your next step (write your report or plan, or '
+                  'call edit_file / apply_edit). To see lines below the shown part, call show.py with [file, "start-end"].')
+        else:
+            print(f'NOTE: you already ran "{sig}"; same output as before:')
         if count >= 2:
             # After the code (never instead of it), built at exit so it includes the symbol this call shows: a
             # looping locator still gets a finished report.
