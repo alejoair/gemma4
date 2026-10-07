@@ -1,6 +1,6 @@
 name: locator
 description: Finds where the fix belongs using only grep and file reads.
-model: gemma-4-31b-it-qat-w4a16-ct
+model: google/gemma-4-26b-a4b
 instruction: !include ../prompts/locator.md
 output_key: locus
 tools: [run_command, read_file]

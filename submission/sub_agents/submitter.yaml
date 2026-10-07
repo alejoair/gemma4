@@ -1,6 +1,6 @@
 name: submitter
 description: Submits the patch.
-model: gemma-4-31b-it-qat-w4a16-ct
+model: google/gemma-4-26b-a4b
 instruction: !include ../prompts/submitter.md
 include_contents: none
 tools: [submit_patch]
