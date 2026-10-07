@@ -1,0 +1,62 @@
+"""journal.py <phase> <note ...>   |   journal.py show
+
+Work log kept in /tmp across calls and pipeline stages. Phases: locate, edit, verify, submit. Each call records
+the note, flags a step that repeats an earlier one, and prints the log plus the next step for the current phase.
+"""
+import json
+import os
+import re
+import sys
+import time
+
+STATE = '/tmp/swe_agent_journal.jsonl'
+PHASES = ['locate', 'edit', 'verify', 'submit']
+NEXT = {
+    'locate': 'run locate.py with names from the statement, view the best candidate with show.py, then report it.',
+    'edit': 'view the exact code with show.py, call edit_file with 3-6 copied lines as old_string, then run check.py.',
+    'verify': 'run check.py; when the verdict is OK the change is ready.',
+    'submit': 'call submit_patch once.',
+}
+
+
+def norm(text):
+    return re.sub(r'[^a-z0-9_./]+', ' ', text.lower()).strip()
+
+
+def load():
+    if not os.path.exists(STATE):
+        return []
+    with open(STATE) as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+def main():
+    args = sys.argv[1:]
+    entries = load()
+    if args and args[0] != 'show':
+        phase = args[0].lower() if args[0].lower() in PHASES else (entries[-1]['phase'] if entries else 'locate')
+        note = ' '.join(args[1:] if args[0].lower() in PHASES else args)
+        repeated = [e for e in entries if norm(e['note']) == norm(note) and note]
+        entry = {'t': time.time(), 'phase': phase, 'note': note}
+        with open(STATE, 'a') as fh:
+            fh.write(json.dumps(entry) + '\n')
+        entries.append(entry)
+        if repeated:
+            print(f'REPEATED STEP: you already did "{note}" (step {entries.index(repeated[0]) + 1}). '
+                  'Its result is already in the conversation; take the next step instead.')
+    if not entries:
+        print('Journal is empty. Record a step with: journal.py <phase> <what you do and why>')
+        return
+    phase = entries[-1]['phase']
+    in_phase = sum(1 for e in entries if e['phase'] == phase)
+    print(f'Journal ({len(entries)} steps):')
+    for i, e in enumerate(entries[-12:], max(1, len(entries) - 11)):
+        print(f'  {i}. [{e["phase"]}] {e["note"][:140]}')
+    print(f'Current phase: {phase} ({in_phase} steps in it).')
+    if phase == 'locate' and in_phase >= 4:
+        print('You have searched enough: report the best candidate you have now.')
+    print('NEXT: ' + NEXT.get(phase, NEXT['locate']))
+
+
+if __name__ == '__main__':
+    main()
