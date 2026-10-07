@@ -51,10 +51,12 @@ def main():
     text = ' '.join(sys.argv[1:])
     if not text.strip():
         print('usage: hints.py <problem statement text>')
+        print('NEXT: call hints.py with the key words and names of the problem statement.')
         return
-    _common.repeat_guard('follow the checklist printed earlier: run locate.py with the names from the statement.')
+    _common.repeat_guard('follow the checklist printed earlier and continue your procedure.')
     low = text.lower()
-    found = [msg for pat, msg in RULES if re.search(pat, low)]
+    # Lower-case words match the lowered text; patterns with capitals (ENV_VAR names) match the original text.
+    found = [msg for pat, msg in RULES if re.search(pat, low) or re.search(pat, text)]
     names = re.findall(r'`([^`]{2,60})`', text)
     print('Checklist for this statement:')
     for i, msg in enumerate(found[:6], 1):

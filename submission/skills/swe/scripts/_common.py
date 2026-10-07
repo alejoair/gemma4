@@ -233,13 +233,18 @@ def enclosing(syms, line):
     return best
 
 
-def find_symbol(syms, wanted):
-    """Match 'Class.method', 'method' or a dotted suffix; exact qualified match first."""
+def find_symbol(syms, wanted, strict=False):
+    """Match 'Class.method', 'method' or a dotted suffix: exact qualified matches first, then dotted suffixes. Only
+    when nothing matches the whole name, and not in strict mode, fall back to the last part ('X.setup' -> any
+    'setup'), because a qualified name must not silently resolve to a method of another class."""
     exact = [s for s in syms if s[0] == wanted]
     if exact:
         return exact
+    suffix = [s for s in syms if s[0].endswith('.' + wanted)]
+    if suffix or strict:
+        return suffix
     tail = wanted.split('.')[-1]
-    return [s for s in syms if s[0] == tail or s[0].endswith('.' + wanted) or s[0].split('.')[-1] == tail]
+    return [s for s in syms if s[0] == tail or s[0].split('.')[-1] == tail]
 
 
 def clip(text, limit=MAX_OUT):
@@ -261,18 +266,21 @@ WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
 def find_definitions(root, name, limit=5):
-    """(file, (qualified_name, kind, start, end)) for every definition matching name in source files."""
+    """(file, (qualified_name, kind, start, end)) for every definition matching name: whole-name matches in any
+    file (source first, then docs and scripts) before matches of the last part only."""
     tail = name.split('.')[-1]
-    found = []
-    for rel in iter_py(root):
+    strict, loose = [], []
+    for rel in list(iter_py(root)) + [r for r in iter_py(root, docs=True) if is_doc_path(r)]:
         text = read_text(root, rel)
         if tail not in text:
             continue
-        for sym in find_symbol(symbols(parse(text)), name):
-            found.append((rel, sym))
-            if len(found) >= limit:
-                return found
-    return found
+        syms = symbols(parse(text))
+        strict += [(rel, sym) for sym in find_symbol(syms, name, strict=True)]
+        if len(strict) >= limit:
+            break
+        if '.' in name:
+            loose += [(rel, sym) for sym in find_symbol(syms, tail, strict=True)]
+    return (strict + loose)[:limit]
 
 
 def is_symbol_name(text):

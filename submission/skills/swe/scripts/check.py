@@ -8,6 +8,7 @@ import concurrent.futures
 import keyword
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -119,8 +120,16 @@ def removal_warning(root):
 def failing_before(root, changed, ids):
     """Run the failing tests against the original commit in a separate git worktree (the working tree is never
     touched, so a timeout cannot lose the edit); return the tests that pass there."""
-    base = '/tmp/swe_check_base'
-    if not os.path.isdir(os.path.join(base, '.git')) and not os.path.isfile(os.path.join(base, '.git')):
+    # One clean copy per repository (state path keyed by the workspace), checked to be at this repository's HEAD,
+    # so tasks that share /tmp never compare against another task's code.
+    base = _state_path('base')
+    head = subprocess.run(['git', '-c', 'safe.directory=*', 'rev-parse', 'HEAD'], cwd=root, capture_output=True,
+                          text=True, timeout=30).stdout.strip()
+    there = subprocess.run(['git', '-c', 'safe.directory=*', 'rev-parse', 'HEAD'], cwd=base, capture_output=True,
+                           text=True, timeout=30).stdout.strip() if os.path.isdir(base) else ''
+    if not head or there != head or not os.path.exists(os.path.join(base, '.git')):
+        shutil.rmtree(base, ignore_errors=True)
+        subprocess.run(['git', '-c', 'safe.directory=*', 'worktree', 'prune'], cwd=root, capture_output=True, timeout=30)
         r = subprocess.run(['git', '-c', 'safe.directory=*', 'worktree', 'add', '--detach', '-f', base, 'HEAD'],
                            cwd=root, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
@@ -135,7 +144,9 @@ def failing_before(root, changed, ids):
 def main():
     root = repo_root()
     changed = [f for f in git(root, 'diff', '--name-only').splitlines() if f]
-    untracked = [f for f in git(root, 'ls-files', '--others', '--exclude-standard').splitlines() if f.endswith('.py')]
+    # Hidden files are the harness' own runners (.adk_exec_*.py), not edits.
+    untracked = [f for f in git(root, 'ls-files', '--others', '--exclude-standard').splitlines()
+                 if f.endswith('.py') and not os.path.basename(f).startswith('.')]
     out = []
     if not changed and not untracked:
         print('VERDICT: NO CHANGES. Nothing is edited yet; make the edit with edit.py first.')

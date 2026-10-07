@@ -132,6 +132,8 @@ def main():
         return
     if extra and len(args) == 1:
         args = [rel, '.'.join(extra)]
+    elif extra and is_symbol_name(args[1]):
+        args[1] = '.'.join(extra + [args[1]])  # ["pkg.mod.Cls", "meth"] -> Cls.meth
     src = read_text(root, rel)
     lines = src.splitlines()
     syms = symbols(parse(src)) if rel.endswith('.py') else []
@@ -143,26 +145,44 @@ def main():
             return
         args = [rel, f'1-{min(len(lines), MAX_LINES)}']
     args[0] = rel
+    if not lines:
+        print(f'{rel} is empty.')
+        print('NEXT: run locate.py to find the file that holds the code.')
+        return
+    # "FastAPI.setup()", "def setup" and "class Foo:" name a symbol too.
+    args[1] = re.sub(r'^(?:async\s+)?(?:def|class)\s+|\(.*\)\s*:?$|:$', '', args[1].strip()) or args[1]
     spec = ' '.join(args[1:])
     rng = re.fullmatch(r'\s*(\d+)\s*(?:[-:,]|\s)\s*(\d+)\s*', spec)
     if rng:
-        start, end = max(1, int(rng.group(1))), min(len(lines), int(rng.group(2)))
+        a, b = sorted((int(rng.group(1)), int(rng.group(2))))
+        start, end = max(1, a), min(len(lines), b)
+        if start > end:
+            print(f'Lines {a}-{b} are outside {rel}, which has {len(lines)} lines.')
+            print(f'NEXT: call show.py {rel} with a range inside 1-{len(lines)} or with a function name.')
+            return
         label = f'{rel} lines {start}-{end}'
     elif args[1].isdigit():
-        start, end = max(1, int(args[1]) - 15), min(len(lines), int(args[1]) + 25)
+        center = min(int(args[1]), len(lines))
+        start, end = max(1, center - 15), min(len(lines), center + 25)
         label = f'{rel} lines {start}-{end}'
     else:
-        found = find_symbol(syms, args[1]) if is_symbol_name(args[1]) else []
+        found = find_symbol(syms, args[1], strict=True) if is_symbol_name(args[1]) else []
         if not found and is_symbol_name(args[1]):
-            # The symbol lives in another file: show it from there instead of failing.
-            defs = [d for d in find_definitions(root, args[1]) if d[0] != rel]
+            # The whole name is not in this file: show it from the file that defines it, and only then fall back to
+            # a symbol of this file with the same last part.
+            defs = [d for d in find_definitions(root, args[1]) if d[0] != rel and
+                    (d[1][0] == args[1] or d[1][0].endswith('.' + args[1]))]
             if defs:
                 print(f'{args[1]} is not defined in {rel}; it is defined in {defs[0][0]}:')
                 rel = defs[0][0]
                 src = read_text(root, rel)
                 lines = src.splitlines()
                 syms = symbols(parse(src))
+                found = find_symbol(syms, args[1], strict=True)
+            else:
                 found = find_symbol(syms, args[1])
+                if found:
+                    print(f'{args[1]} is not defined anywhere; the closest symbol in {rel} is {found[0][0]}:')
         if found:
             name, kind, start, end = found[0]
             remember_candidate(rel, name, start, end, lines[start - 1:end])
@@ -172,9 +192,12 @@ def main():
         else:
             # Not a symbol: treat the argument as a piece of code (for example an old_string that edit_file did not
             # find) and show the lines of the file that match it best, exactly as they are.
-            hit = best_match(lines, spec)
+            # A plain symbol name that is not defined is not a piece of code: say so instead of showing a fuzzy line.
+            hit = None if is_symbol_name(spec) else best_match(lines, spec)
             if hit is None:
-                names = [s[0] for s in syms if args[1].split('.')[-1].lower() in s[0].lower()][:10]
+                head = args[1].rsplit('.', 1)[0] + '.' if '.' in args[1] else None
+                names = ([s[0] for s in syms if head and s[0].startswith(head) and s[0].count('.') == head.count('.')] or
+                         [s[0] for s in syms if args[1].split('.')[-1].lower() in s[0].lower()])[:15]
                 top = ', '.join(s[0] for s in syms if '.' not in s[0])[:600]
                 print(f'Symbol or text {args[1]!r} not found in {rel}.' + (f' Similar symbols: {", ".join(names)}' if names
                       else (f' Top-level symbols: {top}' if top else f' The file has {len(lines)} lines.')))
@@ -195,7 +218,7 @@ def main():
             else:
                 out.append('----- end -----')
             out.append('NEXT: to change lines A-B call edit.py [file, A, B, new lines]; never include a [...] line.')
-            print(clip('\n'.join(out), 6000))
+            print(clip('\n'.join(out), 5000))
             return
     shown_end = min(end, start + MAX_LINES - 1)
     out = [label, '----- code -----'] + [f'{n:>5}| {t}' for n, t in enumerate(lines[start - 1:shown_end], start)]
@@ -204,7 +227,7 @@ def main():
     else:
         out.append('----- end -----')
     out.append(f'NEXT: to change lines A-B call edit.py ["{rel}", A, B, new lines] with the numbers above.')
-    print(clip('\n'.join(out), 6000))
+    print(clip('\n'.join(out), 5000))
 
 
 if __name__ == '__main__':

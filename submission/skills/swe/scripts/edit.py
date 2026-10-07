@@ -71,9 +71,11 @@ def main():
         usage('The new text contains a "[... text lines ...]" marker from show.py; those lines were hidden, not code.')
         return
     path = os.path.join(root, rel)
-    original = read_text(root, rel)
-    lines = original.split('\n')
-    trailing = original.endswith('\n')
+    with open(os.path.join(root, rel), encoding='utf-8', errors='surrogateescape', newline='') as fh:
+        original = fh.read()
+    eol = '\r\n' if '\r\n' in original else '\n'
+    lines = original.split(eol)
+    trailing = original.endswith(eol)
     if trailing:
         lines = lines[:-1]
     if not (1 <= start <= end <= len(lines)):
@@ -81,8 +83,8 @@ def main():
         return
     new = clean_text(text)
     updated = lines[:start - 1] + new + lines[end:]
-    content = '\n'.join(updated) + ('\n' if trailing else '')
-    with open(path, 'w') as fh:
+    content = eol.join(updated) + (eol if trailing else '')
+    with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as fh:
         fh.write(content)
     shown_from = max(1, start - CONTEXT)
     new_end = start + len(new) - 1
@@ -90,7 +92,7 @@ def main():
         try:
             compile(content, rel, 'exec')
         except SyntaxError as e:
-            with open(path, 'w') as fh:
+            with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as fh:
                 fh.write(original)
             bad = e.lineno or start
             lo, hi = max(1, min(bad, start) - CONTEXT), min(len(updated), max(bad, new_end) + CONTEXT)

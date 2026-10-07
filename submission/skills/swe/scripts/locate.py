@@ -12,7 +12,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (WORD, clip, enclosing, find_definitions, graph_id, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
+from _common import (WORD, clip, enclosing, find_definitions, graph_id, is_doc_path, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
                      remember_candidate, repeat_guard, repo_root, symbols)
 
 STOP = set('''a an and are as at be been but by can could did do does for from had has have how i if in into is it its
@@ -119,7 +119,7 @@ def main():
             out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}']
             if len(defs) > 1:
                 out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
-            out += ['----- code (verbatim) -----'] + lines[start - 1:min(end, start + 59)]
+            out += ['----- code -----'] + [f'{n:>5}| {l}' for n, l in enumerate(lines[start - 1:min(end, start + 59)], start)]
             if end > start + 59:
                 out.append(f'----- {end - start - 59} more lines: show.py {rel} {start + 60} {end} -----')
             out.append('NEXT: if this function implements the behaviour, write the report from this code; '
@@ -131,7 +131,9 @@ def main():
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')
         print('NEXT: run locate.py again with the identifiers, option names or error message of the statement.')
         return
-    sources = {rel: read_text(root, rel) for rel in iter_py(root)}
+    # Docs examples (docs_src/) and repository scripts (scripts/) are searched too, at half weight: some issues are
+    # fixed there (tutorial code, release scripts).
+    sources = {rel: read_text(root, rel) for rel in iter_py(root, docs=True)}
     replaced = add_close_identifiers(terms, sources, text)
     strong = [t for t, w in terms.items() if w >= 3]
     files = {}
@@ -140,7 +142,8 @@ def main():
         if not src:
             continue
         low = src.lower()
-        present = [t for t in terms if t.lower() in low]
+        # Same case rule as the scoring below: plain words ignore case, code-like terms must match exactly.
+        present = [t for t in terms if (t.lower() in low if terms[t] == 1 else t in src)]
         if present:
             files[rel] = (src, present)
             df.update(present)
@@ -154,6 +157,7 @@ def main():
     for rel, (src, present) in files.items():
         syms = symbols(parse(src))
         lines = src.splitlines()
+        file_weight = 0.5 if is_doc_path(rel) else 1.0
         for t in present:
             w = terms[t] * idf[t]
             pat = re.compile(re.escape(t), re.IGNORECASE if terms[t] == 1 else 0)
@@ -163,7 +167,7 @@ def main():
                 stripped = line.strip()
                 if stripped.startswith(('import ', 'from ')):
                     continue
-                lw = w * (0.4 if stripped.startswith('#') else 1.0)
+                lw = w * file_weight * (0.4 if stripped.startswith('#') else 1.0)
                 enc = enclosing(syms, i)
                 if enc is None:
                     key = (rel, '<module>')
@@ -203,7 +207,7 @@ def main():
     if best_name != '<module>':
         remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
     out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
-    out += body
+    out += [f'{n:>5}| {l}' for n, l in enumerate(body, start)]
     if end > start + 39:
         out.append(f'    ... ({end - start - 39} more lines; use show.py {best_rel} {best_name})')
     out += ['', 'NEXT: pick the candidate whose code implements the behaviour in the statement. '

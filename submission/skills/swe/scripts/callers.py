@@ -16,6 +16,7 @@ from _common import clip, enclosing, graph_id, iter_py, parse, read_text, repeat
 def main():
     if len(sys.argv) < 2:
         print('usage: callers.py <function_or_class_name>')
+        print('NEXT: call callers.py with the name of the function or class the statement is about.')
         return
     repeat_guard('use the callers listed earlier: view one with show.py <file> <symbol> or write your report.')
     name = sys.argv[1].split('.')[-1].strip('()')
@@ -23,7 +24,7 @@ def main():
     define = re.compile(r'^\s*(async\s+def|def|class)\s+' + re.escape(name) + r'\b')
     use = re.compile(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'\b')
     defs, src_uses, test_uses = [], collections.OrderedDict(), collections.OrderedDict()
-    for rel in iter_py(root, tests=True):
+    for rel in iter_py(root, tests=True, docs=True):
         text = read_text(root, rel)
         if name not in text:
             continue

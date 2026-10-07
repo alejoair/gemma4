@@ -92,7 +92,8 @@ def failed_ids(summary):
     for line in summary.splitlines():
         if line.startswith(('FAILED ', 'ERROR ')):
             tid = line.split(' ', 1)[1].split(' - ')[0].strip()
-            if '::' in tid and tid not in ids:
+            # "path::test" for a failing test, "path.py" for a file that fails to import (collection error).
+            if ('::' in tid or tid.endswith('.py')) and tid not in ids:
                 ids.append(tid)
     return ids
 
