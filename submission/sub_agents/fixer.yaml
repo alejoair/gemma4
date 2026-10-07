@@ -5,4 +5,4 @@ instruction: !include ../prompts/fixer.md
 include_contents: none
 output_key: edit_summary
 tools: [edit_file, run_command]
-generate_content_config: !include ../configs/sampling.yaml
+generate_content_config: !include ../configs/sampling_fixer.yaml
