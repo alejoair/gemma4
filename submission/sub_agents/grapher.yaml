@@ -5,4 +5,4 @@ instruction: !include ../prompts/grapher.md
 include_contents: none
 output_key: relations
 tools: [get_code_subgraph]
-generate_content_config: !include ../configs/sampling.yaml
+generate_content_config: !include ../configs/sampling_light.yaml

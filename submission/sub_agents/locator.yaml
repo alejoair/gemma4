@@ -5,4 +5,4 @@ instruction: !include ../prompts/locator.md
 include_contents: none
 output_key: locus
 tools: [run_command, read_file]
-generate_content_config: !include ../configs/sampling.yaml
+generate_content_config: !include ../configs/sampling_locator.yaml

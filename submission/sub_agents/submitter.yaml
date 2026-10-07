@@ -4,4 +4,4 @@ model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include ../prompts/submitter.md
 include_contents: none
 tools: [submit_patch]
-generate_content_config: !include ../configs/sampling.yaml
+generate_content_config: !include ../configs/sampling_light.yaml
