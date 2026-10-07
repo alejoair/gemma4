@@ -3,8 +3,12 @@
 Rule-based SWE checklist. Reads the statement and prints the places a fix of that kind usually has to touch and
 the searches that find them, so the model follows a concrete plan instead of improvising one.
 """
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402,F401  (tees output to the call log)
 
 RULES = [
     (r'\b(error|exception|raise[sd]?|traceback|warning)\b',
@@ -46,6 +50,7 @@ def main():
     if not text.strip():
         print('usage: hints.py <problem statement text>')
         return
+    _common.repeat_guard('follow the checklist printed earlier: run locate.py with the names from the statement.')
     low = text.lower()
     found = [msg for pat, msg in RULES if re.search(pat, low)]
     names = re.findall(r'`([^`]{2,60})`', text)

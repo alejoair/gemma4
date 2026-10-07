@@ -7,18 +7,25 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, find_symbol, parse, read_text, repo_root, symbols  # noqa: E402
+from _common import clip, find_definitions, find_symbol, parse, read_text, repeat_guard, repo_root, symbols  # noqa: E402
 
 MAX_LINES = 90
 
 
 def main():
     args = sys.argv[1:]
+    repeat_guard('use the code printed earlier: copy old_string from it, or write your report.')
+    root = repo_root()
+    if len(args) == 1:
+        defs = find_definitions(root, args[0])
+        if not defs:
+            print(f'usage: show.py <file> <symbol>. No definition of {args[0]} found; run locate.py first.')
+            return
+        args = [defs[0][0], args[0]]
     if len(args) < 2:
         print('usage: show.py <file> <symbol>  or  show.py <file> <start_line> <end_line>')
         return
-    root = repo_root()
-    rel = args[0].lstrip('./') if not os.path.isabs(args[0]) else os.path.relpath(args[0], root)
+    rel = (args[0][2:] if args[0].startswith('./') else args[0]) if not os.path.isabs(args[0]) else os.path.relpath(args[0], root)
     src = read_text(root, rel)
     if not src:
         print(f'File not found or empty: {rel}. Use locate.py to find the right path.')

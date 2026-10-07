@@ -11,7 +11,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import WORD, clip, enclosing, iter_py, parse, read_text, repo_root, symbols  # noqa: E402
+from _common import (WORD, clip, enclosing, find_definitions, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
+                     repeat_guard, repo_root, symbols)
 
 STOP = set('''a an and are as at be been but by can could did do does for from had has have how i if in into is it its
 may might more most must no not of on or our should so some such than that the their them then there these they this
@@ -59,7 +60,23 @@ def main():
     if not text:
         print('usage: locate.py <words from the problem statement>')
         return
+    repeat_guard('pick the best candidate from the earlier output and write the report, or run show.py <file> <symbol>.')
     root = repo_root()
+    if len(sys.argv) == 2 and is_symbol_name(text):
+        defs = find_definitions(root, text)
+        if defs:
+            rel, (name, kind, start, end) = defs[0]
+            lines = read_text(root, rel).splitlines()
+            out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}']
+            if len(defs) > 1:
+                out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
+            out += ['----- code (verbatim) -----'] + lines[start - 1:min(end, start + 59)]
+            if end > start + 59:
+                out.append(f'----- {end - start - 59} more lines: show.py {rel} {start + 60} {end} -----')
+            out.append('NEXT: if this function implements the behaviour, write the report from this code; '
+                       'otherwise run callers.py ' + text.split('.')[-1] + ' to find the caller that prepares its input.')
+            print(clip('\n'.join(out)))
+            return
     terms = extract_terms(text)
     if not terms:
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')

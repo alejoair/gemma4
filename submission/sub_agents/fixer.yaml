@@ -4,5 +4,6 @@ model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include ../prompts/fixer.md
 include_contents: none
 output_key: edit_summary
-tools: [edit_file, run_command]
+tools: [edit_file]
+skills: [skills/swe]
 generate_content_config: !include ../configs/sampling_fixer.yaml

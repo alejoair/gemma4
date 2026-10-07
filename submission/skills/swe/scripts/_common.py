@@ -3,11 +3,66 @@ import ast
 import os
 import re
 import subprocess
+import sys
 
 SKIP_DIRS = {'.git', '.hg', '.tox', '.nox', '.venv', 'venv', 'env', 'node_modules', 'build', 'dist', '__pycache__',
              '.mypy_cache', '.pytest_cache', '.ruff_cache', 'site-packages', '.eggs'}
 DOC_DIRS = {'docs', 'doc', 'docs_src', 'examples', 'example', 'benchmarks', 'scripts'}
 MAX_OUT = 4000
+CALL_LOG = '/tmp/swe_skill_calls.log'
+
+
+class _Tee:
+    """Copy everything a script prints into CALL_LOG, so a run can be reviewed afterwards."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        try:
+            self.fh = open(CALL_LOG, 'a')
+            self.fh.write('\n===== ' + ' '.join(os.path.basename(a) if i == 0 else a for i, a in enumerate(sys.argv))[:300] + '\n')
+        except OSError:
+            self.fh = None
+
+    def write(self, s):
+        if self.fh:
+            self.fh.write(s)
+            self.fh.flush()
+        return self.stream.write(s)
+
+    def flush(self):
+        self.stream.flush()
+
+
+if not isinstance(sys.stdout, _Tee):
+    sys.stdout = _Tee(sys.stdout)
+
+SEEN = '/tmp/swe_skill_seen.txt'
+NO_REPEAT_GUARD = {'check.py', 'journal.py'}
+
+
+def repeat_guard(next_step):
+    """Stop a call identical to an earlier one: print a short reminder instead of the same output again."""
+    script = os.path.basename(sys.argv[0])
+    if script in NO_REPEAT_GUARD:
+        return
+    sig = script + ' ' + ' '.join(a.strip().lower() for a in sys.argv[1:])
+    seen = []
+    try:
+        with open(SEEN) as fh:
+            seen = fh.read().splitlines()
+    except OSError:
+        pass
+    count = seen.count(sig)
+    try:
+        with open(SEEN, 'a') as fh:
+            fh.write(sig + '\n')
+    except OSError:
+        pass
+    if count:
+        print(f'REPEATED CALL: you already ran "{sig}" ({count + 1} times now). Its output is in the conversation '
+              f'above and has not changed.')
+        print('NEXT: ' + next_step)
+        sys.exit(0)
 
 
 def repo_root():
@@ -109,3 +164,22 @@ def clip(text, limit=MAX_OUT):
 
 
 WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+
+
+def find_definitions(root, name, limit=5):
+    """(file, (qualified_name, kind, start, end)) for every definition matching name in source files."""
+    tail = name.split('.')[-1]
+    found = []
+    for rel in iter_py(root):
+        text = read_text(root, rel)
+        if tail not in text:
+            continue
+        for sym in find_symbol(symbols(parse(text)), name):
+            found.append((rel, sym))
+            if len(found) >= limit:
+                return found
+    return found
+
+
+def is_symbol_name(text):
+    return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*', text.strip()))

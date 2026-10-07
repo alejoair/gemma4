@@ -10,13 +10,14 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, enclosing, iter_py, parse, read_text, repo_root, symbols  # noqa: E402
+from _common import clip, enclosing, iter_py, parse, read_text, repeat_guard, repo_root, symbols  # noqa: E402
 
 
 def main():
     if len(sys.argv) < 2:
         print('usage: callers.py <function_or_class_name>')
         return
+    repeat_guard('use the callers listed earlier: view one with show.py <file> <symbol> or write your report.')
     name = sys.argv[1].split('.')[-1].strip('()')
     root = repo_root()
     define = re.compile(r'^\s*(async\s+def|def|class)\s+' + re.escape(name) + r'\b')

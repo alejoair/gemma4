@@ -1,8 +1,9 @@
 name: locator
-description: Finds where the fix belongs using only grep and file reads.
+description: Finds where the fix belongs using the deterministic swe search scripts.
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include ../prompts/locator.md
 include_contents: none
 output_key: locus
-tools: [run_command, read_file]
+tools: [read_file]
+skills: [skills/swe]
 generate_content_config: !include ../configs/sampling_locator.yaml

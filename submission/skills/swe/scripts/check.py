@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import clip, is_test_path, read_text, repo_root  # noqa: E402
-from tests_for import find_tests, run_pytest  # noqa: E402
+from tests_for import failed_ids, find_tests, run_pytest  # noqa: E402
 
 
 def git(root, *args):
@@ -18,6 +18,30 @@ def git(root, *args):
         print(f'git {" ".join(args)} failed in {root}: {r.stderr.strip()[:300]}')
         sys.exit(0)
     return r.stdout.strip()
+
+
+def failing_before(root, changed, ids):
+    """Run the failing tests on the original code (edit temporarily reverted); return the ones that pass there."""
+    saved = os.path.join('/tmp', 'swe_check_saved.diff')
+    diff = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True, text=True).stdout
+    if not diff.strip():
+        return None
+    with open(saved, 'w') as fh:
+        fh.write(diff)
+    tracked = [f for f in changed if os.path.exists(os.path.join(root, f))]
+    try:
+        subprocess.run(['git', '-c', 'safe.directory=*', 'checkout', '--', *tracked], cwd=root, capture_output=True, timeout=30)
+        code, base_summary = run_pytest(root, ids[:10], timeout=40)
+    finally:
+        subprocess.run(['git', '-c', 'safe.directory=*', 'checkout', '--', *tracked], cwd=root, capture_output=True, timeout=30)
+        r = subprocess.run(['git', '-c', 'safe.directory=*', 'apply', '--whitespace=nowarn', saved], cwd=root,
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            print('WARNING: could not restore the edit: ' + r.stderr[:200])
+    if code is None:
+        return None
+    still = set(failed_ids(base_summary)) if code != 0 else set()
+    return [t for t in ids if t not in still]
 
 
 def main():
@@ -58,8 +82,17 @@ def main():
         elif code is None:
             out.append('VERDICT: TESTS TIMED OUT. The edit compiles; it can be submitted.')
         else:
-            out.append('VERDICT: TESTS FAIL. Read the failure above: fix it if your edit caused it, '
-                       'otherwise the change is ready to submit.')
+            ids = failed_ids(summary)
+            new = failing_before(root, changed, ids) if ids else None
+            if new == []:
+                out.append('The same tests also fail without your edit (environment or pre-existing failure).')
+                out.append('VERDICT: OK. Your edit did not break these tests; the change is ready to submit.')
+            elif new:
+                out.append('These tests pass without your edit, so your edit breaks them: ' + ', '.join(new[:5]))
+                out.append('VERDICT: YOUR EDIT BREAKS TESTS. Read the failure above and fix your edit, then run check.py again.')
+            else:
+                out.append('VERDICT: TESTS FAIL. Read the failure above: fix it if your edit caused it, '
+                           'otherwise the change is ready to submit.')
     else:
         out.append('VERDICT: OK. The edit compiles; no related tests were found. The change is ready to submit.')
     print(clip('\n'.join(out)))

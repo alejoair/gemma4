@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, is_test_path, iter_py, read_text, repo_root  # noqa: E402
+from _common import clip, is_test_path, iter_py, read_text, repeat_guard, repo_root  # noqa: E402
 
 
 def find_tests(root, target):
@@ -41,17 +41,28 @@ def find_tests(root, target):
     return [r for r, _ in scores.most_common(5)]
 
 
-def run_pytest(root, files, timeout=100):
+def run_pytest(root, files, timeout=60):
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
-    cmd = [sys.executable, '-m', 'pytest', '-x', '-q', '-p', 'no:cacheprovider', '--no-header', '-rf'] + files
+    cmd = [sys.executable, '-m', 'pytest', '--maxfail=10', '-q', '-p', 'no:cacheprovider', '--no-header', '-rf'] + files
     try:
         r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return None, f'pytest timed out after {timeout}s'
     text = (r.stdout + '\n' + r.stderr).strip().splitlines()
     summary = [l for l in text if re.search(r'\b(passed|failed|error|errors|no tests ran)\b', l)][-1:]
-    failures = [l for l in text if l.startswith(('FAILED', 'ERROR', 'E   '))][:12]
+    failures = [l for l in text if l.startswith(('FAILED', 'ERROR'))][:10] + [l for l in text if l.startswith('E   ')][:4]
     return r.returncode, '\n'.join(summary + failures) or '\n'.join(text[-15:])
+
+
+def failed_ids(summary):
+    """Test node ids from the FAILED/ERROR lines of a pytest summary."""
+    ids = []
+    for line in summary.splitlines():
+        if line.startswith(('FAILED ', 'ERROR ')):
+            tid = line.split(' ', 1)[1].split(' - ')[0].strip()
+            if '::' in tid and tid not in ids:
+                ids.append(tid)
+    return ids
 
 
 def main():
@@ -59,6 +70,7 @@ def main():
     if not args:
         print('usage: tests_for.py <file_or_symbol> [--run]')
         return
+    repeat_guard('use the earlier result.')
     root = repo_root()
     files = find_tests(root, args[0])
     if not files:
