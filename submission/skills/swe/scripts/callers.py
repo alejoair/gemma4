@@ -10,7 +10,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, enclosing, iter_py, parse, read_text, repeat_guard, repo_root, symbols  # noqa: E402
+from _common import clip, enclosing, graph_id, iter_py, parse, read_text, repeat_guard, repo_root, symbols  # noqa: E402
 
 
 def main():
@@ -30,7 +30,8 @@ def main():
         syms = symbols(parse(text))
         for i, line in enumerate(text.splitlines(), 1):
             if define.match(line):
-                defs.append(f'{rel}:{i}: {line.strip()[:110]}')
+                enc = enclosing(syms, i)
+                defs.append(f'{rel}:{i}: {line.strip()[:110]}' + (f'  graph id: {graph_id(rel, enc[0])}' if enc else ''))
             elif use.search(line) and not line.strip().startswith(('#', 'import ', 'from ')):
                 enc = enclosing(syms, i)
                 where = enc[0] if enc else '<module>'
@@ -39,7 +40,7 @@ def main():
     out = [f'Definitions of {name}:'] + (['  ' + d for d in defs] or ['  none found'])
     out.append(f'Callers / references in source ({len(src_uses)} places):')
     for (rel, where), ls in list(src_uses.items())[:15]:
-        out.append(f'  {rel} :: {where}')
+        out.append(f'  {rel} :: {where}  graph id: {graph_id(rel, where)}')
         out += ['      ' + l for l in ls[:2]]
     out.append(f'Tests that use it ({len(test_uses)} places): ' +
                ', '.join(sorted({rel for rel, _ in test_uses}))[:500])

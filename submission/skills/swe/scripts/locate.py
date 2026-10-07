@@ -11,7 +11,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (WORD, clip, enclosing, find_definitions, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
+from _common import (WORD, clip, enclosing, find_definitions, graph_id, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
                      repeat_guard, repo_root, symbols)
 
 STOP = set('''a an and are as at be been but by can could did do does for from had has have how i if in into is it its
@@ -67,7 +67,7 @@ def main():
         if defs:
             rel, (name, kind, start, end) = defs[0]
             lines = read_text(root, rel).splitlines()
-            out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}']
+            out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}']
             if len(defs) > 1:
                 out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
             out += ['----- code (verbatim) -----'] + lines[start - 1:min(end, start + 59)]
@@ -137,7 +137,8 @@ def main():
     for n, key in enumerate(ranked[:5], 1):
         rel, name = key
         kind, start, end = info[key]
-        out.append(f'#{n} {rel} :: {name} ({kind}, lines {start}-{end}) score={scores[key]:.1f} matched={sorted(hits[key])}')
+        out.append(f'#{n} {rel} :: {name} ({kind}, lines {start}-{end}) graph id: {graph_id(rel, name)} '
+                   f'score={scores[key]:.1f} matched={sorted(hits[key])}')
         for i, l in hit_lines[key][:3]:
             out.append(f'     {i}: {l}')
     best_rel, best_name = ranked[0]

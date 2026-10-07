@@ -7,7 +7,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, find_definitions, find_symbol, parse, read_text, repeat_guard, repo_root, symbols  # noqa: E402
+from _common import (clip, find_definitions, find_symbol, graph_id, parse, read_text, repeat_guard,  # noqa: E402
+                     repo_root, symbols)
 
 MAX_LINES = 90
 
@@ -46,7 +47,7 @@ def main():
                   ' Top-level symbols: ' + ', '.join(s[0] for s in syms if '.' not in s[0])[:600]))
             return
         name, kind, start, end = found[0]
-        label = f'{rel} :: {name} ({kind}) lines {start}-{end}'
+        label = f'{rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}'
         if len(found) > 1:
             label += '  [also: ' + ', '.join(f'{n} {s}-{e}' for n, _, s, e in found[1:4]) + ']'
     shown_end = min(end, start + MAX_LINES - 1)

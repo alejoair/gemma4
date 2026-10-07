@@ -7,7 +7,7 @@ You are the GRAPH stage of a bug-fixing pipeline for the Python repository in /w
 </located_code>
 
 <procedure>
-1. Call get_code_subgraph once, with nodes set to a list that holds the SYMBOL from the located code, for example nodes=["parse_header"].
+1. Call get_code_subgraph once, with nodes set to a list that holds the GRAPH_ID from the located code, for example nodes=["pkg.parser.Parser.parse_header"]. Graph nodes are full dotted paths (module path plus class and function), so always pass the full GRAPH_ID.
 2. Write the final report from the result. An empty or small result is a normal result: write NONE for every field it does not show.
 </procedure>
 

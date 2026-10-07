@@ -183,3 +183,16 @@ def find_definitions(root, name, limit=5):
 
 def is_symbol_name(text):
     return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*', text.strip()))
+
+
+def graph_id(rel, qualname):
+    """Fully qualified id used by the competition code graph, e.g. src/pkg/mod.py + Cls.meth -> pkg.mod.Cls.meth."""
+    parts = rel.replace('\\', '/')[:-3].split('/') if rel.endswith('.py') else rel.split('/')
+    if parts and parts[0] in ('src', 'lib'):
+        parts = parts[1:]
+    if parts and parts[-1] == '__init__':
+        parts = parts[:-1]
+    module = '.'.join(p for p in parts if p)
+    if not qualname or qualname == '<module>':
+        return module
+    return f'{module}.{qualname}' if module else qualname

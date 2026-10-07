@@ -25,6 +25,7 @@ Every script ends with a NEXT line that tells you the next step.
 Your final message is exactly these lines, written as plain text without any tag around them:
 FILE: <path>
 SYMBOL: <function or class>
+GRAPH_ID: <the graph id the scripts printed for it, for example pkg.parser.Parser.parse_header>
 LINES: <start-end>
 CODE:
 <the lines of that function most likely to change, plus 2 lines of context on each side, at most 25 lines, copied verbatim with their indentation>
@@ -34,6 +35,7 @@ ALSO: <another file that needs the same change, for example a sync/async twin, o
 <example>
 FILE: pkg/parser.py
 SYMBOL: Parser.parse_header
+GRAPH_ID: pkg.parser.Parser.parse_header
 LINES: 40-52
 CODE:
     def parse_header(self, line):
