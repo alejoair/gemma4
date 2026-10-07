@@ -14,6 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import clip, is_test_path, iter_py, read_text, repeat_guard, repo_root  # noqa: E402
 
 
+def is_test_file(rel):
+    """A file pytest collects by default: test_*.py or *_test.py (not helpers such as tests/testserver/server.py)."""
+    name = os.path.basename(rel)
+    return name.endswith('.py') and (name.startswith('test_') or name.endswith('_test.py'))
+
+
 def find_tests(root, target):
     """Rank test files by references to the target module path or symbol name."""
     keys = []
@@ -29,7 +35,7 @@ def find_tests(root, target):
     keys = [k for k in keys if k and k not in ('__init__',)]
     scores = collections.Counter()
     for rel in iter_py(root, tests=True, docs=False):
-        if not is_test_path(rel) or os.path.basename(rel) == 'conftest.py':
+        if not is_test_file(rel):
             continue
         text = read_text(root, rel)
         base = os.path.basename(rel)[:-3]
@@ -47,7 +53,7 @@ def find_tests_for_names(root, names, limit=3):
     so the tests that exercise the changed behaviour run even when they never name the changed module."""
     texts = {}
     for rel in iter_py(root, tests=True, docs=False):
-        if is_test_path(rel) and os.path.basename(rel) != 'conftest.py':
+        if is_test_file(rel):
             texts[rel] = read_text(root, rel)
     if not texts or not names:
         return []
