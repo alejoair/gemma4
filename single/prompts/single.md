@@ -10,6 +10,18 @@ Run them with run_skill_script, skill_name "swe", file_path "scripts/<name>.py" 
 - scripts/hints.py, args = key words of the statement -> a checklist of what a fix of that kind must cover
 - scripts/check.py, args = [] -> changed files, syntax check, the related tests, and a VERDICT; it undoes an edit that breaks tests
 
+## How to call the scripts
+Every helper is one run_skill_script call with skill_name "swe", file_path "scripts/<name>.py" and args as a list of strings, exactly like these:
+run_skill_script(skill_name="swe", file_path="scripts/locate.py", args=["Client.send", "timeout", "connection reset by peer"])
+run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "Client.send"])
+run_skill_script(skill_name="swe", file_path="scripts/show.py", args=["src/pkg/client.py", "120-160"])
+run_skill_script(skill_name="swe", file_path="scripts/edit.py", args=["src/pkg/client.py", "131", "132", "        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"])
+run_skill_script(skill_name="swe", file_path="scripts/edit.py", args=["src/pkg/client.py", "        if timeout is None:", "        if timeout is None or timeout < 0:"])
+run_skill_script(skill_name="swe", file_path="scripts/try.py", args=["from pkg.client import build_url", "print(build_url('//a'))"])
+run_skill_script(skill_name="swe", file_path="scripts/hints.py", args=["timeout", "PKG_TIMEOUT environment variable", "Client.send"])
+run_skill_script(skill_name="swe", file_path="scripts/check.py", args=[])
+Wrong calls that fail: file_path="src/pkg/client.py" (a repository file is not a script: it goes inside args); file_path="scripts/run_command.py" or any script not listed above (it does not exist); args=["src/pkg/client.py,120-160"] (give the file and the range as separate items); a call without skill_name.
+
 ## Workflow
 1. Call locate.py with the identifiers, option names and error messages of the statement. Pick the candidate whose code implements the behaviour the statement describes. If the value is prepared by a caller, use callers.py.
 2. Call hints.py with the key words of the statement. List for yourself every behaviour the statement asks for (each option, case, value or message it names) and the place each one belongs, including a second file when the package has sync and async versions of the same code.
