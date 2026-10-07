@@ -11,15 +11,15 @@ Run them with run_skill_script, skill_name "swe", file_path "scripts/<name>.py" 
 - scripts/check.py, args = [] -> changed files, syntax check, the related tests, and a VERDICT; it undoes an edit that breaks tests
 
 ## How to call the scripts
-Every helper is one run_skill_script call. Its arguments are a JSON object with skill_name "swe", file_path "scripts/<name>.py" and args, a JSON list with one string per argument, exactly like these:
-run_skill_script {"skill_name": "swe", "file_path": "scripts/locate.py", "args": ["Client.send", "timeout", "connection reset by peer"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "Client.send"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "120-160"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/edit.py", "args": ["src/pkg/client.py", "131", "132", "        if timeout is None:\n            timeout = DEFAULT_TIMEOUT"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/edit.py", "args": ["src/pkg/client.py", "        if timeout is None:", "        if timeout is None or timeout < 0:"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/try.py", "args": ["from pkg.client import build_url", "print(build_url('//a'))"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/hints.py", "args": ["timeout", "PKG_TIMEOUT environment variable", "Client.send"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/check.py", "args": []}
+Every helper is one run_skill_script call with three fields: skill_name is swe, file_path is the script, and args is a list of strings, one per item. Examples (items separated by |, ⏎ is a line break inside the text):
+- find candidate functions: skill_name swe, file_path scripts/locate.py, args 3 item(s): Client.send | timeout | connection reset by peer
+- see code with line numbers: skill_name swe, file_path scripts/show.py, args 2 item(s): src/pkg/client.py | Client.send
+- see code with line numbers: skill_name swe, file_path scripts/show.py, args 2 item(s): src/pkg/client.py | 120-160
+- replace lines: skill_name swe, file_path scripts/edit.py, args 4 item(s): src/pkg/client.py | 131 | 132 |         if timeout is None:⏎            timeout = DEFAULT_TIMEOUT
+- replace lines: skill_name swe, file_path scripts/edit.py, args 3 item(s): src/pkg/client.py |         if timeout is None: |         if timeout is None or timeout < 0:
+- run a snippet: skill_name swe, file_path scripts/try.py, args 2 item(s): from pkg.client import build_url | print(build_url('//a'))
+- get a checklist: skill_name swe, file_path scripts/hints.py, args 3 item(s): timeout | PKG_TIMEOUT environment variable | Client.send
+- check the edit: skill_name swe, file_path scripts/check.py, args 0 item(s): (no args)
 
 ## Workflow
 1. Call locate.py with the identifiers, option names and error messages of the statement. Pick the candidate whose code implements the behaviour the statement describes. If the value is prepared by a caller, use callers.py.

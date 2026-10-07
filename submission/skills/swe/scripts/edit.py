@@ -24,6 +24,7 @@ def numbered(lines, first):
 def clean_text(text):
     """The new text as file lines: real newlines (or escaped \\n when the model sent none), and without the line
     number prefixes of show.py when every line carries one."""
+    text = text.replace('⏎', '\n')
     if '\n' not in text and '\\n' in text:
         text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
     lines = text.split('\n')

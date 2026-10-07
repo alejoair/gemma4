@@ -21,6 +21,7 @@ def main():
         print('usage: try.py <python code>')
         print('NEXT: call try.py with the lines of Python to run, for example ["import json", "print(json.dumps(1))"].')
         return
+    code = code.replace('⏎', '\n')
     if '\n' not in code and '\\n' in code:
         code = code.replace('\\n', '\n').replace('\\t', '\t')
     root = repo_root()

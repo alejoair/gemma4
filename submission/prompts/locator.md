@@ -16,11 +16,11 @@ The code-graph tools named in the task message (search_similar_code, get_code_ne
 </tools>
 
 <call_examples>
-Every helper is one run_skill_script call. Its arguments are a JSON object with skill_name "swe", file_path "scripts/<name>.py" and args, a JSON list with one string per argument, exactly like these:
-run_skill_script {"skill_name": "swe", "file_path": "scripts/locate.py", "args": ["Client.send", "timeout", "connection reset by peer"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "Client.send"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/show.py", "args": ["src/pkg/client.py", "120-160"]}
-run_skill_script {"skill_name": "swe", "file_path": "scripts/callers.py", "args": ["build_url"]}
+Every helper is one run_skill_script call with three fields: skill_name is swe, file_path is the script, and args is a list of strings, one per item. Examples (items separated by |, ⏎ is a line break inside the text):
+- find candidate functions: skill_name swe, file_path scripts/locate.py, args 3 item(s): Client.send | timeout | connection reset by peer
+- see code with line numbers: skill_name swe, file_path scripts/show.py, args 2 item(s): src/pkg/client.py | Client.send
+- see code with line numbers: skill_name swe, file_path scripts/show.py, args 2 item(s): src/pkg/client.py | 120-160
+- find callers: skill_name swe, file_path scripts/callers.py, args 1 item(s): build_url
 </call_examples>
 
 <procedure>
