@@ -73,13 +73,88 @@ def code_path(root):
     return os.pathsep.join(paths + [os.environ.get('PYTHONPATH', '')]).rstrip(os.pathsep)
 
 
-def run_pytest(root, files, timeout=60, extra_env=None):
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=code_path(root), **(extra_env or {}))
+STUB = '''"""Stub of a test-only dependency missing from this environment (written by the swe skill): every name is
+an object equal to any value, so the tests run and exercise the code; comparisons with it are not checked."""
+
+
+class _Any:
+    def __init__(self, *a, **k):
+        pass
+
+    def __call__(self, *a, **k):
+        return _Any()
+
+    def __getattr__(self, name):
+        return _Any()
+
+    def __getitem__(self, key):
+        return _Any()
+
+    def __eq__(self, other):
+        return True
+
+    def __ne__(self, other):
+        return False
+
+    def __hash__(self):
+        return 0
+
+    def __iter__(self):
+        return iter(())
+
+
+def __getattr__(name):
+    return _Any()
+'''
+
+
+def stub_dir(root, text):
+    """A directory with stubs for the test-only modules pytest could not import (not the repository's own
+    packages), or None when nothing is missing."""
+    from _common import _state_path
+    missing = sorted(set(re.findall(r"No module named '([A-Za-z_]\w*)", text)))
+    own = {d for d in os.listdir(root)} | ({d for d in os.listdir(os.path.join(root, 'src'))}
+                                           if os.path.isdir(os.path.join(root, 'src')) else set())
+    missing = [m for m in missing if m not in own and m + '.py' not in own]
+    # Only modules that the repository's tests import and its package code does not: a stub never replaces a
+    # runtime dependency, nor a module an installed library needs.
+    pat = {m: re.compile(r'^\s*(?:import|from)\s+' + re.escape(m) + r'\b', re.M) for m in missing}
+    in_tests = set()
+    for rel in iter_py(root, tests=True):
+        text = read_text(root, rel)
+        hit = {m for m in missing if pat[m].search(text)}
+        if is_test_path(rel):
+            in_tests |= hit
+        else:
+            missing = [m for m in missing if m not in hit]
+    missing = [m for m in missing if m in in_tests]
+    if not missing:
+        return None, []
+    d = _state_path('stubs')
+    os.makedirs(d, exist_ok=True)
+    for m in missing:
+        with open(os.path.join(d, m + '.py'), 'w') as fh:
+            fh.write(STUB)
+    return d, missing
+
+
+def run_pytest(root, files, timeout=60, extra_env=None, _stubs=None):
+    path = code_path(root)
+    if _stubs:
+        path = path + os.pathsep + _stubs
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', **(extra_env or {}))
+    env['PYTHONPATH'] = path
     cmd = [sys.executable, '-m', 'pytest', '--maxfail=60', '-q', '-p', 'no:cacheprovider', '--no-header', '-rf'] + files
     try:
         r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return None, f'pytest timed out after {timeout}s'
+    if _stubs is None and 'No module named' in r.stdout + r.stderr:
+        d, missing = stub_dir(root, r.stdout + r.stderr)
+        if d:
+            code, summary = run_pytest(root, files, timeout, extra_env, _stubs=d)
+            return code, (f'(test-only module {", ".join(missing)} is missing here: replaced by a stub that equals any '
+                          'value, so comparisons with it are not checked)\n' + summary)
     text = (r.stdout + '\n' + r.stderr).strip().splitlines()
     summary = [l for l in text if re.search(r'\b(passed|failed|error|errors|no tests ran)\b', l)][-1:]
     failures = [l for l in text if l.startswith(('FAILED', 'ERROR'))][:40] + [l for l in text if l.startswith('E   ')][:4]

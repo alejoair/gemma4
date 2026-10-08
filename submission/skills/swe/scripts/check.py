@@ -164,7 +164,9 @@ def failing_before(root, changed, ids):
                            cwd=root, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return None
-    code, base_summary = run_pytest(base, ids[:40], timeout=25)
+    # The first failing tests are enough to tell new failures from old ones, and few of them run fast.
+    ids = ids[:10]
+    code, base_summary = run_pytest(base, ids, timeout=40)
     if code is None:
         return None
     still = set(failed_ids(base_summary)) if code != 0 else set()

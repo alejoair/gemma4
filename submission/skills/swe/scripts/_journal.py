@@ -84,6 +84,19 @@ def classify(script, text):
                 break
         if 'seen' in event:
             break
+    # Every numbered region printed (show.py code, locate.py's code of #1 and definitions, edit.py's updated code):
+    # the lines the model has seen, the only ones it may edit by number.
+    viewed = []
+    for line in text.splitlines():
+        m = re.match(r'^(?:Definition of \S+: |Code of #1 \()?(\S+\.py)(?: :: \S+ \(\w+\))? lines (\d+)-(\d+)', line.strip())
+        if m:
+            viewed.append([m.group(1), int(m.group(2)), int(m.group(3))])
+    nums = [int(x) for x in re.findall(r'^\s*(\d+)\|', text, re.M)]
+    if viewed and nums:
+        # The lines actually printed (a long function is cut at the screen size), not the whole labelled range.
+        viewed[-1][1], viewed[-1][2] = min(nums), max(nums)
+    if viewed:
+        event['viewed'] = viewed
     if re.search(r'^(NOTE: you already ran|REPEATED CALL|REPEATED EDIT)', text, re.M):
         event['repeat'] = True  # nothing new was read
     if script == 'edit.py':
@@ -127,7 +140,9 @@ def requirements(diff):
             reqs = json.load(fh)
     except (OSError, ValueError):
         return []
-    added = '\n'.join(l[1:] for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++'))
+    # Every line of the changed hunks (added, removed and the context around them): a requirement is covered when
+    # one of its names is next to the change, or the change is inside the function it names.
+    added = '\n'.join(l[1:] for l in diff.splitlines() if l[:1] in '+- ' and not l.startswith(('+++', '---')))
     touched = touched_symbols(diff)
     for r in reqs:
         r['covered'] = (any(n in touched or re.search(r'\b' + re.escape(n) + r'\b', added) for n in r['names'])
@@ -355,9 +370,32 @@ def quick_answer():
     return ('. Quick answer: ' + '; '.join(lines)) if lines else ''
 
 
+def unseen_range():
+    """For an edit by line numbers ([file, start, end, text]): the range when the model never saw those lines in a
+    show.py/locate.py/edit.py output of this file, else ''. Line numbers it never saw are guesses."""
+    args = sys.argv[1:]
+    if len(args) < 3 or not re.fullmatch(r'[\d\s,:\-]+', args[1]):
+        return ''
+    nums = [int(x) for x in re.findall(r'\d+', ' '.join(args[1:3] if args[2].strip().isdigit() else args[1:2]))]
+    if not nums:
+        return ''
+    lo, hi = min(nums), max(nums)
+    rel = args[0].strip().lstrip('./')
+    regions = [v for e in events() for v in e.get('viewed', []) if v[0] == rel or v[0].endswith('/' + rel)]
+    if any(v[1] - 3 <= lo and hi <= v[2] + 3 for v in regions):
+        return ''
+    return f'{lo}-{hi}'
+
+
 def edit_gate(s):
-    """Refuse an edit that overlaps the edit just made before check.py has tested it: rewriting the same lines again
-    and again shifts them and corrupts the file. Edits elsewhere (another place, the sync/async copy) are fine."""
+    """Refuse an edit of lines the model has not seen, and an edit that overlaps the edit just made before check.py
+    has tested it (rewriting the same lines again and again shifts them and corrupts the file). Edits elsewhere
+    (another place, the sync/async copy) are fine."""
+    unseen = unseen_range()
+    if unseen:
+        return (f'you have not seen lines {unseen} of {sys.argv[1]}, so their numbers are a guess. Call show.py '
+                f'["{sys.argv[1]}", "{unseen}"] (or show.py with the function name) first, then edit with the numbers '
+                'it prints')
     if s['step'] != 'VERIFY':
         return ''
     done = [e for e in events() if not e.get('refused')]

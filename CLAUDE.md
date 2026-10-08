@@ -110,7 +110,11 @@ Most numbers come from abstracts and summaries; check them in the PDFs before ci
 - Agent classes: `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`. Tools are the 9 harness tools, the skill tools, or `agent_tool: {config_path, skip_summarization}`. Not in the schema: ADK `planner`, `code_executor`, `input_schema`, `output_schema`, `response_schema`.
 - Callbacks validate but do nothing: the harness compiles without a callback registry.
 - There is no `exit_loop` tool, so a `LoopAgent` always runs all `max_iterations`. The only early stop is `submit_patch` followed by a final text.
-- If the root agent ends without `submit_patch`, the harness re-runs it with a "nudge" message (up to 3 times), and it takes `git diff` at the end anyway.
+- If the root agent ends without `submit_patch`, the harness re-runs it with a "nudge" message (up to 3 times), and it takes `git diff` at the end anyway. A timeout or budget stop keeps that diff.
+- An exception during the agent run loses everything, even an earlier `submit_patch`: `agent_patch` stays `''` (`swegemma/harness/agent_runner.py`, the outer `except`). Two causes have been seen:
+  - a call to a tool the agent lacks;
+  - a reply cut at `max_output_tokens`, whose tool-call JSON is unterminated. This happened with the local 12B's runaway escape loops.
+  Avoid both: list every tool the harness advertises, and keep `max_output_tokens` modest.
 - `ParallelAgent` branches share one `/workspace`; separate candidate patches need separate git worktrees.
 - AgentTool: the sub-agent starts with a fresh session (it sees only its `request`) and can use `skills:` (path relative to the submission root). Its `run_skill_script` calls count against the 45 tool calls (tested: the budget ran out at 6 with a limit of 6) and its model calls count as turns. With `skip_summarization: true` the calling agent's turn ends right after the tool returns, so keep it `false` when the caller must continue.
 - Calling a tool the agent does not have raises `ValueError: Tool '<name>' not found` and ends the task. Seen in Kaggle single v1, fastapi_14583 (`show_file`). This cannot be made recoverable from the config.

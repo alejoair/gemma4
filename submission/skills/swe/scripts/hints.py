@@ -67,13 +67,35 @@ def facts_for(root, name, sources):
                 f'{rel} :: {q} lines {s}-{e}' for rel, (q, _, s, e) in odefs), [d[0] for d in odefs])
     tail = name.split('.')[-1]
     pat = re.compile(r'(?<![\w.])' + re.escape(tail) + r'\b' if '.' not in name else re.escape(name))
-    for rel, src in sources.items():
+    for rel, src in sorted(sources.items(), key=lambda kv: _common.is_doc_path(kv[0])):
         m = pat.search(src)
         if m:
             line = src.count('\n', 0, m.start()) + 1
             return f'{name}: used in {rel} line {line} (not a function or class)', [rel]
     return (f'{name}: NOT in the code yet: a new name the statement introduces, so the fix must create it '
             '(or rename the existing code to it); check the spelling too', [])
+
+
+IMPERATIVE = re.compile(r"(^|[:;,]\s*)(add|fix|escape|remove|support|change|allow|make|use|return|raise|handle|rename|"
+                        r"deprecate|refactor|avoid|prevent|ensure|always|never|close|don'?t|do not|keep|update|set|"
+                        r"validate|convert|accept|reject|include|exclude|show|hide|read|write|emit|warn)\b", re.I)
+
+
+def likely_place(root, text, sources):
+    """(file, symbol, start, end) of the best locate.py candidate for a sentence, or None."""
+    try:
+        import locate
+        terms = locate.extract_terms(text)
+        if not terms:
+            return None
+        ranked, scores, hits, _, info, _, _, _, _ = locate.rank(root, text, terms, dict(sources))
+    except Exception:  # noqa: BLE001
+        return None
+    for rel, name in ranked[:3]:
+        if name != '<module>' and not _common.is_doc_path(rel):
+            kind, start, end = info[(rel, name)]
+            return rel, name, start, end
+    return None
 
 
 def requirements(args):
@@ -93,9 +115,23 @@ def requirements(args):
             fact, files = facts_for(root, name, sources)
             facts.append(fact)
             places += [f for f in files if f not in places]
-            # The journal checks a name on the edits only when it exists, or when the requirement creates it.
-            if files or creates:
+            # The journal checks a name on the edits only when it is code-like (backticks, a dot or an underscore;
+            # not a prose word such as OpenAPI) and exists, or when the requirement creates it.
+            code_like = f'`{name}' in item or '`.' + name.split('.')[-1] in item or '.' in name or '_' in name
+            if code_like and (files or creates):
                 tracked.append(name.split('.')[-1])
+        if not tracked and IMPERATIVE.search(item):
+            # An instruction that names no code: its most likely place, by the same search as locate.py, so the
+            # journal can tell whether an edit covers it.
+            m = IMPERATIVE.search(item)
+            clause = re.split(r'[:;.]\s', item[m.start():] + ' ', maxsplit=1)[0]
+            place = likely_place(root, clause, sources)
+            if place:
+                rel, qual, start, end = place
+                facts.append(f'most likely place (search on this sentence): {rel} :: {qual} lines {start}-{end}')
+                DEFS.append({'file': rel, 'symbol': qual, 'start': start, 'end': end})
+                places.append(rel)
+                tracked.append(qual.split('.')[-1])
         reqs.append({'id': n, 'text': item[:200], 'names': tracked, 'places': places, 'facts': facts,
                      'defs': list(DEFS)})
     return reqs

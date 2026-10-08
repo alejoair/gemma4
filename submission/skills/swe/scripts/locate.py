@@ -155,9 +155,65 @@ def main():
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')
         print('NEXT: run locate.py again with the identifiers, option names or error message of the statement.')
         return
+    ranked, scores, hits, hit_lines, info, file_scores, replaced, strong, sources = rank(root, text, terms)
+    if not scores:
+        print('No matches in source files for: ' + ', '.join(list(terms)[:12]))
+        print('NEXT: run locate.py again with other names from the statement (an error message, option or class name).')
+        return
+    out = ['Search terms: ' + ', '.join(list(terms)[:15])]
+    if replaced:
+        out.append('Not in the code, searched the closest names instead: ' +
+                   '; '.join(f'{t} -> {", ".join(v)}' for t, v in replaced.items()))
+    out.append('')
+    for n, key in enumerate(ranked[:5], 1):
+        rel, name = key
+        kind, start, end = info[key]
+        out.append(f'#{n} {rel} :: {name} ({kind}, lines {start}-{end}) graph id: {graph_id(rel, name)} '
+                   f'score={scores[key]:.1f} matched={sorted(hits[key])}')
+        for i, l in hit_lines[key][:3]:
+            out.append(f'     {i}: {l}')
+    best_rel, best_name = ranked[0]
+    kind, start, end = info[ranked[0]]
+    src_lines = read_text(root, best_rel).splitlines()
+    body = src_lines[start - 1:min(end, start + 39)]
+    if best_name != '<module>':
+        remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
+    out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
+    out += [f'{n:>5}|{l}' for n, l in enumerate(body, start)]
+    if end > start + 39:
+        out.append(f'    ... ({end - start - 39} more lines; use show.py {best_rel} {best_name})')
+    out += ['', 'NEXT: pick the candidate whose code implements the behaviour in the statement. '
+            'To see another candidate in full run show.py <file> <symbol>. '
+            f'Most matching files: {", ".join(f for f, _ in file_scores.most_common(3))}']
+    if strong:
+        missing = [t for t in strong if not any(t in hits[k] for k in ranked[:5])]
+        if missing:
+            out.append('Terms not found in the top candidates: ' + ', '.join(missing[:8]))
+    new_names = [t for t, w in terms.items() if w >= 3 and ' ' not in t and re.fullmatch(r'[A-Za-z_][\w.]*', t)
+                 and not any(re.search(r'(?<![\w])' + re.escape(t.split('.')[-1]) + r'\b', src) for src in sources.values())]
+    if new_names:
+        out.append('Not anywhere in the code: ' + ', '.join(new_names[:6]) + '. If the statement asks for them, they '
+                   'are new names the fix must create (or a rename of existing code); check the spelling too.')
+    if best_name != '<module>':
+        twins = [r for r, sym in find_definitions(root, best_name, limit=4) if r != best_rel and sym[0] == best_name]
+        if twins:
+            out.append(f'{best_name} of #1 is also defined in {", ".join(twins)}: the same code in several files '
+                       '(for example sync and async versions); a fix there must change every copy.')
+    imports = importing_files(sources, [t for t in terms if '.' in t.strip('.')])
+    if imports:
+        # Before the closing NEXT lines, so clipping a long output keeps both.
+        nxt = next(i for i, l in enumerate(out) if l.startswith('NEXT'))
+        out.insert(nxt, 'Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
+    print(clip('\n'.join(out)))
+
+
+def rank(root, text, terms, sources=None):
+    """Score every function and class of the source (docs and scripts at half weight) for the weighted terms:
+    (ranked keys, scores, hits, hit_lines, info, file_scores, replaced, strong, sources)."""
     # Docs examples (docs_src/) and repository scripts (scripts/) are searched too, at half weight: some issues are
     # fixed there (tutorial code, release scripts).
-    sources = {rel: read_text(root, rel) for rel in iter_py(root, docs=True)}
+    if sources is None:
+        sources = {rel: read_text(root, rel) for rel in iter_py(root, docs=True)}
     replaced = add_close_identifiers(terms, sources, text)
     strong = [t for t, w in terms.items() if w >= 3]
     files = {}
@@ -207,56 +263,8 @@ def main():
                 file_scores[rel] += lw
                 if len(hit_lines[key]) < 4:
                     hit_lines[key].append((i, stripped[:120]))
-    if not scores:
-        print('No matches in source files for: ' + ', '.join(list(terms)[:12]))
-        print('NEXT: run locate.py again with other names from the statement (an error message, option or class name).')
-        return
     ranked = sorted(scores, key=lambda k: (-(scores[k] * (1 + len(hits[k]))), k))
-    out = ['Search terms: ' + ', '.join(list(terms)[:15])]
-    if replaced:
-        out.append('Not in the code, searched the closest names instead: ' +
-                   '; '.join(f'{t} -> {", ".join(v)}' for t, v in replaced.items()))
-    out.append('')
-    for n, key in enumerate(ranked[:5], 1):
-        rel, name = key
-        kind, start, end = info[key]
-        out.append(f'#{n} {rel} :: {name} ({kind}, lines {start}-{end}) graph id: {graph_id(rel, name)} '
-                   f'score={scores[key]:.1f} matched={sorted(hits[key])}')
-        for i, l in hit_lines[key][:3]:
-            out.append(f'     {i}: {l}')
-    best_rel, best_name = ranked[0]
-    kind, start, end = info[ranked[0]]
-    src_lines = read_text(root, best_rel).splitlines()
-    body = src_lines[start - 1:min(end, start + 39)]
-    if best_name != '<module>':
-        remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
-    out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
-    out += [f'{n:>5}|{l}' for n, l in enumerate(body, start)]
-    if end > start + 39:
-        out.append(f'    ... ({end - start - 39} more lines; use show.py {best_rel} {best_name})')
-    out += ['', 'NEXT: pick the candidate whose code implements the behaviour in the statement. '
-            'To see another candidate in full run show.py <file> <symbol>. '
-            f'Most matching files: {", ".join(f for f, _ in file_scores.most_common(3))}']
-    if strong:
-        missing = [t for t in strong if not any(t in hits[k] for k in ranked[:5])]
-        if missing:
-            out.append('Terms not found in the top candidates: ' + ', '.join(missing[:8]))
-    new_names = [t for t, w in terms.items() if w >= 3 and ' ' not in t and re.fullmatch(r'[A-Za-z_][\w.]*', t)
-                 and not any(re.search(r'(?<![\w])' + re.escape(t.split('.')[-1]) + r'\b', src) for src in sources.values())]
-    if new_names:
-        out.append('Not anywhere in the code: ' + ', '.join(new_names[:6]) + '. If the statement asks for them, they '
-                   'are new names the fix must create (or a rename of existing code); check the spelling too.')
-    if best_name != '<module>':
-        twins = [r for r, sym in find_definitions(root, best_name, limit=4) if r != best_rel and sym[0] == best_name]
-        if twins:
-            out.append(f'{best_name} of #1 is also defined in {", ".join(twins)}: the same code in several files '
-                       '(for example sync and async versions); a fix there must change every copy.')
-    imports = importing_files(sources, [t for t in terms if '.' in t.strip('.')])
-    if imports:
-        # Before the closing NEXT lines, so clipping a long output keeps both.
-        nxt = next(i for i, l in enumerate(out) if l.startswith('NEXT'))
-        out.insert(nxt, 'Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
-    print(clip('\n'.join(out)))
+    return ranked, scores, hits, hit_lines, info, file_scores, replaced, strong, sources
 
 
 def grep_patterns(command):

@@ -138,6 +138,19 @@ def create(root, rel, args):
     after_edit()
 
 
+def deletion_allowed(gone):
+    """True when every deleted definition is named by the statement (hints.py saved its requirements): removing or
+    renaming code the statement talks about is a real change, deleting anything else is a range that is too wide."""
+    import json
+    from _common import _state_path
+    try:
+        with open(_state_path('requirements.json')) as fh:
+            text = ' '.join(r['text'] for r in json.load(fh))
+    except (OSError, ValueError):
+        return False
+    return all(re.search(r'\b' + re.escape(n) + r'\b', text) for n in gone)
+
+
 def undefined_names(content, first, last):
     """Names read on lines first..last that nothing in the file defines (no import, assignment, def, class or
     parameter) and that are not builtins: usually a missing import or a typo."""
@@ -234,15 +247,21 @@ def main():
     updated = lines[:start - 1] + new + lines[end:]
     content = eol.join(updated) + (eol if trailing else '')
     if rel.endswith('.py') and not compiles(content, rel):
-        # The most common slip is the block's indentation (one space too many from the "  79| " prefix): shift the
-        # block so its first line has the indentation of the line it replaces, and keep it only if that compiles.
-        shifted = reindent(new, indent_of(lines[start - 1]))
-        candidate = eol.join(lines[:start - 1] + shifted + lines[end:]) + (eol if trailing else '')
-        if shifted != new and compiles(candidate, rel):
-            note = (f' (indentation adjusted: the first line now starts with {indent_of(lines[start - 1])} spaces, '
-                    'like the line it replaces)')
-            new, content = shifted, candidate
-            updated = lines[:start - 1] + new + lines[end:]
+        # The common slips: the block's indentation (one space too many from the "  79| " prefix), and quotes sent
+        # escaped (\" for "). Try each repair, and the two together; keep the first one that compiles.
+        unquoted = [l.replace('\\"', '"').replace("\\'", "'") for l in new]
+        target = indent_of(lines[start - 1])
+        repairs = [(reindent(new, target), f'indentation adjusted: the first line now starts with {target} spaces, '
+                    'like the line it replaces'),
+                   (unquoted, 'escaped quotes \\" turned into "'),
+                   (reindent(unquoted, target), 'escaped quotes turned into " and indentation adjusted')]
+        for fixed, why in repairs:
+            candidate = eol.join(lines[:start - 1] + fixed + lines[end:]) + (eol if trailing else '')
+            if fixed != new and compiles(candidate, rel):
+                note = f' ({why})'
+                new, content = fixed, candidate
+                updated = lines[:start - 1] + new + lines[end:]
+                break
     with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as fh:
         fh.write(content)
     shown_from = max(1, start - CONTEXT)
@@ -267,6 +286,16 @@ def main():
     defs = re.compile(r'^\s*(?:async\s+)?(?:def|class)\s+(\w+)')
     kept = {m.group(1) for m in map(defs.match, new) if m}
     gone = [m.group(1) for m in map(defs.match, lines[start - 1:end]) if m and m.group(1) not in kept]
+    if gone and not deletion_allowed(gone):
+        # Deleting a function or class is almost always an edit range that is too wide: undo it, and apply it only
+        # when the model sends the same deletion again.
+        with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as fh:
+            fh.write(original)
+        print(f'EDIT NOT APPLIED: it deletes the definition of {", ".join(gone)} (inside lines {start}-{end}, not in '
+              'your new text), so the file is unchanged. Replace only the lines that change: use a smaller range, or '
+              f'include the whole definition of {", ".join(gone)} in the new lines. (Code the statement names, as '
+              'hints.py lists it, may be removed or renamed.)')
+        return
     out = [f'EDITED {rel}: lines {start}-{end} replaced by {len(new)} line(s){note}. Updated code:']
     missing = undefined_names(content, start, new_end) if rel.endswith('.py') else []
     if missing:
