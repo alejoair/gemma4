@@ -285,3 +285,45 @@ Budget, derived from the design rather than fixed beforehand:
 
 Against V6: a typical task there used 20–40 calls, most of them to read; here the model makes about 10, all of them
 decisions.
+
+## Detailed design
+
+One step with no decision comes first (S0): the scripts cannot read the statement (the ADK session state does not reach
+them), so the first call only copies the statement into the first script.
+
+| Step | Script | What the script does (deterministic) | What the model sees | What the model returns (next script's args) | Gate / recovery |
+|---|---|---|---|---|---|
+| **S0** | `start.py [statement]` | 1.1 splits requirements (R1..Rn) · 1.2 extracts names and looks up definitions · 1.3 classifies (bug / new / rename) · 2.1–2.2 BM25, top 10 candidates as skeletons · for new names, the owner place | Numbered requirements; candidates C1..C10, one or two lines each (file :: symbol, lines, signature, first docstring line, matched terms) | **D1:** `pick.py ["C2","C5"]` (1–3 ids) | Unknown id → reprint the list; empty statement → ask again |
+| **D1** | `pick.py [ids]` | 2.3.1 full numbered code of the chosen ones · 2.4.1–2.4.3 same-named copies in other files, direct callers, exports · 3.2.1 sibling entity for new code · 3.3 tests touching the place | The chosen code; related places P1..Pk with their reason ("same name in `_async.py`", "caller", "exported in `__init__`") | **D2:** `plan.py ["P1: <what changes>", "P3: <what changes>"]`, or `pick.py` with other ids when none fits | Invalid id → reprint; going back to `pick.py` is allowed (plan 2: next candidate) |
+| **D2** | `plan.py [plan]` | Stores the plan (places + intent) and crosses it with the requirements | Per requirement: the planned place and the signatures involved | **D3:** `repro.py [snippet]` that exercises the requirement | A requirement without a place → visible warning (does not block) |
+| **D3** | `repro.py [snippet]` | 5.2.2 runs the snippet outside the repository against the original code and stores the result | The output on the original, and the first place's window (±15 numbered lines) with its plan line and the exact names | **D4:** `change.py ["P1", start, end, new lines]` | If the snippet does **not** show the problem on the original → one retry, then go on without reproduction (5.2 marked "not verified") |
+| **D4** (per place) | `change.py [place, start, end, text]` | 4.2 applies (with `edit.py`'s repairs) · 4.3 syntax, revert on failure · 5.1 regression · 5.2.3 runs the stored snippet on the change · on pass, stores it as the **last verified state** | On failure: the error and the updated window. On pass: the next place's window. After the last place: the coverage map | `change.py` again (retry or next place) | Up to 2 retries per place; then revert to the last verified state and go to the next place |
+| **D5** | (output of the last `change.py`) | 5.3.2 which planned places were edited · 6.1 removes leftovers | Coverage R ↔ edit ↔ place, and whether the reproduction passed | `submit_patch`, or `pick.py` when a requirement is not covered | Time: when another cycle does not fit → revert to the last verified state, NEXT = `submit_patch` |
+
+Rules common to every script:
+- Every output ends with **one NEXT line** naming the exact call with an example of its arguments. The journal
+  (`_journal.py`, rewritten with these states) decides the transition; the model never chooses it.
+- A script called outside its step answers NOT RUN with the NEXT. The repeat guard and the argument cleaning of
+  `_common.py` stay.
+- State in `/tmp`: `statement.txt`, `reqs.json`, `candidates.json`, `places.json`, `plan.json`, `repro.py` +
+  `repro_orig.json`, `good.patch` (last verified state), `events.jsonl`.
+- No free `show.py`: the model never asks for code, it receives it. The whole context per task stays under about 10k
+  tokens, far from the compaction threshold (14k).
+
+Reuse:
+
+| New | From |
+|---|---|
+| `start.py` | `locate.py`'s BM25, `hints.py`'s requirement splitting |
+| `pick.py` | `show.py`'s format, `callers.py`'s search, `hints.py`'s twins |
+| `repro.py` | `try.py`'s runner |
+| `change.py` | `edit.py`'s apply, repairs and guard; `check.py`'s tests and rollback |
+| `plan.py` | New |
+| `_journal.py` | Rewritten: states S0, D1–D5 |
+
+Unit tests, defined before writing the code (on the 14 local repositories):
+- `start.py`: recall@10 of the reference function, against the reference-patch benchmark; target ≥ 80% of the tasks.
+- `pick.py`: lists the copies in httpx_3672 (sync/async) and the callers in a known case.
+- `repro.py`: a snippet that fails on rich_3006's original is reported as "reproduces".
+- `change.py`: apply, revert on syntax, revert on regression, and store `good.patch` only when everything passes.
+- Dry run of the whole flow with `harness_like.py`: S0 → D5 on rich_3006 with hand-written decisions.
