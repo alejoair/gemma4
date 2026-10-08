@@ -4,6 +4,7 @@ Deterministic code search. Extracts identifiers, error messages and option names
 function and class of the package's source files (tests and docs excluded), and prints the best candidates
 with their code, so the caller only has to pick one.
 """
+import ast
 import collections
 import difflib
 import math
@@ -208,6 +209,18 @@ def main():
     print(clip('\n'.join(out)))
 
 
+def prose_lines(tree):
+    """Line numbers inside string constants that span several lines (docstrings, Doc("...") texts)."""
+    out = set()
+    if tree is None:
+        return out
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and getattr(node, 'end_lineno', None) \
+                and node.end_lineno > node.lineno:
+            out.update(range(node.lineno, node.end_lineno + 1))
+    return out
+
+
 def rank(root, text, terms, sources=None):
     """Score every function and class of the source (docs and scripts at half weight) for the weighted terms:
     (ranked keys, scores, hits, hit_lines, info, file_scores, replaced, strong, sources)."""
@@ -236,20 +249,30 @@ def rank(root, text, terms, sources=None):
     info = {}
     file_scores = collections.Counter()
     for rel, (src, present) in files.items():
-        syms = symbols(parse(src))
+        tree = parse(src)
+        syms = symbols(tree)
+        prose = prose_lines(tree)
         lines = src.splitlines()
         file_weight = 0.5 if is_doc_path(rel) else 1.0
         for t in present:
             w = terms[t] * idf[t]
             pat = re.compile(re.escape(t), re.IGNORECASE if terms[t] == 1 else 0)
+            seen_in = collections.Counter()
             for i, line in enumerate(lines, 1):
                 if not pat.search(line):
                     continue
                 stripped = line.strip()
                 if stripped.startswith(('import ', 'from ')):
                     continue
-                lw = w * file_weight * (0.4 if stripped.startswith('#') else 1.0)
-                enc = enclosing(syms, i)
+                # Words in comments and long strings (docstrings, Doc(...) texts) count less than code, and each
+                # further hit of the same term in the same function counts less: a long function whose
+                # documentation repeats common words of the statement (dependencies, operations) must not outrank
+                # the short function whose code uses its rare names (partial, wraps).
+                lw = w * file_weight * (0.4 if stripped.startswith('#') else 0.3 if i in prose else 1.0)
+                enc0 = enclosing(syms, i)
+                seen_in[enc0[0] if enc0 else None] += 1
+                lw /= seen_in[enc0[0] if enc0 else None]
+                enc = enc0
                 if enc is None:
                     key = (rel, '<module>')
                     info.setdefault(key, ('module', i, i))

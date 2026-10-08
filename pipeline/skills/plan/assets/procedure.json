@@ -1,11 +1,16 @@
 {
   "description": "Plan stage of the pipeline: one precise change per place, for every requirement.",
   "stage": "plan",
-  "allowed": ["show.py", "try.py"],
+  "allowed": [
+    "show.py",
+    "try.py"
+  ],
   "steps": [
     "READ: show.py on the code of each requirement that the locator did not show",
     "PLAN: one CHANGE block per place as the final message"
   ],
-  "limits": {"reads_before_edit": 3, "reads_after_edit": 0, "tries": 1},
+  "limits": {
+    "tries": 1
+  },
   "late_after_seconds": 150
 }

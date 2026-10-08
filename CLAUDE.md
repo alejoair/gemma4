@@ -32,9 +32,11 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 **The journal is the core.** `journal.py` gives the steps the agent must follow (phases locate → edit → verify → submit, and the next step of each). It is essential, not optional.
 
 **The journal forces the order; the model does not choose it** (the user's rule, after V4, where the 31B ignored NEXT and made 16–17 show.py calls before hints.py). `_journal.expected()` gives the scripts each step allows:
-- single agent: LOCATE → locate.py; UNDERSTAND → hints.py, then show.py; EDIT → edit.py, plus show.py/callers.py within the read cap, try.py before the first edit within its cap, and check.py once there is a diff; VERIFY → check.py, edit.py; SUBMIT → none (only `submit_patch`);
+- single agent: LOCATE → locate.py; UNDERSTAND → hints.py, then show.py; EDIT → edit.py, plus show.py/callers.py until `late_after_seconds` (time, not a count of reads: a fixed cap of 8 refused the right function in fastapi_14448 after 2 reads the journal itself imposed on wrong locate candidates), try.py before the first edit within its cap, and check.py once there is a diff; VERIFY → check.py, edit.py; SUBMIT → none (only `submit_patch`);
 - pipeline: locate stage LOCATE → locate.py, UNDERSTAND → hints.py, then show.py/callers.py, then none (report); plan stage show.py (+ try.py) only while a requirement's code is unseen, then none (plan); edit stage as the single agent's EDIT/VERIFY/SUBMIT.
 Any other script answers `NOT RUN: <script> is not the next step ... Do this now: <NEXT>`. A refused call is never run on a retry. journal.py always runs, and the automatic check that edit.py starts skips the gate (`SWE_AUTO_CHECK`).
+
+Loops are stopped by the repeat guard (the same read is reprinted once, then refused), not by a read count.
 
 **The agents must use the scripts.** If the model does the work with `run_command` (grep, cat, sed, python, pytest) or `read_file` / `edit_file`, the system is not acting. Kaggle single v2 showed exactly this: 96 `run_command` + 65 `read_file` calls against 94 script calls, and `journal.py` and `hints.py` were never called.
 

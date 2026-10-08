@@ -13,8 +13,6 @@
     "REPORT: EDITED and VERDICT as the final message"
   ],
   "limits": {
-    "reads_before_edit": 4,
-    "reads_after_edit": 4,
     "tries": 0
   },
   "late_after_seconds": 230,

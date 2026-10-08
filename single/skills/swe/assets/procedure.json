@@ -8,8 +8,6 @@
     "SUBMIT: the submit_patch tool, then one sentence naming the files and the change"
   ],
   "limits": {
-    "reads_before_edit": 8,
-    "reads_after_edit": 5,
     "tries": 2
   },
   "late_after_seconds": 200,

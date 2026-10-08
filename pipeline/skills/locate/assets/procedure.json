@@ -1,12 +1,19 @@
 {
   "description": "Locate stage of the pipeline: find the code and the requirements, then report them. The scripts derive the step from what they did and print the next call in a JOURNAL line (scripts/_journal.py).",
   "stage": "locate",
-  "allowed": ["locate.py", "show.py", "callers.py", "hints.py"],
+  "allowed": [
+    "locate.py",
+    "show.py",
+    "callers.py",
+    "hints.py"
+  ],
   "steps": [
     "LOCATE: locate.py with the names and error text of the statement",
     "UNDERSTAND: hints.py with the sentences or bullets of the statement that ask for something, then show.py [file, symbol] on the code to change",
     "REPORT: the report the JOURNAL line gives, as the final message"
   ],
-  "limits": {"reads_before_edit": 6, "reads_after_edit": 0, "tries": 0},
+  "limits": {
+    "tries": 0
+  },
   "late_after_seconds": 90
 }

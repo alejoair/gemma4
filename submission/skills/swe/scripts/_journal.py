@@ -220,8 +220,6 @@ def state(evts=None):
         'seen': seen[-1] if seen else None,
         'shown': shown[-1] if shown else None,
         # Budgets count the calls of this stage only (the pipeline's stages share the event log).
-        'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS and not e.get('repeat')
-                     and e.get('stage', STAGE) == STAGE),
         'edited': bool(applied),
         'tries': sum(1 for e in done if e['script'] == 'try.py' and e.get('stage', STAGE) == STAGE),
         'last_edit_failed': bool(done) and done[-1]['script'] == 'edit.py' and done[-1].get('outcome') == 'not_applied',
@@ -305,7 +303,7 @@ def stage_next(s):
                 'places holds the behaviour the statement asks to change, and why:\n' + report_text(s))
     if STAGE == 'plan':
         missing = _plan_missing(s)
-        if missing and s['reads'] < PROC.get('limits', {}).get('reads_before_edit', 4):
+        if missing and not s['late']:
             d = missing[0]
             return f'call show.py ["{d["file"]}", "{d["symbol"]}"] to see the code of a requirement before planning it.'
         return ('write the plan now as your final message: one CHANGE block per place (FILE, SYMBOL, LINES, CHANGE: '
@@ -405,8 +403,10 @@ def expected(s):
     """The scripts the current step allows. The journal fixes the order of the calls: any other script is not run
     and its answer names the call to make (SOP-Agent: only the valid actions of the current step)."""
     limits = PROC.get('limits', {})
-    cap = limits.get('reads_after_edit', 4) if s['edited'] else limits.get('reads_before_edit', 6)
-    reads_left = s['reads'] < cap
+    # Reading is bounded by time, not by a count: a model that searches with distinct reads is making progress (a
+    # fixed cap once refused the right function after a misleading locate result and left no way to edit it).
+    # Loops are repeats, which the repeat guard stops.
+    reads_left = not s['late']
     tries_left = s['tries'] < limits.get('tries', 2)
     step = s['step']
     if STAGE == 'plan':
@@ -463,7 +463,7 @@ def gate(script):
             why = (f'{script} is not the next step: the journal fixes the order of the calls, and in step '
                    f'{s["step"]} ' + (f'only {", ".join(sorted(allowed))} can run' if allowed else 'no script can run'))
             if script in READERS and s['step'] == 'EDIT' and 'show.py' not in allowed:
-                why += '; your reading calls for this step are used up and the code you need is above'
+                why += '; the time for reading is over, so make the change with the code you have seen'
         return f'{why}. Do this now: {next_call(s).rstrip(".")}' + (quick_answer() if script in READERS else '')
     if script == 'edit.py':
         return edit_gate(s)
