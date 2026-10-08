@@ -67,12 +67,6 @@ def call_signature(script):
     return script + ' ' + ' '.join(a.strip().lower() for a in sys.argv[1:])
 
 
-def insisted(script):
-    """The same call was refused before: run it this once (a model that repeats a refused read is stuck on it)."""
-    sig = call_signature(script)
-    return any(e.get('refused') and e.get('sig') == sig for e in events())
-
-
 def classify(script, text):
     """What a finished script call did, read from its own output."""
     event = {'script': script, 'sig': call_signature(script)}
@@ -118,7 +112,7 @@ def classify(script, text):
             event['broke_tests'] = [t.split('::')[-1] for t in m.group(1).split(', ')][:3]
         event['outcome'] = ('ok' if verdict.startswith('VERDICT: OK') else
                             'none' if 'NO CHANGES' in verdict else
-                            'timeout' if 'TIMED OUT' in verdict else
+                            'timeout' if 'TIMED OUT' in verdict or 'COULD NOT RUN' in verdict else
                             'broke' if 'BREAKS' in verdict or 'SYNTAX' in verdict else
                             'fail' if verdict else 'unknown')
     return event
@@ -239,7 +233,8 @@ def state(evts=None):
         'broke': bool(checks) and checks[-1][1].get('outcome') == 'broke' and checks[-1][0] > last_edit,
         # After the undone edit, has the code been shown again (so the next call is edit.py, not show.py)?
         'reshown': bool(checks) and any(e['script'] == 'show.py' for e in done[checks[-1][0] + 1:]),
-        'fails': sum(1 for _, e in checks if e.get('outcome') == 'fail'),
+        # Failed checks of different edits (check.py run again on the same change is not a new failure).
+        'fails': len({max([j for j in applied if j < i] or [-1]) for i, e in checks if e.get('outcome') == 'fail'}),
         'counts': {},
         'reqs': requirements(diff),
         'oks': sum(1 for _, e in checks if e.get('outcome') == 'ok'),
@@ -309,8 +304,7 @@ def stage_next(s):
         return ('your part is done: write this as your final message, then stop. Add one line saying which of the '
                 'places holds the behaviour the statement asks to change, and why:\n' + report_text(s))
     if STAGE == 'plan':
-        shown = {e['seen']['file'] for e in events() if e.get('seen') and e['script'] != 'edit.py'}
-        missing = [d for r in s['reqs'] for d in (r.get('defs') or [])[:1] if d['file'] not in shown]
+        missing = _plan_missing(s)
         if missing and s['reads'] < PROC.get('limits', {}).get('reads_before_edit', 4):
             d = missing[0]
             return f'call show.py ["{d["file"]}", "{d["symbol"]}"] to see the code of a requirement before planning it.'
@@ -376,10 +370,15 @@ def next_call(s):
         return 'call edit.py [file, old lines, new lines] with the code you have seen.'
     if step == 'VERIFY':
         return 'call check.py [] to run the related tests on your change.'
-    if s['late'] and not s['good']:
-        return 'time is almost up: call the submit_patch tool now, then reply with one sentence.'
+    if not s['good']:
+        why = ('time is almost up' if s['late'] else
+               'check.py could not finish the related tests, so your change is not verified, but it compiles'
+               if s['last_check'] == 'timeout' else
+               'check.py reported failing tests after two different edits; the tests that fail may not be related '
+               'to the statement' if s['fails'] >= 2 else 'your change is in place')
+        return f'{why}: call the submit_patch tool now, then reply with one sentence naming the files and the change.'
     return ('your change passed check.py: call the submit_patch tool now, then reply with one sentence naming the '
-            'files and the change. If the statement asks for another change, make it with edit.py first.')
+            'files and the change.')
 
 
 def journal_line(s=None):
@@ -396,6 +395,50 @@ def journal_line(s=None):
     return f'JOURNAL: step {STEP_NO[s["step"]]}/5 {s["step"]}. Done: {done}.{reqs}{undone} NEXT: {next_call(s)}'
 
 
+def _plan_missing(s):
+    """The plan stage: requirement definitions the earlier stages did not show."""
+    shown = {e['seen']['file'] for e in events() if e.get('seen') and e['script'] != 'edit.py'}
+    return [d for r in s['reqs'] for d in (r.get('defs') or [])[:1] if d['file'] not in shown]
+
+
+def expected(s):
+    """The scripts the current step allows. The journal fixes the order of the calls: any other script is not run
+    and its answer names the call to make (SOP-Agent: only the valid actions of the current step)."""
+    limits = PROC.get('limits', {})
+    cap = limits.get('reads_after_edit', 4) if s['edited'] else limits.get('reads_before_edit', 6)
+    reads_left = s['reads'] < cap
+    tries_left = s['tries'] < limits.get('tries', 2)
+    step = s['step']
+    if STAGE == 'plan':
+        if _plan_missing(s) and reads_left:
+            return {'show.py'} | ({'try.py'} if tries_left else set())
+        return set()
+    if STAGE == 'locate':
+        if step == 'LOCATE':
+            return {'locate.py'}
+        if step == 'UNDERSTAND':
+            return {'show.py', 'callers.py'} if s['hints'] else {'hints.py'}
+        return set()  # the report is due
+    if STAGE == 'edit' and step in ('LOCATE', 'UNDERSTAND'):
+        return {'show.py', 'edit.py'}
+    if step == 'LOCATE':
+        return {'locate.py'}
+    if step == 'UNDERSTAND':
+        return {'show.py'} if s['hints'] else {'hints.py'}
+    if step == 'EDIT':
+        allowed = {'edit.py'}
+        if reads_left:
+            allowed |= {'show.py', 'callers.py'}
+        if tries_left and not s['edited']:
+            allowed.add('try.py')
+        if s['diff']:
+            allowed.add('check.py')
+        return allowed
+    if step == 'VERIFY':
+        return {'check.py', 'edit.py'}
+    return set()  # SUBMIT: only the submit_patch tool
+
+
 def gate(script):
     """Reason to refuse this call in the current step, or '' to run it."""
     if ALLOWED and script not in ALLOWED and script != 'journal.py':
@@ -403,26 +446,27 @@ def gate(script):
                 + {'locate': 'Your part is to find the code; write your report now',
                    'plan': 'Your part is to plan the changes; write your plan now',
                    'edit': 'Your part is to make and check the changes'}.get(STAGE, ''))
-    if script in ('journal.py', 'check.py'):
+    if script == 'journal.py' or os.environ.get('SWE_AUTO_CHECK'):
         return ''
     s = state()
+    allowed = expected(s)
+    if script not in allowed:
+        if s['step'] == 'SUBMIT' and STAGE not in ('locate', 'plan'):
+            why = ('your fix is done and passed check.py; the hidden tests are already written, so there is nothing '
+                   'to search, read, test or edit any more' if s['good'] else
+                   f'{script} is not the next step: the journal fixes the order of the calls, and in step SUBMIT no '
+                   'script can run')
+        elif not allowed and STAGE in ('locate', 'plan'):
+            why = (f'{script} is not the next step: the journal fixes the order of the calls, and your part of the '
+                   f'{STAGE} stage is done, so no script can run')
+        else:
+            why = (f'{script} is not the next step: the journal fixes the order of the calls, and in step '
+                   f'{s["step"]} ' + (f'only {", ".join(sorted(allowed))} can run' if allowed else 'no script can run'))
+            if script in READERS and s['step'] == 'EDIT' and 'show.py' not in allowed:
+                why += '; your reading calls for this step are used up and the code you need is above'
+        return f'{why}. Do this now: {next_call(s).rstrip(".")}' + (quick_answer() if script in READERS else '')
     if script == 'edit.py':
         return edit_gate(s)
-    limits = PROC.get('limits', {})
-    if s['step'] == 'SUBMIT':
-        if s['good']:
-            return ('your fix is done and passed check.py. The hidden tests are already written, so there is nothing '
-                    'to search, read or test any more (even if the statement says tests were added)')
-        return 'time is almost up and your change is in place; there is no time left to read more'
-    if script in READERS:
-        cap = limits.get('reads_after_edit', 4) if s['edited'] else limits.get('reads_before_edit', 6)
-        if s['reads'] >= cap and not insisted(script):
-            return (f'you have used your {cap} reading calls for this step; the code you need is already in the '
-                    'conversation above' + quick_answer())
-    if script == 'try.py' and s['tries'] >= limits.get('tries', 2):
-        return f'try.py was already used {s["tries"]} times; experiments are over'
-    if script == 'hints.py' and s['edited']:
-        return 'the checklist is already in the conversation above'
     return ''
 
 

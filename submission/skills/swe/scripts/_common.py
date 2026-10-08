@@ -174,7 +174,8 @@ def after_edit():
     _RECORDED = True
     check = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'check.py')
     try:
-        r = subprocess.run([sys.executable, check], capture_output=True, text=True, timeout=110, env=dict(os.environ))
+        r = subprocess.run([sys.executable, check], capture_output=True, text=True, timeout=110,
+                           env=dict(os.environ, SWE_AUTO_CHECK='1'))
         out = r.stdout
     except subprocess.TimeoutExpired:
         out = 'check.py did not finish in time.'

@@ -240,6 +240,8 @@ def main():
                 out.append(rollback(root, changed))
                 out.append('VERDICT: YOUR EDIT BREAKS TESTS. Read the failure above, call show.py again and make a '
                            'corrected edit that keeps the existing behaviour, then run check.py again.')
+            elif 'No module named pytest' in summary:
+                out.append('VERDICT: TESTS COULD NOT RUN (pytest is missing). The edit compiles; it is not verified.')
             else:
                 out.append('VERDICT: TESTS FAIL. Read the failure above: fix it if your edit caused it, '
                            'otherwise the change is ready to submit.')
