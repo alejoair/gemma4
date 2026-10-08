@@ -12,7 +12,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import (WORD, clip, enclosing, find_definitions, graph_id, is_doc_path, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
+from _common import (WORD, clip, enclosing, find_definitions, find_symbol, graph_id, is_doc_path, is_symbol_name, iter_py, parse, read_text,  # noqa: E402
                      remember_candidate, repeat_guard, repo_root, symbols)
 
 STOP = set('''a an and are as at be been but by can could did do does for from had has have how i if in into is it its
@@ -101,7 +101,8 @@ def main():
         print('usage: locate.py <words from the problem statement>')
         return
     args = sys.argv[1:]
-    if len(args) == 2 and args[0].endswith('.py') and is_symbol_name(args[1]):
+    if len(args) == 2 and args[0].endswith('.py') and is_symbol_name(args[1]) and \
+            find_symbol(symbols(parse(read_text(repo_root(), args[0]))), args[1], strict=True):
         # [file, symbol] is a show.py request: hand it over so the right symbol is shown and remembered.
         show = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'show.py')
         sys.stdout.flush()
@@ -128,6 +129,12 @@ def main():
                        'otherwise run callers.py ' + text.split('.')[-1] + ' to find the caller that prepares its input.')
             print(clip('\n'.join(out)))
             return
+    scoped = [a for a in sys.argv[1:] if a.endswith('.py') and os.path.isfile(os.path.join(root, a))]
+    if scoped:
+        # [file, words...]: search only inside that file and list every matching line with its number.
+        words = [a for a in sys.argv[1:] if a not in scoped]
+        find_in_file(root, scoped[0], words)
+        return
     terms = extract_terms(text)
     if not terms:
         print('No searchable words found. Pass function names, class names or error text from the problem statement.')
@@ -224,6 +231,30 @@ def main():
         # Before the closing NEXT lines, so clipping a long output keeps both.
         nxt = next(i for i, l in enumerate(out) if l.startswith('NEXT'))
         out.insert(nxt, 'Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
+    print(clip('\n'.join(out)))
+
+
+def find_in_file(root, rel, words):
+    lines = read_text(root, rel).splitlines()
+    syms = symbols(parse('\n'.join(lines)))
+    words = [w for w in words if w.strip()]
+    if not words:
+        print(f'No words given to search in {rel}.')
+        print(f'NEXT: call locate.py with [{rel!r}, word, ...] or show.py [{rel!r}, symbol].')
+        return
+    hits = []
+    for i, line in enumerate(lines, 1):
+        if any(w.lower() in line.lower() for w in words):
+            enc = enclosing(syms, i)
+            hits.append(f'{i:>5}|{line.rstrip()}    [{enc[0] if enc else "<module>"}]')
+    if not hits:
+        print(f'None of {words} appears in {rel}.')
+        print('NEXT: run locate.py with the words alone to search the whole repository.')
+        return
+    out = [f'Lines of {rel} that contain {", ".join(words)} ({len(hits)} lines; [enclosing function]):'] + hits[:40]
+    if len(hits) > 40:
+        out.append(f'... and {len(hits) - 40} more lines; use more specific words.')
+    out.append(f'NEXT: run show.py [{rel!r}, symbol] or [{rel!r}, "start-end"] around the line you need.')
     print(clip('\n'.join(out)))
 
 

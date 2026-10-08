@@ -170,6 +170,12 @@ def main():
         label = f'{rel} lines {start}-{end}'
     else:
         found = find_symbol(syms, args[1], strict=True) if is_symbol_name(args[1]) else []
+        if not found and is_symbol_name(args[1]) and re.search(r'\b' + re.escape(args[1].split('.')[-1]) + r'\b', src):
+            # Not defined here but used here (a parameter, attribute or call): list its lines in this file.
+            from locate import find_in_file
+            print(f'{args[1]} is not a function or class defined in {rel}; these lines of {rel} use it:')
+            find_in_file(root, rel, [args[1].split('.')[-1]])
+            return
         if not found and is_symbol_name(args[1]):
             # The whole name is not in this file: show it from the file that defines it, and only then fall back to
             # a symbol of this file with the same last part.
@@ -210,7 +216,7 @@ def main():
             first, last, score = hit
             start, end = max(1, first - 3), min(len(lines), last + 3)
             label = f'{rel} lines {start}-{end} (best match for the given text at lines {first}-{last}, similarity {score:.2f})'
-    if end - start + 1 > MAX_LINES and not rng and not args[1].isdigit():
+    if end - start + 1 > MAX_LINES and rel.endswith('.py'):
         body = collapse_strings(src, lines, start, end)
         if len(body) < end - start + 1:
             out = [label, '----- code (long text strings hidden as [...]) -----'] + \
