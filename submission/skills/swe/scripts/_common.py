@@ -82,20 +82,32 @@ def _state_path(name):
 
 SEEN = _state_path('seen.txt')
 GOOD = _state_path('good.patch')
+READS_BEFORE_NUDGE = 12
 
 
 def _status_note():
     """After a history compaction the model forgets that its fix is already done. When the working tree is exactly
     the state check.py approved, every script says so at the end of its output."""
-    if os.path.basename(sys.argv[0]) == 'check.py' or not os.path.exists(GOOD) or not os.path.getsize(GOOD):
+    if os.path.basename(sys.argv[0]) == 'check.py':
         return
     try:
         root = repo_root()
         r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
                            text=True, timeout=20)
-        with open(GOOD) as fh:
-            good = fh.read()
+        good = open(GOOD).read() if os.path.exists(GOOD) else ''
     except Exception:  # noqa: BLE001
+        return
+    if r.returncode == 0 and not r.stdout.strip():
+        # Reading without editing is how small models run out of time: after many reads, say so.
+        try:
+            with open(SEEN) as fh:
+                reads = sum(1 for line in fh if line.split(' ', 1)[0] in ('show.py', 'locate.py', 'callers.py'))
+        except OSError:
+            reads = 0
+        if reads >= READS_BEFORE_NUDGE:
+            print(f'\nSTATUS: {reads} reading calls so far and nothing is edited yet; time is short. If your job is to '
+                  'edit, make the edit now with edit.py from the code you have already seen. If your job is to report, '
+                  'write the report now.')
         return
     if r.returncode == 0 and r.stdout and r.stdout == good:
         files = sorted(set(re.findall(r'^\+\+\+ b/(\S+)', good, re.M)))
