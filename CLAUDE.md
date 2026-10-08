@@ -36,6 +36,7 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 **Rules for Claude working on this repo:**
 - Never remove or replace a piece of this design because it has few or no calls. Zero calls means it is not wired into the prompts or tools. Find out why and wire it.
 - Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
+- Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md`: date, commit, system, tools, generation, budget, result, tool-call counts, failures seen and what changed next. Update it as soon as a run finishes.
 
 ### Scripts of the skill `swe`
 - `journal.py`: the steps to follow, and the phase and next step.
