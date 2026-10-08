@@ -1,8 +1,0 @@
-name: editor
-description: Makes each planned change with edit.py; every applied edit is checked by check.py automatically.
-model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include ../prompts/editor.md
-include_contents: none
-output_key: edit_report
-skills: [skills/edit]
-generate_content_config: !include ../configs/sampling_editor.yaml

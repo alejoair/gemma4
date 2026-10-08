@@ -109,3 +109,22 @@ The old code is in git history (last commit with it: the one before its removal)
 - Requirement coverage counted from the changed symbols is easily fooled: a trivial edit of the named function
   "covered" it (fastapi_14851).
 - A second candidate was shown when it scored at least 60% of the first.
+
+## The old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`, removed)
+
+- Tools of the single agent: `submit_patch` plus the three graph tools (`search_similar_code`, `get_code_neighbors`,
+  `get_code_subgraph`) plus the skill. The graph tools stayed because the harness's task message advertises them and a
+  call to a tool the agent lacks ends the task.
+- Generation of the single agent (V4, V6): temperature 0.2, top_p 0.95, `max_output_tokens` 4096, `thinking_budget`
+  512. V1–V3 used 8192 and 2048. A `max_output_tokens` of 16384 lets a long prompt exceed the 32,768-token window and
+  vLLM refuses the call; 8192 or less is safe.
+- Budget used in V1–V6: 5 min, 45 tool calls, 70 turns, 120 s per command (`eval_config.yaml`).
+- Call examples in the prompt written in Gemma's own tool-call format reduced malformed calls from 31% (V1) to 10–21%:
+  `<|tool_call>call:run_skill_script{args:[<|"|>src/pkg/client.py<|"|>,<|"|>Client.send<|"|>],file_path:<|"|>scripts/show.py<|"|>,skill_name:<|"|>swe<|"|>}<tool_call|>`.
+  Examples in plain JSON or Python-call form made the model pack every argument into one string.
+- The prompt told the model to call `run_skill_script` directly, without `list_skills` or `load_skill`.
+- Pipeline (V5): a `SequentialAgent` of locator → planner → editor → submitter, each with `include_contents: none`, its
+  own skill directory and `assets/procedure.json` (`stage`, `allowed` scripts); thinking budgets 256 / 1024 / 512 / 0.
+  With 5 min for four exploring stages the editor was reached in 3 of 10 tasks.
+- Packaging: copy the scripts into every skill directory and leave `__pycache__` out; validate with
+  `validate_submission.py` (from the competition's tools).

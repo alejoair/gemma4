@@ -1,9 +1,0 @@
-agent_class: SequentialAgent
-name: swe_pipeline
-description: Locate the code, inspect its relations in the code graph, plan one change per place, apply each change with an editor agent, then submit.
-sub_agents:
-  - config_path: sub_agents/locator.yaml
-  - config_path: sub_agents/grapher.yaml
-  - config_path: sub_agents/planner.yaml
-  - config_path: sub_agents/fixer.yaml
-  - config_path: sub_agents/submitter.yaml

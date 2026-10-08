@@ -311,8 +311,8 @@ Rules common to every script:
   tokens, far from the compaction threshold (14k).
 
 No reuse: every script is written new for this design. The old scripts (`submission/skills/swe/scripts/`) were built
-as tools for a model that explores, and that assumption runs through their code. They stay in the repository only as a
-record. What they taught is kept as requirements, not as code:
+as tools for a model that explores, and that assumption runs through their code. They were removed (see
+`docs/old_scripts_lessons.md`). What they taught is kept as requirements, not as code:
 
 | Learned constraint (from the old scripts and the runs) | Becomes |
 |---|---|
@@ -335,3 +335,14 @@ Unit tests, defined before writing the code (on the 14 local repositories):
 - `repro.py`: a snippet that fails on rich_3006's original is reported as "reproduces".
 - `change.py`: apply, revert on syntax, revert on regression, and store `good.patch` only when everything passes.
 - Dry run of the whole flow with `harness_like.py`: S0 → D5 on rich_3006 with hand-written decisions.
+
+## Design decisions (2026-10-08)
+
+1. **The reproduction snippet comes before the change (D3 before D4)**, as in Agentless: the snippet is first checked to
+   show the problem on the original code. If it does not after one retry, the flow goes on without reproduction and
+   5.2 is marked "not verified". Cost: one call.
+2. **Edits by line range, not search/replace.** Line ranges on numbered windows applied 14 of 15 edits in V6;
+   search/replace needs the old text copied exactly, which small models get wrong.
+3. **No free `show.py`.** The model never asks for code. So that the procedure never leaves the model without a valid
+   move (the lesson of fastapi_14448), `pick.py` also accepts a name or a path that is not in the candidate list; the
+   script resolves it deterministically and treats it like a chosen candidate.

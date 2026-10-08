@@ -27,18 +27,13 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 
 ## System design (the user's idea; keep it)
 
-**Principle.** Deterministic scripts help a small LLM do SWE. The scripts of the skill `swe` (`submission/skills/swe/scripts/`) do the work. The ADK config (agents, prompts, tools) is only the container that makes the model use them.
+**Principle.** Deterministic scripts help a small LLM do SWE. The skill's scripts do the work. The ADK config (agents, prompts, tools) is only the container that makes the model use them.
 
-**The journal is the core.** `journal.py` gives the steps the agent must follow (phases locate → edit → verify → submit, and the next step of each). It is essential, not optional.
+**The journal is the core.** The journal (the procedure engine inside the scripts) gives the steps the agent must follow and the next step of each. It is essential, not optional.
 
-**The journal forces the order; the model does not choose it** (the user's rule, after V4, where the 31B ignored NEXT and made 16–17 show.py calls before hints.py). `_journal.expected()` gives the scripts each step allows:
-- single agent: LOCATE → locate.py; UNDERSTAND → hints.py, then show.py; EDIT → edit.py, plus show.py/callers.py until `late_after_seconds` (time, not a count of reads: a fixed cap of 8 refused the right function in fastapi_14448 after 2 reads the journal itself imposed on wrong locate candidates), try.py before the first edit within its cap, and check.py once there is a diff; VERIFY → check.py, edit.py; SUBMIT → none (only `submit_patch`);
-- pipeline: locate stage LOCATE → locate.py, UNDERSTAND → hints.py, then show.py/callers.py, then none (report); plan stage show.py (+ try.py) only while a requirement's code is unseen, then none (plan); edit stage as the single agent's EDIT/VERIFY/SUBMIT.
-Any other script answers `NOT RUN: <script> is not the next step ... Do this now: <NEXT>`. A refused call is never run on a retry. journal.py always runs, and the automatic check that edit.py starts skips the gate (`SWE_AUTO_CHECK`).
+**The journal forces the order; the model does not choose it** (the user's rule, after V4, where the 31B ignored the suggested next step and made 16–17 reads before the requirement step). A script called outside its step does not run and answers with the call to make; a refused call never runs on a retry. Loops are stopped by refusing repeats, never by a fixed count that can leave the model without a valid move.
 
-Loops are stopped by the repeat guard (the same read is reprinted once, then refused), not by a read count.
-
-**Localization ranks with BM25F (2026-10-08).** `locate.rank()` scores each function or class as a document made of its own lines: BM25 (k1 1.2, b 0.75) normalises by length and saturates repeated words; identifiers are split into stemmed sub-words (`_unwrapped_call` → unwrap, call; 'wraps' meets 'wrapped'); the def line weighs 3, comments and long strings (docstrings, Doc texts) 0.4. The old scorer summed one hit per line, so long functions whose code and docs repeat common words (FastAPI.__init__, include_router) won. Measured on the 10 local tasks against the reference patches (title and full-statement queries, `scratchpad/gold_locate.py`): top-1 4 → 6, top-3 8 → 9, top-5 10 → 9 of 20; fastapi_14448's `Dependant._unwrapped_call` goes from not found to #1–#2. Variants with b 0.5/0.3, name weight 2/1.5 or classes at 0.5 were all worse. Known loss: requests_7328 (the class `Response` outranks `resolve_redirects`). A larger benchmark over all 129 dev tasks is the next measurement. The embeddings cannot rank a text query: `search_similar_code` compares stored node vectors (node → node), with no text encoder offline.
+**Localization.** BM25F at function level is the measured baseline (details in `docs/old_scripts_lessons.md`). The embeddings cannot rank a text query: `search_similar_code` compares stored node vectors (node → node), with no text encoder offline.
 
 **The agents must use the scripts.** If the model does the work with `run_command` (grep, cat, sed, python, pytest) or `read_file` / `edit_file`, the system is not acting. Kaggle single v2 showed exactly this: 96 `run_command` + 65 `read_file` calls against 94 script calls, and `journal.py` and `hints.py` were never called.
 
@@ -47,32 +42,20 @@ Loops are stopped by the repeat guard (the same read is reprinted once, then ref
 - Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md`: date, commit, system, tools, generation, budget, result, tool-call counts, failures seen and what changed next. Update it as soon as a run finishes.
 
-### Scripts: being redesigned
-The old scripts of the skill `swe` (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, `callers.py`, `try.py`,
-`journal.py`, `_journal.py`, `_common.py`, `tests_for.py`) were removed on 2026-10-08: they were a toolbox for a model
-that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in
-`docs/old_scripts_lessons.md`; the new design, made with Hierarchical Task Analysis and function allocation, is in
-`docs/design_single.md`. The new scripts go in a new skill directory. `single/`, `pipeline/`, `submission/` and
-`build.py` still describe the old system until the new one replaces them.
+### Current state of the repository (2026-10-08)
+The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …) and the old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`) were removed: they were built for a model that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in `docs/old_scripts_lessons.md`; their results are in `VERSIONS.md`. The new single agent is built from `docs/design_single.md`.
 
-### Design methodology (SOP-Agent / StateFlow / Blueprint First)
-1. **Procedure as a state machine.** Write the states, the entry and exit condition of each, and the transitions. A script decides each transition from the real state, never the model.
-2. **Budget per state.** On Kaggle one 31B call takes about 12 s (6–30 s), so about 20–25 calls fit in a task. The procedure must finish in about 12 calls, leaving room for retries.
-3. **Contract per state.** Which scripts the state allows, what it produces, and where that is stored (state files in `/tmp`).
-4. **Failures and recovery.** Every known failure gets a transition back: edit not applied → retry edit; check broke tests → rollback and back to EDIT; time almost up → SUBMIT.
-5. **Tools per state.** Only the tools of that phase. In the single agent the scripts refuse out-of-phase calls; in the sequential system each stage gets only its phase's scripts.
-6. **Acceptance before Kaggle.**
-   - The replay shows no problems.
-   - The 12B passes the iterative loop below on the 10 local tasks.
-   - Then a Kaggle run with 10 tasks.
+### Design methodology
+Use established methods, not an ad-hoc list: Hierarchical Task Analysis (Stanton 2006) → function allocation (Parasuraman, Sheridan & Wickens 2000, levels of automation) → workflow-vs-agent patterns (Anthropic, *Building Effective Agents*, 2024) → detailed design → V-model verification. The work so far is in `docs/design_single.md`. In every step, the model must not decide the path or what to read: scripts prepare each decision's input.
+
+**Acceptance before Kaggle:** every script passes its unit tests, the replay of real calls shows no problems, and the local model passes the iterative loop below on the 10 local tasks; then a Kaggle run with 10 tasks. If a launch is requested before that, say plainly which criterion is not met.
 
 ### Iterative test loop (how every change to the scripts or prompts is tested)
 1. **Fix.** Change the scripts or prompts.
 2. **Dry test.** Run the affected scripts by hand on a repo in `scratchpad/repos/` with `PWD=<repo>`.
-   - Use a skill copy that has `assets/procedure.json` to test the journal mode.
    - Run them through `scratchpad/harness_like.py <skill dir> <script> args…` too. It runs a script the way ADK's `run_skill_script` does: the skill's files are in a temporary directory that is deleted when the script ends, before the exit handlers run. Anything a script does at exit can no longer read its own files or start threads.
 3. **Replay.** `venv/bin/python replay.py <scripts dir> repos real_calls.json` must print NO PROBLEMS (pipeline mode).
-4. **Package and validate.** Run `python build.py ds3` (it leaves out `__pycache__`; a `.pyc` file makes the harness reject the submission), then `validate_submission.py ds3/single` and `ds3/pipeline`.
+4. **Package and validate.** Build the submission without `__pycache__` (a `.pyc` file makes the harness reject it), then run `validate_submission.py` on it.
 5. **Run one task with the local 12B** (`one_task.sh <task>`).
 6. **Monitor it step by step while it runs.** Every 30–45 s, curl `/_monitor/conversation?since=<start>` and read each new call: its arguments, its result and the JOURNAL line. Never wait for the end of the run with a loop and never use a background monitor.
 7. **Stop at the first problem.** When a script error, a loop or a wrong JOURNAL decision shows up, stop the run, fix it and relaunch from step 1. Do not let the run go on to the timeout.
@@ -80,21 +63,6 @@ that explores, and V4–V6 showed the model browsing instead of deciding. What t
 9. **Commit and push** after each round of fixes.
 
 Local timing is not Kaggle timing. llama-server has a global reasoning budget of 3072 tokens, so a 12B call can take up to 60 s; on Kaggle the agent sets `thinking_budget: 512`.
-
-### The two systems built on the scripts
-- **Single agent (`single/`).** One `LlmAgent`.
-  - Tools: the skill `swe` (procedure stage `single`), `submit_patch`, and the three code-graph tools.
-  - The journal runs the whole procedure: LOCATE → UNDERSTAND → EDIT → VERIFY → SUBMIT.
-- **Pipeline (`pipeline/`).** A `SequentialAgent` of locator → planner → editor → submitter (no AgentTool), each with `include_contents: none`.
-  - Each stage has its own skill (`skills/locate`, `skills/plan`, `skills/edit`) whose `assets/procedure.json` sets `stage` and the `allowed` scripts. A script outside the stage answers NOT RUN.
-  - The journal knows the stage:
-    - the locator's NEXT ends with a ready-made report (LOCUS and REQUIREMENTS) to copy as its final message;
-    - the planner's NEXT asks for CHANGE blocks;
-    - the editor's NEXT asks for an EDITED/VERDICT report.
-  - Budgets and repeat guards count per stage, and the event log is shared through `/tmp`.
-  - State keys: the harness sets `problem_description` and `hints` (the task's hints text). The stages pass `locus`, `plan` and `edit_report` through `output_key`.
-- **Packaging.** `python build.py <out>` builds `<out>/single` and `<out>/pipeline`, copying `submission/skills/swe/scripts` into every skill and leaving `.pyc` out. The script copies inside `single/skills` and `pipeline/skills` are gitignored.
-- **Local runs.** `scratchpad/one_task.sh <task> [single|pipeline]`.
 
 ### Literature behind the design
 - **SWE-agent / ACI** (NeurIPS 2024, [arXiv 2405.15793](https://arxiv.org/pdf/2405.15793)).
