@@ -178,6 +178,7 @@ def main():
     body = src_lines[start - 1:min(end, start + 39)]
     if best_name != '<module>':
         remember_candidate(best_rel, best_name, start, end, src_lines[start - 1:end], weak=True)
+    save_ranking(ranked, scores, hits, info)
     out += ['', f'Code of #1 ({best_rel} lines {start}-{min(end, start + 39)}):']
     out += [f'{n:>5}|{l}' for n, l in enumerate(body, start)]
     if end > start + 39:
@@ -265,6 +266,25 @@ def rank(root, text, terms, sources=None):
                     hit_lines[key].append((i, stripped[:120]))
     ranked = sorted(scores, key=lambda k: (-(scores[k] * (1 + len(hits[k]))), k))
     return ranked, scores, hits, hit_lines, info, file_scores, replaced, strong, sources
+
+
+def save_ranking(ranked, scores, hits, info):
+    """The top candidates with their scores, for the journal: when #2 scores close to #1, both are shown before
+    the code to change is chosen."""
+    import json
+    from _common import _state_path
+    top = []
+    for rel, name in ranked[:3]:
+        if name == '<module>':
+            continue
+        kind, start, end = info[(rel, name)]
+        top.append({'file': rel, 'symbol': name, 'start': start, 'end': end,
+                    'score': round(scores[(rel, name)] * (1 + len(hits[(rel, name)])), 2)})
+    try:
+        with open(_state_path('ranking.json'), 'w') as fh:
+            json.dump(top, fh)
+    except OSError:
+        pass
 
 
 def grep_patterns(command):

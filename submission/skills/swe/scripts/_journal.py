@@ -181,6 +181,24 @@ def touched_symbols(diff):
     return names
 
 
+def runner_up(done):
+    """locate.py's #2 when it scores at least 60% of #1 and no stage has shown it yet (only in the stages that read
+    code before choosing: the single agent and the locator)."""
+    if STAGE not in ('single', 'locate'):
+        return None
+    try:
+        with open(_common._state_path('ranking.json')) as fh:
+            top = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if len(top) < 2 or top[1]['score'] < 0.6 * top[0]['score']:
+        return None
+    shown = {(e['seen']['file'], e['seen']['symbol'].split('.')[-1]) for e in done if e.get('seen')}
+    if (top[1]['file'], top[1]['symbol'].split('.')[-1]) in shown:
+        return None
+    return top[1]
+
+
 def candidate():
     try:
         with open(_common.CANDIDATE) as fh:
@@ -227,6 +245,7 @@ def state(evts=None):
         'oks': sum(1 for _, e in checks if e.get('outcome') == 'ok'),
     }
     s['open'] = [r for r in s['reqs'] if r['covered'] is False]
+    s['runner_up'] = runner_up(done)
     # Edits that check.py undid, with the tests they broke: kept in every JOURNAL line, so a model whose history was
     # compacted does not make the same edit again.
     s['undone'] = []
@@ -250,7 +269,7 @@ def state(evts=None):
         s['step'] = 'LOCATE'
     elif late or s['broke'] or s['edited']:
         s['step'] = 'EDIT'
-    elif not s['hints'] or not s['seen']:
+    elif not s['hints'] or not s['seen'] or (s['runner_up'] and not s['edited']):
         s['step'] = 'UNDERSTAND'
     else:
         s['step'] = 'EDIT'
@@ -287,8 +306,8 @@ def stage_next(s):
     if STAGE == 'locate':
         if s['step'] in ('LOCATE', 'UNDERSTAND'):
             return None
-        return ('your part is done: write this as your final message, then stop (you can add one line saying why '
-                'the first place is the one to change):\n' + report_text(s))
+        return ('your part is done: write this as your final message, then stop. Add one line saying which of the '
+                'places holds the behaviour the statement asks to change, and why:\n' + report_text(s))
     if STAGE == 'plan':
         shown = {e['seen']['file'] for e in events() if e.get('seen') and e['script'] != 'edit.py'}
         missing = [d for r in s['reqs'] for d in (r.get('defs') or [])[:1] if d['file'] not in shown]
@@ -318,6 +337,10 @@ def next_call(s):
         if not s['hints']:
             return ('call hints.py with the sentences or bullets of the statement that ask for something, one per '
                     'item: it lists the requirements and where each name is defined, or that it is new.')
+        if s['seen'] and s['runner_up']:
+            r = s['runner_up']
+            return (f'call show.py ["{r["file"]}", "{r["symbol"]}"]: the second candidate of locate.py scores close to '
+                    'the first, so see it too before choosing the code to change.')
         c = candidate()
         if c:
             return (f'call show.py ["{c["file"]}", "{c["symbol"]}"] to see the numbered code of the best candidate '

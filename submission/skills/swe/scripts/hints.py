@@ -101,6 +101,27 @@ def likely_place(root, text, sources):
     return None
 
 
+def assignments(root, attr, sources):
+    """Where the attribute a statement names (`.history`) is assigned in the package code, with the enclosing
+    function: the code that sets a value is usually the code to change."""
+    pat = re.compile(r'\.' + re.escape(attr) + r'\s*(?:\[[^\]]*\])?\s*=(?!=)')
+    found = []
+    for rel, src in sources.items():
+        if _common.is_doc_path(rel) or not pat.search(src):
+            continue
+        syms = _common.symbols(_common.parse(src))
+        for i, line in enumerate(src.splitlines(), 1):
+            if pat.search(line):
+                enc = _common.enclosing(syms, i)
+                found.append((rel, enc[0] if enc else '<module>', i, line.strip()[:60]))
+                if enc:
+                    DEFS.append({'file': rel, 'symbol': enc[0], 'start': enc[2], 'end': enc[3]})
+    if not found:
+        return '', []
+    return ('.' + attr + ' is assigned in ' + '; '.join(f'{r} :: {q} line {i} ({t})' for r, q, i, t in found[:4]),
+            [r for r, _, _, _ in found])
+
+
 def requirements(args):
     items = split_items(args)
     if len(items) < 2 and not any(names_in(i) for i in items):
@@ -114,6 +135,12 @@ def requirements(args):
         creates = re.search(r'\b(add|adds|added|create|new|introduce|rename|support)\b|->', item, re.I) and \
             not re.search(r"\b(don'?t|do not|never|no longer|remove|stop)\b", item, re.I)
         DEFS.clear()
+        for attr in re.findall(r'`\.([A-Za-z_]\w*)`|(?<![\w`])\.([A-Za-z_]\w+)\b', item):
+            attr = attr[0] or attr[1]
+            fact, files = assignments(root, attr, sources)
+            if fact:
+                facts.append(fact)
+                places += [f for f in files if f not in places]
         for name in names:
             fact, files = facts_for(root, name, sources)
             facts.append(fact)
