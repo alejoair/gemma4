@@ -372,11 +372,11 @@ output ends with the exact `args` the next call needs. A wrong script or a call 
 
 | Step | The model's call (`args`) | What `step.py` does (deterministic) | What the model sees next |
 |---|---|---|---|
-| **S0 Start** | `[statement, search terms]`: the statement copied, plus the identifiers, file paths, error messages and behaviour words it contains | Splits requirements (R1..Rn); extracts names and looks up their definitions; BM25F over functions and classes with the statement **and** the model's search terms (query reformulation) | Requirements; top 10 candidates C1..C10, one or two lines each (file :: symbol, lines, signature, first docstring line, matched terms) |
-| **D1 Choose** | `["C2", "C5"]` (1–3 ids), or a name or path not on the list | Shows the chosen code (numbered, long strings collapsed); impact analysis: same-named definitions in other files, direct callers, overrides and subclasses, exports in `__init__` | The chosen code; related places P1..Pk with their reason |
+| **S0 Start** | `[statement, search terms]`: the statement copied, plus the identifiers, file paths, error messages and behaviour words it contains | Splits requirements (R1..Rn); extracts names and looks up their definitions; classifies each requirement (HTA 1.3): fix of existing code, new entity (a name the statement asks for that does not exist yet), rename or deprecation; BM25F over functions and classes with the statement **and** the model's search terms (query reformulation); for a new entity, adds its **owner place** to the candidates (where entities of the same kind live, for example the class that `app.frontend` belongs to) | Requirements with their type; top 10 candidates C1..C10, one or two lines each (file :: symbol, lines, signature, first docstring line, matched terms), owner places marked |
+| **D1 Choose** | `["C2", "C5"]` (1–3 ids), or a name or path not on the list | Shows the chosen code (numbered, long strings collapsed); impact analysis: same-named definitions in other files, direct callers, overrides and subclasses, exports in `__init__`; for a new entity, shows a **sibling entity** of the same kind as a model (signature and body) and the exact name the statement uses | The chosen code; related places P1..Pk with their reason; for a new entity, the sibling and the exact name |
 | **D2 Plan** | `["P1: <what changes>", "P3: <what changes>"]`, or `["back"]` | Stores the plan; maps requirements to places | The first planned place's window (±15 numbered lines) with its plan line and the statement's exact names |
 | **D3 Edit** (once per planned place) | `["P1", start, end, new lines]` | Applies (with the known repairs), checks syntax (reverts on failure), runs the related existing tests, compares against the failures already present before the change, stores the last verified state | A fixed verdict line, then: on failure the error and the updated window; on success the next place's window; after the last place the coverage map |
-| **D4 Finish** | `submit_patch` | Before saying so, removes leftovers and keeps the last verified state | — |
+| **D4 Finish** | `submit_patch`, or `["R2"]` for a requirement the coverage map shows as not covered | Shows the coverage map (requirement ↔ edited place); on `["R2"]` goes back to D1 with that requirement's candidates; before `submit_patch`, removes leftovers and keeps the last verified state | On `["R2"]`: the candidates of R2 |
 
 ### Cheap techniques, by failure
 
@@ -409,3 +409,46 @@ advertises them, and a call to a tool the agent lacks ends the task. The prompt 
 
 Reproduction snippet (AssertFlip variant first, measured on the 10 local tasks against the reference patches);
 several patch samples with test voting; trained verifier or reranker (LoRA); tree search.
+
+### HTA coverage of v1
+
+| HTA operation | In v1 |
+|---|---|
+| 1.1 Requirements · 1.2 Names · 1.3 Change type | S0 (`_statement.py`) |
+| 2.1–2.2 Candidates | S0 (`_rank.py`); new entities get their owner place (plan 2) |
+| 2.3 Confirm the place | D1 chooses, D2 confirms or goes `back` |
+| 2.4 Related places | D1 (`_impact.py`) |
+| 3.1 New behaviour | D2 ("what changes" per place) |
+| 3.2 New code: where and signature | D1 shows the sibling entity and the exact name; D2 plans it |
+| 3.3 What to keep | Indirect: the regression tests of D3 |
+| 4.1 Write · 4.2 Apply · 4.3 Syntax | D3 (`_edit.py`) |
+| 5.1 Regression | D3 (`_tests.py`) |
+| 5.2 Reproduction | Out of v1 on purpose (not cheap, not measured) |
+| 5.3 Coverage | D4: coverage map; an uncovered requirement goes back to D1 (plan 0) |
+| 6.1 Leftovers · 6.2 Submit | D4 |
+| Plan 0 time limit → last verified state | `_journal.py` |
+| Plan 2 next candidate | `back` in D2; another id in D1 |
+
+### Scripts
+
+The model calls only `step.py`. The other files are internal modules: their names start with `_`, and called directly
+they do nothing and point to `step.py`. All in the new skill's `scripts/`.
+
+| File | Used by | Responsibility | Unit test (written before the code) |
+|---|---|---|---|
+| `step.py` | The model (the only entry point) | Reads the current step from the journal, reads `args` as that step's decision, calls the modules, ends with a fixed verdict and the exact next call | Whole flow S0 → D4 dry, with hand-written decisions, on the local tasks |
+| `_journal.py` | `step.py` | State machine (S0, D1, D2, D3 per place, D4): transitions, going back (`back`, a place that fails twice, an uncovered requirement), stuck detector (same `args`, same error 3 times), time limits | Every transition and recovery with simulated events |
+| `_args.py` | `step.py` | Tolerant parsing of `args`: extra quotes or backticks, everything packed in one string, escaped `\n`, leaked call syntax, line-number prefixes | One case per malformed form in `docs/old_scripts_lessons.md` |
+| `_state.py` | All | State files in `/tmp`, one set per repository (statement, requirements, candidates, places, plan, last verified state, events) | Two repositories never share state |
+| `_repo.py` | All | Repository root; `.py` files (with `docs_src/` and `scripts/`, without hidden files and caches); read and write keeping CRLF and non-UTF-8 bytes; `git diff` plus new files | A CRLF file with invalid bytes is read and written back identical |
+| `_statement.py` | S0 | Requirements (bullets and sentences, without links and "Fixes #N"); code names and where they are defined; change type per requirement | Expected requirements, names and types on the local statements |
+| `_rank.py` | S0 | BM25F over functions and classes with the statement plus the model's terms; owner places for new entities; top 10 | **Recall@10 of the reference function over the 129 tasks**, target ≥ 80% |
+| `_code.py` | D1, D2, D3 | AST: symbols, skeleton (signature + first docstring line), numbered code, ±15-line windows, long strings collapsed | Exact format and line numbers on test files |
+| `_impact.py` | D1 | Related places: same-named definitions in other files, direct callers, overrides and subclasses, exports in `__init__`; sibling entity for a new one | httpx_3672's sync/async copies; the callers of a known case; a sibling for fastapi_15800's `frontend` |
+| `_edit.py` | D3 | Line-range replacement with the known repairs (indentation, escaped quotes, range longer than the text, duplicated boundary line) and a syntax guard that reverts | Each repair and each revert |
+| `_tests.py` | D3 | Picks tests by the changed names; runs them with time limits and stubs; compares with the failures present before the change; prints a fixed verdict; stores or restores the last verified state | An edit that breaks a test (reverted), a neutral edit (OK), a failure already present before the change (not counted) |
+
+Outside the skill (our tools, not shipped): `tools/build.py` (builds the submission without `__pycache__` and
+validates it), `tools/bench_locate.py` (the 129-task localization benchmark, the test of `_rank.py`), `tests/` (the
+unit tests). Agent config: `agent.yaml` (`submit_patch`, the skill and the three graph tools), the short prompt,
+`configs/` and `eval_config.yaml`.
