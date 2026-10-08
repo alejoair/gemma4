@@ -137,3 +137,29 @@ HTA step 5 (few sub-goals per level): 6 sub-goals with 2–4 operations each, wi
 Link to the step-3 data: 1.3 and 3.2 exist because 33% of the fixes create new code; 2.4 because 28% change 4+
 functions and 6% repeat the change in copies; 5.2 and 5.3 because the regression check passed incomplete patches in
 V6; 2.1–2.3 are hierarchical (as in Agentless) because the statement names the function in only 23% of the tasks.
+
+## HTA step 6: plans
+
+For each goal: the order of its parts, the conditions, and where to go back when something fails. Still not who does it.
+
+| Plan | Order and conditions |
+|---|---|
+| **Plan 0 (fix the issue)** | 1 → 2 → 3 → 4 → 5. Then, by the result of 5: |
+| | • 5.1 shows the change broke tests → **undo the change** and go back to 3.1 with the failure |
+| | • 5.2 shows the requested behaviour is not met: if the place's code is unrelated to it → back to **2.3** with the next candidate; if related → back to **3.1** |
+| | • 5.3 shows a requirement or a place not covered → 3 → 4 → 5 **for that requirement or place only** |
+| | • everything passes → 6 |
+| | • **time limit:** if there is no time left for another 4 + 5 cycle → keep the last state that passed 5.1 (or the original if none did) and go to 6 |
+| **Plan 1** | 1.1 and 1.2 in any order (both read only the statement); then 1.3 |
+| **Plan 2** | If 1.2 found names defined in the repository → start 2.2 from their definitions (shortcut); else 2.1 → 2.2 |
+| | 2.3 on the best candidate; if not confirmed → the next one from 2.2; when those run out → the next file from 2.1 |
+| | If a requirement asks for a new entity (a name that does not exist) → in 2.2 look for where entities of the same kind live (the owner place) |
+| | For each confirmed place → 2.4 |
+| **Plan 3** | For each requirement: 3.3 (what to keep) → 3.2 if new code is needed → 3.1 |
+| **Plan 4** | For each place in the 2.4 list: 4.1 → 4.2 → 4.3; if 4.3 fails → back to 4.1 with the error |
+| **Plan 5** | 5.1 → 5.2 → 5.3 |
+| **Plan 6** | 6.1 → 6.2 |
+
+Two points the earlier design lacked: "keep the last verified state" is explicit (never deliver something worse than
+what was already verified), and the 2.4 place list drives plans 4 and 5 (every place is edited and every place's
+coverage is checked; V6 made one edit and submitted).
