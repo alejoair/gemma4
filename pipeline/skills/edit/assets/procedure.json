@@ -1,13 +1,22 @@
 {
   "description": "Edit stage of the pipeline: make each planned change with edit.py; check.py runs automatically after every applied edit.",
   "stage": "edit",
-  "allowed": ["show.py", "edit.py", "check.py"],
+  "allowed": [
+    "show.py",
+    "edit.py",
+    "check.py"
+  ],
   "steps": [
     "SHOW: show.py on the code of the change",
     "EDIT: edit.py [file, start, end, new lines] with the line numbers shown",
     "VERIFY: check.py runs automatically after every applied edit; if it undoes a breaking edit, edit again",
     "REPORT: EDITED and VERDICT as the final message"
   ],
-  "limits": {"reads_before_edit": 4, "reads_after_edit": 4, "tries": 0},
-  "late_after_seconds": 230
+  "limits": {
+    "reads_before_edit": 4,
+    "reads_after_edit": 4,
+    "tries": 0
+  },
+  "late_after_seconds": 230,
+  "no_edit_after_seconds": 255
 }

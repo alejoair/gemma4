@@ -472,6 +472,11 @@ def edit_gate(s):
     """Refuse an edit of lines the model has not seen, and an edit that overlaps the edit just made before check.py
     has tested it (rewriting the same lines again and again shifts them and corrupts the file). Edits elsewhere
     (another place, the sync/async copy) are fine."""
+    if s['elapsed'] > PROC.get('no_edit_after_seconds', 255):
+        # check.py needs up to ~40 s; an edit made now could be cut by the timeout before it is checked, and the
+        # harness would submit it unchecked (seen: a late edit left 20 failing tests in the patch).
+        return ('time is almost up: there is no time left to check a new edit, so the last checked state is kept. '
+                + ('Write your final report now' if STAGE == 'edit' else 'Call the submit_patch tool now'))
     unseen = unseen_range()
     if unseen:
         return (f'you have not seen lines {unseen} of {sys.argv[1]}, so their numbers are a guess. Call show.py '
