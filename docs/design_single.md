@@ -103,3 +103,37 @@ samples, and validation with regression and reproduction tests plus majority vot
    almost never has a traceback.
 3. Creating new code is common (33%): "edit existing lines" does not cover every fix.
 4. There are no hints to rely on.
+
+## HTA step 4: goals and sub-goals
+
+What has to be achieved, not who does it (that is the function allocation). Each operation has the input it needs and
+the output it produces: those become the interfaces between scripts and model calls.
+
+**0. Fix the issue** (input: statement and repository; output: patch)
+
+| Sub-goal | Operation | Input | Output |
+|---|---|---|---|
+| **1. Understand the request** | 1.1 Extract the requested behaviours (requirements) | Statement | Requirement list |
+| | 1.2 Identify the named entities: functions, classes, options, messages, errors | Statement | Names and texts |
+| | 1.3 Classify the change: bug fix, new feature, deprecation or rename, other | Requirements | Change type |
+| **2. Locate the code** | 2.1 Find candidate files | Requirements, names, repository | Ranked files |
+| | 2.2 Find candidate functions or classes in those files | Files, requirements | Ranked functions |
+| | 2.3 Confirm the place by reading its code against the requirement | Candidates' code, requirement | Confirmed place(s) |
+| | 2.4 Find related places that must change too: sync/async copies, overloads, exports, callers | Confirmed place, repository | Complete place list |
+| **3. Decide the change** | 3.1 Per requirement and place: decide the new behaviour | Requirement, place's code | Change description |
+| | 3.2 If new code is needed: decide where it goes and its exact signature | Requirement, statement names, module structure | Location and signature |
+| | 3.3 Decide which existing behaviour must be kept | Place's code, existing tests | Constraints |
+| **4. Make the change** | 4.1 Write the new code for each place | Change description, place's code | Change text |
+| | 4.2 Apply it to the file | Change text, file | Modified file |
+| | 4.3 Check it is valid: syntax, defined names, imports | Modified file | Valid or error |
+| **5. Verify** | 5.1 Run the related existing tests (regression) | Changed files, repository tests | Pass or fail, with detail |
+| | 5.2 Check the requested behaviour (reproduction) | Requirement, changed code | Met or not |
+| | 5.3 Check every requirement and every place is covered | Requirements, place list, diff | Coverage |
+| **6. Deliver** | 6.1 Remove leftovers: scratch files, prints | Diff | Clean diff |
+| | 6.2 Submit the patch | Diff | Patch |
+
+HTA step 5 (few sub-goals per level): 6 sub-goals with 2–4 operations each, within 3–10.
+
+Link to the step-3 data: 1.3 and 3.2 exist because 33% of the fixes create new code; 2.4 because 28% change 4+
+functions and 6% repeat the change in copies; 5.2 and 5.3 because the regression check passed incomplete patches in
+V6; 2.1–2.3 are hierarchical (as in Agentless) because the statement names the function in only 23% of the tasks.
