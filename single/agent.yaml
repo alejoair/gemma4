@@ -1,14 +1,11 @@
 name: swe_single_agent
-description: One agent that locates, edits, checks and submits, using the deterministic swe scripts.
+description: One agent that fixes the issue by following the journal procedure of the deterministic swe scripts.
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include prompts/single.md
 tools:
-  - read_file
-  - edit_file
-  - write_file
-  - run_command
+  # The harness task message advertises the three code-graph tools; calling a tool the agent lacks ends the task
+  # (v13: 3/12 tasks), so they stay. Everything else is done with the swe scripts.
   - submit_patch
-  - get_status
   - search_similar_code
   - get_code_neighbors
   - get_code_subgraph

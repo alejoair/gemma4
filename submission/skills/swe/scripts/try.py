@@ -5,6 +5,8 @@ repository's code importable, and prints its output. Use it to check how somethi
 in the repository, so nothing it does ends up in the patch.
 """
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,6 +24,14 @@ def main():
         print('NEXT: call try.py with the lines of Python to run, for example ["import json", "print(json.dumps(1))"].')
         return
     code = code.replace('⏎', '\n')
+    # A shell command (python3 -c '...') instead of Python code: run the code inside it.
+    m = re.match(r'\s*python[0-9.]*\s+-c\s+(.+)$', code, re.S)
+    if m:
+        try:
+            parts = shlex.split(m.group(1))
+            code = parts[0] if parts else code
+        except ValueError:
+            pass
     if '\n' not in code and '\\n' in code:
         code = code.replace('\\n', '\n').replace('\\t', '\t')
     root = repo_root()

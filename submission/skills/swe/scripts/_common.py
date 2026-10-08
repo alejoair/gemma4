@@ -13,6 +13,25 @@ SKIP_DIRS = {'.git', '.hg', '.tox', '.nox', '.venv', 'venv', 'env', 'node_module
 DOC_DIRS = {'docs', 'doc', 'docs_src', 'examples', 'example', 'benchmarks', 'scripts'}
 MAX_OUT = 4000
 CALL_LOG = '/tmp/swe_skill_calls.log'
+# The single agent's skill ships assets/procedure.json: then the journal drives the work (see _journal.py).
+PROCEDURE_ON = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'procedure.json'))
+
+
+# With the procedure the JOURNAL line is the only NEXT: a script's own NEXT line becomes a TIP, and the ones written
+# for the pipeline stages (report, plan, locator, fixer) are dropped.
+_PIPELINE_WORDS = ('report', 'locator', 'fixer', 'apply_edit', 'your plan', 'your procedure')
+
+
+def _procedure_text(s):
+    lines = s.split('\n')
+    out = []
+    for line in lines:
+        if line.startswith('NEXT:'):
+            if any(w in line for w in _PIPELINE_WORDS):
+                continue
+            line = 'TIP:' + line[5:]
+        out.append(line)
+    return '\n'.join(out)
 
 
 class _Tee:
@@ -20,6 +39,7 @@ class _Tee:
 
     def __init__(self, stream):
         self.stream = stream
+        self.buf = []
         try:
             self.fh = open(CALL_LOG, 'a')
             self.fh.write('\n===== ' + ' '.join(os.path.basename(a) if i == 0 else a for i, a in enumerate(sys.argv))[:300] + '\n')
@@ -27,6 +47,9 @@ class _Tee:
             self.fh = None
 
     def write(self, s):
+        if PROCEDURE_ON:
+            s = _procedure_text(s)
+        self.buf.append(s)
         if self.fh:
             self.fh.write(s)
             self.fh.flush()
@@ -115,7 +138,23 @@ def _status_note():
               'no other change, finish now as your instructions say.')
 
 
-atexit.register(_status_note)
+def _at_exit():
+    if PROCEDURE_ON and _journal is not None and _journal.PROC:
+        script = os.path.basename(sys.argv[0])
+        text = ''.join(sys.stdout.buf) if isinstance(sys.stdout, _Tee) else ''
+        event = _journal.classify(script, text)
+        if _REFUSED:
+            event['refused'] = True
+        _journal.record(event)
+        if script != 'journal.py':
+            print('\n' + _journal.journal_line())
+        return
+    _status_note()
+
+
+atexit.register(_at_exit)
+_REFUSED = False
+_journal = None
 NO_REPEAT_GUARD = {'check.py', 'journal.py'}
 
 
@@ -137,6 +176,14 @@ def repeat_guard(next_step):
             fh.write(sig + '\n')
     except OSError:
         pass
+    if count and PROCEDURE_ON:
+        if script == 'show.py' and count == 1:
+            # Printed again once: a history compaction may have dropped the first output.
+            print(f'NOTE: you already ran "{sig}"; the code is unchanged since then:')
+            return
+        print(f'REPEATED CALL: you already ran "{sig}" ({count + 1} times now). Its output is in the conversation '
+              'above and has not changed.')
+        sys.exit(0)
     if count == 1 or (count and script == 'show.py'):
         # A repeat may come from a later stage that never saw the output (the locator and the fixer share /tmp), and
         # show.py prints the numbered code the edits are made from, so print the output again instead of stopping.
@@ -357,3 +404,17 @@ def graph_id(rel, qualname):
     if not qualname or qualname == '<module>':
         return module
     return f'{module}.{qualname}' if module else qualname
+
+
+if PROCEDURE_ON:
+    try:
+        import _journal  # noqa: E402  (imported last: it uses the helpers above)
+    except Exception:  # noqa: BLE001
+        _journal = None
+    _script = os.path.basename(sys.argv[0])
+    if _journal is not None and _journal.PROC and _script.endswith('.py') and not _script.startswith('_'):
+        _reason = _journal.gate(_script)
+        if _reason:
+            _REFUSED = True
+            print(f'NOT RUN: {_reason}.')
+            sys.exit(0)

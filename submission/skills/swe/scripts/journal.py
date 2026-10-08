@@ -1,6 +1,9 @@
-"""journal.py <phase> <note ...>   |   journal.py show
+"""journal.py   |   journal.py show   |   journal.py <phase> <note ...>
 
-Work log kept in /tmp across calls and pipeline stages. Phases: locate, edit, verify, submit. Each call records
+With the procedure of the single agent (assets/procedure.json): prints the steps to follow, what the scripts have
+really done so far, the current step and the exact next call (see _journal.py).
+
+Without it: work log kept in /tmp across calls and pipeline stages. Phases: locate, edit, verify, submit. Each call records
 the note, flags a step that repeats an earlier one, and prints the log plus the next step for the current phase.
 """
 import json
@@ -33,7 +36,26 @@ def load():
         return [json.loads(line) for line in fh if line.strip()]
 
 
+def procedure_view():
+    import _journal
+    s = _journal.state()
+    print('PROCEDURE (follow these steps in order):')
+    for n, step in enumerate(_journal.PROC['steps'], 1):
+        mark = '->' if n == _journal.STEP_NO[s['step']] else '  '
+        print(f'{mark} {n}. {step}')
+    done = [e for e in _journal.events() if e['script'] != 'journal.py']
+    print(f'Done so far ({len(done)} script calls):')
+    for e in done[-12:]:
+        what = e.get('outcome') or (f'{e["seen"]["file"]} lines {e["seen"]["start"]}-{e["seen"]["end"]}'
+                                    if e.get('seen') else '')
+        print(f'  - {e["script"]}' + (' (not run)' if e.get('refused') else '') + (f': {what}' if what else ''))
+    print(_journal.journal_line(s))
+
+
 def main():
+    if _common.PROCEDURE_ON:
+        procedure_view()
+        return
     args = sys.argv[1:]
     entries = load()
     if args and args[0] != 'show':
