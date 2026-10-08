@@ -346,3 +346,66 @@ Unit tests, defined before writing the code (on the 14 local repositories):
 3. **No free `show.py`.** The model never asks for code. So that the procedure never leaves the model without a valid
    move (the lesson of fastapi_14448), `pick.py` also accepts a name or a path that is not in the candidate list; the
    script resolves it deterministically and treats it like a chosen candidate.
+
+## Design v1: cheap techniques only (2026-10-08)
+
+The only design principle: make the task easier for the 31B. This version uses only the cheap techniques of the
+failure table in CLAUDE.md: no several-sample voting, no verifiers, no LoRA, no RL, no tree search, and no
+reproduction snippet (LLMs write useful reproduction tests in 3.6–49% of cases; it must be measured before the design
+depends on it). It replaces the "Detailed design" table above where they differ.
+
+Checked and discarded: `tool_choice="required"` (vLLM would then constrain the call format). The ADK's
+`generate_content_config` forbids extra fields (`extra="forbid"`; no `tool_config`), so it cannot be set.
+
+### One script for every step
+
+The model calls the same script every time: `run_skill_script(skill_name="swe", file_path="scripts/step.py",
+args=[...])`. The journal inside `step.py` knows the current step and reads `args` as that step's decision; every
+output ends with the exact `args` the next call needs. A wrong script or a call out of order cannot happen, and
+`file_path` is always the same text.
+
+| Failure it removes | Technique | Source |
+|---|---|---|
+| Calls to scripts that do not exist; out-of-order calls and their retried refusals | Fewer, simpler tools; only the valid action of the step | SWE-agent ACI; SOP-Agent |
+
+### The steps
+
+| Step | The model's call (`args`) | What `step.py` does (deterministic) | What the model sees next |
+|---|---|---|---|
+| **S0 Start** | `[statement, search terms]`: the statement copied, plus the identifiers, file paths, error messages and behaviour words it contains | Splits requirements (R1..Rn); extracts names and looks up their definitions; BM25F over functions and classes with the statement **and** the model's search terms (query reformulation) | Requirements; top 10 candidates C1..C10, one or two lines each (file :: symbol, lines, signature, first docstring line, matched terms) |
+| **D1 Choose** | `["C2", "C5"]` (1–3 ids), or a name or path not on the list | Shows the chosen code (numbered, long strings collapsed); impact analysis: same-named definitions in other files, direct callers, overrides and subclasses, exports in `__init__` | The chosen code; related places P1..Pk with their reason |
+| **D2 Plan** | `["P1: <what changes>", "P3: <what changes>"]`, or `["back"]` | Stores the plan; maps requirements to places | The first planned place's window (±15 numbered lines) with its plan line and the statement's exact names |
+| **D3 Edit** (once per planned place) | `["P1", start, end, new lines]` | Applies (with the known repairs), checks syntax (reverts on failure), runs the related existing tests, compares against the failures already present before the change, stores the last verified state | A fixed verdict line, then: on failure the error and the updated window; on success the next place's window; after the last place the coverage map |
+| **D4 Finish** | `submit_patch` | Before saying so, removes leftovers and keeps the last verified state | — |
+
+### Cheap techniques, by failure
+
+| Failure (from CLAUDE.md) | Technique in v1 | Source |
+|---|---|---|
+| Reads a lot, edits late | Fixed steps with prepared inputs; the model never asks for code | Agentless |
+| Leaves the right place | Fixed hierarchical localization (candidates → chosen code → places → lines); going back is an explicit choice (`back`, or another id) | Agentless |
+| Superficial matching | Query reformulation in S0: the model writes the search terms in the same call that copies the statement (no extra call) | Reformulate, Retrieve, Localize |
+| Incomplete repair across places | Impact analysis lists the related places; one D3 per planned place | CodePlan (light), LocAgent |
+| Loops and repeated calls | Stuck detector in the journal: the same `args` twice in a step is answered with the expected form and not run again; the same error 3 times on one place skips it and keeps the last verified state | OpenHands stuck detector, SHERLOC |
+| Misreading test output | The script decides from the tests and prints one verdict; the journal, not the model, chooses the next step | Agentless (deterministic reading) |
+| Early errors cascade | Explicit way back: `back` in D2, or a place that fails twice returns to D1 with the remaining candidates | AgentDebug (idea, without the trained debugger) |
+| Context growth | Small outputs: skeleton lines, ±15-line windows, long strings collapsed; target under about 8k tokens per task | Agentless, Beyond Generalist |
+| Skill-induced failures | Short prompt; mandatory form separated from examples; examples use visibly fake values (`<file>`, `<start>`), never real-looking ones | Agent Skills Can Be Harmful |
+| Malformed calls | Same `file_path` always; tolerant parsing of `args` (quotes, packed strings, escapes); thinking budget kept modest; `temperature: 0` to be measured as the only cheap lever left for `「swe」` | ACI, SHERLOC |
+| Premature or chained actions | One call per turn, native function calling | Overthinking (Cuadron et al.) |
+
+### Calls and time
+
+S0 + D1 + D2 + one D3 per place + submit: 5 calls for one place, 7 for three places; with up to 2 retries per place
+and about 14% malformed calls, about 8–12 calls typical. At a median of 5.5 s per model turn that is about 1 minute.
+`eval_config.yaml`: about 5.5 min and 30 calls as a safety net.
+
+### Tools of the agent
+
+`submit_patch`, the skill `swe` (only `step.py` in `scripts/`), and the three graph tools: the harness's task message
+advertises them, and a call to a tool the agent lacks ends the task. The prompt says they are not needed.
+
+### Left out of v1 (not cheap or not measured)
+
+Reproduction snippet (AssertFlip variant first, measured on the 10 local tasks against the reference patches);
+several patch samples with test voting; trained verifier or reranker (LoRA); tree search.

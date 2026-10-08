@@ -46,7 +46,7 @@ our setting: declarative ADK, no own code in the agent, no internet.
 
 | Failure (evidence) | Techniques in the literature | Applicable here? |
 |---|---|---|
-| **Malformed calls** (`「swe」`, `「scripts/show.py」`, extra quotes): 31% of script calls in V1, 21% V2, 10% V3, 17% V4, 14% V6. **Calls to tools or scripts that do not exist**: V1 `show_file` (task lost), V5 `grep.py`, V6 `nonexistent.py` | Grammar-constrained decoding (XGrammar-2: removes format errors; a 3B beat a 70B on BFCL). Malformed-call repair layer (SHERLOC). Fewer, simpler tools (SWE-agent ACI). Function-calling fine-tuning (Gorilla, xLAM) | vLLM enforces the schema only with `tool_choice="required"` or a named function, not with `"auto"`: check whether the ADK schema can set it. Repair: only for the arguments that reach our scripts. LoRA: yes |
+| **Malformed calls** (`「swe」`, `「scripts/show.py」`, extra quotes): 31% of script calls in V1, 21% V2, 10% V3, 17% V4, 14% V6. **Calls to tools or scripts that do not exist**: V1 `show_file` (task lost), V5 `grep.py`, V6 `nonexistent.py` | Grammar-constrained decoding (XGrammar-2: removes format errors; a 3B beat a 70B on BFCL). Malformed-call repair layer (SHERLOC). Fewer, simpler tools (SWE-agent ACI). Function-calling fine-tuning (Gorilla, xLAM) | vLLM enforces the schema only with `tool_choice="required"` or a named function, not with `"auto"`, and the ADK cannot set it (`generate_content_config` forbids extra fields; no `tool_config`). Repair: only for the arguments that reach our scripts. LoRA: yes |
 | **With `run_command` / `read_file` it uses them instead of the scripts**: V2 96 + 65, V3 96 + 67 calls | Fewer, simpler tools (ACI); only the valid actions per step (SOP-Agent) | Yes |
 | **Does not follow the suggested next step**: V4, 16–17 `show.py` before the requirement step. **Retries refused calls, repeats identical ones**: 55 refusals in V4, 50 in V6, 34 identical repeats in the V5 locator, the same refused edit 3× in V6 fastapi_14448 | Stuck detector: same action and observation 4+ times, same action and error 3+ times, ping-pong (OpenHands). Loop detection and intervention (SHERLOC). Only the valid actions per step (SOP-Agent, StateFlow). Early stop: most successes come within about 25 rounds; failures take 3.5× more steps (Liu et al.) | Yes, in the scripts |
 | **Reads a lot, edits late or never** ("analysis paralysis"): V6 128 `show.py`; first edit after 148–248 s in 5 of 8 failed tasks, never in 2 | Native function calling and selective RL; picking the solution with the lower overthinking score: +30% performance, −43% cost (Cuadron et al.). Fixed steps with prepared inputs (Agentless). Thinking budget | Fixed steps and thinking budget: yes. RL: no |
@@ -70,7 +70,7 @@ our setting: declarative ADK, no own code in the agent, no internet.
 Main conclusions: fixing is harder for the model than localizing, especially across several places; writing a
 reproduction test is hard for LLMs, so it must be measured before the design depends on it. New techniques that fit:
 query reformulation before BM25, CodePlan-style impact analysis, AssertFlip for reproduction, script-side reading of
-outputs, and `tool_choice="required"` if the ADK allows it.
+outputs (`tool_choice="required"` was checked: the ADK cannot set it).
 
 Sources: [Liu et al. 2025](https://arxiv.org/pdf/2509.13941) · [trajectory study](https://arxiv.org/html/2511.00197) ·
 [Overthinking](https://arxiv.org/pdf/2502.08235) · [SWE-smith](https://arxiv.org/pdf/2504.21798) ·
