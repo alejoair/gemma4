@@ -257,3 +257,31 @@ Result: the LLM has **5 decision points** per task, each with its input prepared
 
 Everything else is deterministic and chained inside those calls. Against the earlier design: "what to read" (2.1–2.3)
 was LOA 1 (the model decided); now reading is LOA 10 and choosing is LOA 4.
+
+## Patterns (workflow vs agent)
+
+Measured in the V6 traces (Kaggle, 31B): one model turn (from a tool result to the next call) takes a median of 5.5 s
+(p90 17 s); a normal script 0.2 s (p90 0.3 s); `edit.py` with its automatic check 0.2 s (p90 8.6 s). The cost is in the
+model calls, not in the scripts or the tests.
+
+Patterns from *Building Effective Agents*:
+
+| Pattern | Where | How |
+|---|---|---|
+| **Prompt chaining with gates** | The whole flow D1 → D2 → D3 → D4 → D5 | The model's output is the next script's argument. The journal is the gate: it does not advance when, for example, D1 chose a candidate that is not on the list or the change was not applied |
+| **Routing** | By change type (1.3) and number of places (2.4) | The script decides what the model receives: a bug fix gets the current code; a new entity gets the sibling entity and the statement's exact names; a multi-place change goes through one D4 per place |
+| **Parallelization: sectioning** | Changes in several places | One D4 per place, each with that place's window, in sequence within the same agent |
+| **Evaluator-optimizer** | D4 | The evaluator is deterministic: syntax (4.3), regression (5.1), reproduction (5.2). On failure the model rewrites with the error output. At most 2 retries per place |
+| Parallelization: voting (several samples, the tests choose) | **Deferred** | Agentless uses it, but it needs independent samples: inside one agent each sample sees the previous one. It needs a `ParallelAgent` with seeds and separate worktrees. Decided after measuring v1 |
+| Orchestrator-workers / autonomous agent | **Not used** | The subtasks are known in advance: this is a workflow, not an agent |
+
+Budget, derived from the design rather than fixed beforehand:
+- Calls per task: 5 decisions, +1 D4 per extra place (p90 3 places), +up to 2 retries per place, +about 14% mangled
+  calls. Typical about 8–12; reasonable worst case about 20.
+- Time: about 10 calls × 5.5 s ≈ 1 min typical; 20 × 17 s ≈ 5.7 min worst case. The real limit is about 6 min per task
+  on average, sandbox setup included.
+- Proposed `eval_config.yaml`: about 5.5 min per task and a cap of about 30 calls as a safety net, leaving room for
+  voting when it is tried. To be confirmed in verification.
+
+Against V6: a typical task there used 20–40 calls, most of them to read; here the model makes about 10, all of them
+decisions.
