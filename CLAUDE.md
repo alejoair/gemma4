@@ -25,6 +25,57 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 
 **Prizes.** $37k / $18k / $10k for places 1–3, plus a $35k paper track (PEFT/RL for SWE agents, code graphs/embeddings, benchmarks, graph reasoning).
 
+## System design (the user's idea; keep it)
+
+**Principle.** Deterministic scripts help a small LLM do SWE. The scripts of the skill `swe` (`submission/skills/swe/scripts/`) do the work. The ADK config (agents, prompts, tools) is only the container that makes the model use them.
+
+**The journal is the core.** `journal.py` gives the steps the agent must follow (phases locate → edit → verify → submit, and the next step of each). It is essential, not optional.
+
+**The agents must use the scripts.** If the model does the work with `run_command` (grep, cat, sed, python, pytest) or `read_file` / `edit_file`, the system is not acting. Kaggle single v2 showed exactly this: 96 `run_command` + 65 `read_file` calls against 94 script calls, and `journal.py` and `hints.py` were never called.
+
+**Rules for Claude working on this repo:**
+- Never remove or replace a piece of this design because it has few or no calls. Zero calls means it is not wired into the prompts or tools. Find out why and wire it.
+- Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
+
+### Scripts of the skill `swe`
+- `journal.py`: the steps to follow, and the phase and next step.
+- `locate.py`: finds the functions from statement words, with numbered code.
+- `show.py`: shows numbered code for a symbol or a line range.
+- `edit.py`: replaces lines. The syntax guard reverts a broken edit and shows why.
+- `check.py`: runs the related tests and prints a VERDICT. It rolls back an edit that breaks tests.
+- `hints.py`: a checklist for that kind of fix.
+- `callers.py`: the definition of a name, its callers and its tests.
+- `try.py`: runs a snippet outside the repository.
+- `tests_for.py`: a library that `check.py` and `try.py` use.
+- `_common.py`: argument cleaning, repeat guard, the call log and STATUS lines.
+
+### Literature behind the design
+- **SWE-agent / ACI** (NeurIPS 2024, [arXiv 2405.15793](https://arxiv.org/pdf/2405.15793)).
+  - Tools designed for the model, not raw shell.
+  - Ablations: no editor −7.7, no linting −3.0, whole-file view instead of a ~100-line window −5.3, iterative search −6.0. A failed edit drops recovery from 90.5% to 57.2%.
+  - Collapse old observations.
+- **SOP-Agent** ([arXiv 2501.09316](https://arxiv.org/html/2501.09316v1)): the closest to the journal.
+  - The procedure is a decision graph. At each step a navigator gives the current step and only the valid actions.
+  - Tools are restricted to those allowed in the current step.
+- **StateFlow** ([arXiv 2403.11322](https://arxiv.org/html/2403.11322v1)): the task as a state machine, with one instruction per state and transitions by rules or by the LLM. +13% / +28% over ReAct at 3–5× less cost.
+- **Blueprint First, Model Second** ([arXiv 2508.02721](https://papers.cool/arxiv/2508.02721)): a deterministic engine runs the procedure. The LLM only does bounded subtasks and never decides the path. +10.1 pts on tau-bench.
+- **Moatless Tools** ([SWE-Search appendix](https://arxiv.org/pdf/2410.20285)): a fixed state machine search → identify → plan → edit. 24% on Lite with GPT-4o at about $0.13 per task.
+- **CodeR** ([arXiv 2406.01304](https://arxiv.org/html/2406.01304v1)): plans as a JSON task graph, to avoid non-progressing loops and information lost between agents.
+- **Agentless** ([arXiv 2407.01489](https://arxiv.org/html/2407.01489v2)): fixed phases.
+  - Hierarchical localization: file → class/function → lines.
+  - Then repair, then validation with regression and reproduction tests.
+  - 32% on Lite.
+- **AutoCodeRover** ([arXiv 2404.05427](https://arxiv.org/html/2404.05427v3)): AST search APIs (`search_class`, `search_method`, `search_code`), spectrum-based fault localization, and patch retries checked by tests.
+- **Lingma SWE-GPT / SWESynInfer** ([arXiv 2411.00622](https://arxiv.org/html/2411.00622v1)): a process workflow (repo understanding → fault localization → patch) for small open models. The 7B model solves about 18% of Verified.
+- **SHERLOC** ([arXiv 2606.24820](https://arxiv.org/pdf/2606.24820)): a tool layer with loop detection, malformed-tool-call repair and final-turn synthesis. About +6 pts of resolution on Verified.
+- **An Empirical Study of Harness Design for Coding Agents** ([arXiv 2609.20804](https://arxiv.org/pdf/2609.20804)): planning (a list of steps) is an accuracy scaffold for weaker models and only a cost saver for strong ones. Context management moved one model from 6.4% to 58.4%.
+- **Beyond Generalist LLMs** ([arXiv 2607.14456](https://arxiv.org/abs/2607.14456)): a constrained specialist workflow with minimal context per subtask. 3× fewer tool-call errors and 95% fewer tokens.
+- **Small Language Models are the Future of Agentic AI** ([arXiv 2506.02153](https://arxiv.org/pdf/2506.02153)): small models suffice for narrow subtasks.
+- **LocAgent** ([arXiv 2503.09089](https://arxiv.org/pdf/2503.09089)) and **SweRank** ([arXiv 2505.07849](https://arxiv.org/pdf/2505.07849)): graph-guided and ranking-based localization, where small fine-tuned models compete with large ones.
+- **SoRFT** ([arXiv 2502.20127](https://arxiv.org/pdf/2502.20127)): fine-tuning per subtask (localization, editing).
+
+Most numbers come from abstracts and summaries; check them in the PDFs before citing them in the paper.
+
 ## ADK config and harness behaviour (checked in the installed adk_submission 0.2.12, swegemma 0.2.7, google-adk 1.39.1)
 
 - Agent classes: `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`. Tools are the 9 harness tools, the skill tools, or `agent_tool: {config_path, skip_summarization}`. Not in the schema: ADK `planner`, `code_executor`, `input_schema`, `output_schema`, `response_schema`.
@@ -33,6 +84,70 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 - If the root agent ends without `submit_patch`, the harness re-runs it with a "nudge" message (up to 3 times), and it takes `git diff` at the end anyway.
 - `ParallelAgent` branches share one `/workspace`; separate candidate patches need separate git worktrees.
 - AgentTool: the sub-agent starts with a fresh session (it sees only its `request`) and can use `skills:` (path relative to the submission root). Its `run_skill_script` calls count against the 45 tool calls (tested: the budget ran out at 6 with a limit of 6) and its model calls count as turns. With `skip_summarization: true` the calling agent's turn ends right after the tool returns, so keep it `false` when the caller must continue.
+- Calling a tool the agent does not have raises `ValueError: Tool '<name>' not found` and ends the task. Seen in Kaggle single v1, fastapi_14583 (`show_file`). This cannot be made recoverable from the config.
+- When `skills:` is set, the ADK appends a system instruction: "if a skill is relevant you MUST `load_skill` it and follow its instructions exactly, completing all steps in order". It also lists the skills. The skill tools are `list_skills`, `search_skills`, `load_skill`, `load_skill_resource` and `run_skill_script`.
+
+### ADK features available to a submission
+
+Sources: `adk_submission/schema.py`, `limits.py`, `resolvers/`, `swegemma/config.py`, `google/adk/tools/skill_toolset.py`. Status: **tested** = used in our runs; **available** = accepted by the schema but not tried; **no-op** = validates but does nothing.
+
+| # | Feature | What it does | Status |
+|---|---|---|---|
+| 1 | `SequentialAgent` | Runs agents in a fixed order | tested (pipeline) |
+| 2 | `ParallelAgent` | Runs branches at once; they share `/workspace` | tested |
+| 3 | `LoopAgent` + `max_iterations` | Repeats sub-agents and always runs every iteration (no `exit_loop`) | tested |
+| 4 | `LlmAgent.sub_agents` + `description` | The LLM transfers control to another agent (`transfer_to_agent`); `disallow_transfer_to_parent` and `disallow_transfer_to_peers` limit it | available |
+| 5 | `agent_tool` | An agent used as a tool, in a fresh session; its calls count against the budget | tested (apply_edit) |
+| 6 | `tools:` per agent | Each agent sees only the tools listed for it | tested |
+| 7 | `skills:` per agent (several skill dirs) | Each agent can get its own set of scripts | tested (one skill `swe`) |
+| 8 | `run_skill_script` | Runs our deterministic scripts in the sandbox; they keep state in files between calls | tested |
+| 9 | `load_skill` / `SKILL.md` | The ADK tells the model to load the skill and follow its steps in order | available (we skip it on purpose) |
+| 10 | `load_skill_resource` | Reads the skill's `references/` and `assets/` (for example a procedure per phase) | available |
+| 11 | `instruction` with `{key}` and `{key?}` | Puts session state into the prompt (valid identifiers only) | tested (planner) |
+| 12 | `output_key` | Stores the agent's final text in the state for later agents | tested |
+| 13 | `include_contents: none` | The agent sees no earlier history, only its instruction and the state | tested |
+| 14 | Generation config per agent | `temperature`, `top_p`, `top_k`, `seed`, penalties, `max_output_tokens` ≤ 32768, `thinking_budget` ≤ 32768 | tested |
+| 15 | `stop_sequences` | Stops generation at a given text | available |
+| 16 | `response_mime_type` (for example `application/json`) | Asks for structured output | available; unknown whether vLLM honours it |
+| 17 | `adapter` per agent | A different LoRA per agent or stage (up to 8, rank ≤ 128) | available |
+| 18 | `eval_config.yaml` | Per-task budget: time, tool calls, turns, command timeout | tested |
+| 19 | Harness graph and embedding tools | `get_code_neighbors`, `get_code_subgraph`, `search_similar_code` | tested |
+| 20 | Harness nudge + final `git diff` | Re-runs the root agent without a submit; takes the diff anyway | tested |
+| — | Callbacks | Validate but do nothing | no-op |
+| — | `planner`, `code_executor`, `output_schema`, Python tools | Not in the schema | not available |
+
+Schema limits: up to 500 agents, nesting depth 50, `max_loop_iterations` 500, 1,000 skills, 50 MiB per skill directory.
+
+### How each feature implements a technique from the literature
+
+| Feature | Technique | Paper | Use here |
+|---|---|---|---|
+| 8: stateful scripts (the journal) | State machine with rule-based transitions | StateFlow, Blueprint First | The journal reads the real call log, diff and verdict and decides the next step; the LLM does not choose the path |
+| 8: scripts that refuse out-of-phase calls | Only the valid actions of the current step | SOP-Agent | A script called in the wrong phase does not run and answers "the journal says: now do X" |
+| 1 + 6 + 7: stages with different tools and skills | Restrict tools per step | SOP-Agent, Moatless | Each stage gets only the scripts of its phase: the locator cannot edit, the editor cannot search |
+| 1: fixed stages | Phased pipeline with hierarchical localization | Agentless, Moatless, Lingma SWESynInfer | locate (file → function → lines) → edit → check → submit, in a fixed order |
+| 12 + 11: state between stages | Shared plan or task graph; no information lost between agents | CodeR | Each stage writes its result (`output_key`); the next one gets it in its prompt |
+| 16: JSON output | JSON plans | CodeR | The planner emits the plan as JSON that the scripts can read |
+| 13: `include_contents: none` | Minimal context per subtask | Beyond Generalist, Harness Design | Each stage sees only what it needs, not the whole history |
+| 8: script output format | ACI: ~100-line viewer, linted editor, summarized search | SWE-agent | Done in show.py, edit.py and locate.py |
+| 8: AST search | `search_class` / `search_method` APIs | AutoCodeRover | locate.py and show.py by symbol |
+| 8: call repair and loop detection | Tool robustness layer | SHERLOC | Argument cleaning and repeat_guard (done) |
+| 8: check.py | Validation by regression tests | Agentless, AutoCodeRover | Related tests, with rollback when tests break |
+| 19: graph and embeddings | Graph-guided localization, embedding ranking | LocAgent, SweRank | The grapher stage and `search_similar_code` |
+| 9 + 10: SKILL.md and `references/` | A written procedure followed step by step | SOP-Agent | The SOP of each phase in `SKILL.md` or `references/`; the ADK already tells the model to follow it in order |
+| 2: parallel branches + worktrees made by a script | Sample several patches and select one | Agentless, SWE-Search (partly) | N editors in separate worktrees; a script picks the patch that passes check |
+| 14: `seed` and `temperature` per agent | Candidate diversity | Agentless | Different seeds in the parallel branches |
+| 3: loop | Edit → verify iterations | AutoCodeRover (retries) | Fixed rounds of edit + check; a round with nothing to do must end quickly |
+| 4: agent transfer | A coordinator that delegates to specialists | CodeR (manager), StateFlow SF_Agent | A coordinator transfers to the specialist of the phase (untested in the harness) |
+| 17: LoRA per agent | Process-centric or per-subtask training | Lingma SWE-GPT, SoRFT | One adapter for locating, another for editing |
+
+**Not possible with this ADK:**
+- Dynamic tool filtering inside one agent (it needs callbacks). Use stages (1, 6, 7) or out-of-phase refusals in the scripts instead.
+- Early loop exit.
+- True tree search with backtracking (SWE-Search / MCTS); at most, parallel branches and a selection.
+- Making a call to a missing tool recoverable.
+
+**Combination that implements the journal idea:** stateful journal (8), scripts that refuse out-of-phase calls (8), stages with one skill per phase (1, 6, 7), and the procedure written in SKILL.md (9).
 
 ## The local model / GPU session (peer Claude Code session)
 
