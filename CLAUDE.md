@@ -37,6 +37,57 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 ### Current state of the repository (2026-10-08)
 The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …) and the old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`) were removed: they were built for a model that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in `docs/old_scripts_lessons.md`; their results are in `VERSIONS.md`. The new single agent is built from `docs/design_single.md`.
 
+### What the 31B does badly, and what the literature does about it (2026-10-08)
+
+Measured in the Kaggle traces of V1–V6 (31B only; nothing from the local 12B, nothing assumed). "Applicable" is about
+our setting: declarative ADK, no own code in the agent, no internet.
+
+**A. Seen in our runs**
+
+| Failure (evidence) | Techniques in the literature | Applicable here? |
+|---|---|---|
+| **Malformed calls** (`「swe」`, `「scripts/show.py」`, extra quotes): 31% of script calls in V1, 21% V2, 10% V3, 17% V4, 14% V6. **Calls to tools or scripts that do not exist**: V1 `show_file` (task lost), V5 `grep.py`, V6 `nonexistent.py` | Grammar-constrained decoding (XGrammar-2: removes format errors; a 3B beat a 70B on BFCL). Malformed-call repair layer (SHERLOC). Fewer, simpler tools (SWE-agent ACI). Function-calling fine-tuning (Gorilla, xLAM) | vLLM enforces the schema only with `tool_choice="required"` or a named function, not with `"auto"`: check whether the ADK schema can set it. Repair: only for the arguments that reach our scripts. LoRA: yes |
+| **With `run_command` / `read_file` it uses them instead of the scripts**: V2 96 + 65, V3 96 + 67 calls | Fewer, simpler tools (ACI); only the valid actions per step (SOP-Agent) | Yes |
+| **Does not follow the suggested next step**: V4, 16–17 `show.py` before the requirement step. **Retries refused calls, repeats identical ones**: 55 refusals in V4, 50 in V6, 34 identical repeats in the V5 locator, the same refused edit 3× in V6 fastapi_14448 | Stuck detector: same action and observation 4+ times, same action and error 3+ times, ping-pong (OpenHands). Loop detection and intervention (SHERLOC). Only the valid actions per step (SOP-Agent, StateFlow). Early stop: most successes come within about 25 rounds; failures take 3.5× more steps (Liu et al.) | Yes, in the scripts |
+| **Reads a lot, edits late or never** ("analysis paralysis"): V6 128 `show.py`; first edit after 148–248 s in 5 of 8 failed tasks, never in 2 | Native function calling and selective RL; picking the solution with the lower overthinking score: +30% performance, −43% cost (Cuadron et al.). Fixed steps with prepared inputs (Agentless). Thinking budget | Fixed steps and thinking budget: yes. RL: no |
+| **Leaves the right place after seeing it** ("blind strategy switching"): V6 fastapi_14448 saw `Dependant._unwrapped_call` at 19 s, then read 14 other things | Fixed hierarchical localization file → function → lines (Agentless). Signals to keep or abandon a path (asked for by the trajectory study). Verifiers / value models (SWE-Gym, SWE-Search) | Fixed localization and journal rules: yes. Verifier: with LoRA. MCTS: not with the ADK |
+| **Small change where several places must change** ("incomplete repair"): V6 patches of 4–14 lines where the reference has 34–654, in 5 tasks | Dependency and change-impact analysis plus an edit plan, one LLM call per location (CodePlan, FSE 2024: 5 of 6 multi-file repositories valid vs 0 for the baselines). Code graph for related places (LocAgent) | Yes: static analysis in the scripts |
+| **Right place, wrong change**: V6 requests_7328 deleted `resp.history = hist[1:]` instead of changing it to `hist[:]`; fastapi_14986 incomplete (8 of 34 lines). In the literature fix implementation is the dominant bottleneck, and about 65% of causes are flawed reasoning (Liu et al.) | Several patch samples plus test selection: 40 patches, regression and reproduction filter, majority vote (Agentless). Test-time compute scaling with test-based voting (CodeMonkeys). Trained verifier choosing among patches (SWE-Gym) | Costly within about 6 min; `ParallelAgent` with seeds maybe; verifier with LoRA |
+| **Context grows to the compaction threshold**: 9 of 10 tasks reach ≥14.3k prompt tokens in V4 and V6 | Collapse old observations (SWE-agent). Minimal context per subtask (Agentless, Beyond Generalist). Context management took one model from 6.4% to 58.4% (harness design study). Truncating can make degradation worse (How Fast Do Agents Rot?) | Yes |
+
+**B. Reported in the literature, not yet seen in our runs (watch for them)**
+
+| Failure | Techniques | Applicable here? |
+|---|---|---|
+| **Writing reproduction tests**: 3.6% useful tests with direct prompting, 16–19% with agents, 44–49% at best (SWT-bench) | AssertFlip: the LLM writes a test that **passes** on the buggy code, then its asserts are inverted (43.6% on SWT-bench Verified). Execution feedback (e-Otter++). Many samples, keep the most frequent normalized test (Agentless) | Yes: a script can do the inversion. Measure before relying on it |
+| **Misreading reproduction or test output**; insufficient verification (Liu et al. C1) | Deterministic reading: the test prints a fixed marker ("Issue reproduced") and a script reads it (Agentless) | Yes |
+| **Superficial matching**: led by statement keywords, cited code or stack traces to the wrong place (Liu et al. A2; 51% of the failures of a pipeline like Agentless are in localization). Our requests_7328 (`Response`) | Query reformulation: the LLM extracts identifiers, paths, error messages and traces, BM25 runs on them, an agent reranks (+35% first-file accuracy over BM25 alone). Query transformation plus reranking: over 78% top-1 on SWE-bench Lite with open models (BLAgent). Trained reranker (SweRank) | Yes (reformulation is a bounded decision for the model); reranker with LoRA |
+| **Skill-induced failures**: defaults and examples taken as requirements (69% of the functional failures), optional checklists made mandatory, context bloat from long skill bodies | Separate mandatory requirements from examples and defaults; keep always-loaded instructions short; load examples and checklists only when needed; scale verification to the uncertainty (Agent Skills Can Be Harmful) | Yes: prompts and SKILL.md |
+| **Premature disengagement and rogue actions** (Cuadron et al.) | Native function calling, one action per turn | Yes |
+| **Plausible but incorrect patches** that pass the tests: 7.8% pass validation but fail the developer suite, 29.6% behave differently from the reference (ICSE 2026); 1 in 5 "solved" patches is wrong (SWE-ABS). Our V6 false "check OK" is the same | Adversarial test strengthening (SWE-ABS); compare behaviour with the expected one | Partly: the reproduction snippet does this |
+| **Early errors cascade** (AgentErrorBench) | Root-cause localization with corrective feedback: +24% all-correct accuracy, up to +26% task success; a 4B debugger beat GPT-4.1 at error detection (AgentDebug, ICML 2026). Backtracking (SWE-Search) | The journal can detect the failed step and go back to it; tree search: no |
+
+Main conclusions: fixing is harder for the model than localizing, especially across several places; writing a
+reproduction test is hard for LLMs, so it must be measured before the design depends on it. New techniques that fit:
+query reformulation before BM25, CodePlan-style impact analysis, AssertFlip for reproduction, script-side reading of
+outputs, and `tool_choice="required"` if the ADK allows it.
+
+Sources: [Liu et al. 2025](https://arxiv.org/pdf/2509.13941) · [trajectory study](https://arxiv.org/html/2511.00197) ·
+[Overthinking](https://arxiv.org/pdf/2502.08235) · [SWE-smith](https://arxiv.org/pdf/2504.21798) ·
+[SWE-Gym](https://arxiv.org/pdf/2412.21139) · [SWT-Bench](https://arxiv.org/pdf/2406.12952) ·
+[AssertFlip](https://arxiv.org/html/2507.17542v2) · [e-Otter++](https://arxiv.org/html/2508.06365v1) ·
+[Are Solved Issues Really Solved](https://arxiv.org/html/2503.15223v2) · [SWE-Bench+](https://arxiv.org/pdf/2410.06992) ·
+[SWE-ABS](https://www.alphaxiv.org/abs/2603.00520) · [Agent Skills Can Be Harmful](https://arxiv.org/html/2608.11888v1) ·
+[Live API-Bench / BFCL errors](https://arxiv.org/pdf/2506.11266) · [Tool-use failures synthesis](https://arxiv.org/pdf/2607.05775) ·
+[XGrammar-2](https://arxiv.org/pdf/2601.04426) · [Repair, Not Improvement](https://arxiv.org/pdf/2608.13959) ·
+[vLLM tool calling](https://docs.vllm.ai/en/v0.19.1/features/tool_calling/) ·
+[OpenHands stuck detector](https://docs.openhands.dev/sdk/guides/agent-stuck-detector) ·
+[CodePlan](https://www.microsoft.com/en-us/research/publication/codeplan-repository-level-coding-using-llms-and-planning-2/) ·
+[CodeMonkeys](https://arxiv.org/pdf/2501.14723) · [AgentDebug](https://www.alphaxiv.org/abs/2509.25370v1) ·
+[Reformulate, Retrieve, Localize](https://arxiv.org/pdf/2512.07022) · [BRaIn](https://arxiv.org/html/2501.10542v1) ·
+[BLAgent](https://arxiv.org/abs/2510.04468v1) · [Lost in the Middle](https://preview.aclanthology.org/setup/2024.tacl-1.9) ·
+[How Fast Do Agents Rot?](https://arxiv.org/pdf/2609.01660) · [Harness design study](https://arxiv.org/pdf/2609.20804)
+
 ### Design methodology
 Use established methods, not an ad-hoc list: Hierarchical Task Analysis (Stanton 2006) → function allocation (Parasuraman, Sheridan & Wickens 2000, levels of automation) → workflow-vs-agent patterns (Anthropic, *Building Effective Agents*, 2024) → detailed design → V-model verification. The work so far is in `docs/design_single.md`.
 
