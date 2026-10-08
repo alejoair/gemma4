@@ -21,6 +21,14 @@ def numbered(lines, first):
     return [f'{i:>5}|{line}' for i, line in enumerate(lines, first)]
 
 
+def unescape(item):
+    """One argument with literal \\n, \\t and \\" escapes (and no real line break) turned into the text they mean."""
+    item = item.replace('⏎', '\n')
+    if '\n' not in item and '\\n' in item:
+        item = item.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
+    return item
+
+
 def clean_text(text):
     """The new text as file lines: real newlines (or escaped \\n when the model sent none), and without the line
     number prefixes of show.py when every line carries one."""
@@ -124,7 +132,9 @@ def main():
     if start is None:
         usage(f'Line range not understood: {args[1:3]}.')
         return
-    text = '\n'.join(rest)
+    # Empty items (["file", "10-12", "", "text"]) carry nothing; each remaining item is unescaped on its own.
+    rest = [r for r in rest if r != ''] or ['']
+    text = '\n'.join(unescape(r) for r in rest)
     if '[... text lines' in text:
         usage('The new text contains a "[... text lines ...]" marker from show.py; those lines were hidden, not code.')
         return
