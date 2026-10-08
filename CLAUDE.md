@@ -38,6 +38,8 @@ Any other script answers `NOT RUN: <script> is not the next step ... Do this now
 
 Loops are stopped by the repeat guard (the same read is reprinted once, then refused), not by a read count.
 
+**Open problem: lexical localization (2026-10-08).** In fastapi_14448, locate.py with the statement's title ranks `FastAPI.__init__` and `include_router` first (long functions whose code and Doc texts repeat generic words: dependencies, operations); the fix is in `Dependant._unwrapped_call` (`partial`, `inspect.unwrap`). Tried and reverted: prose lines at 0.3 + 1/n per repeated hit (top-3 gold hits 4/9 → 3/9 on the title queries; `FastAPI.mount` → scripts/people.py) and plural stripping (generic words grew). Next idea: rank with the embeddings / graph (`search_similar_code`, LocAgent/SweRank) rather than more word weights.
+
 **The agents must use the scripts.** If the model does the work with `run_command` (grep, cat, sed, python, pytest) or `read_file` / `edit_file`, the system is not acting. Kaggle single v2 showed exactly this: 96 `run_command` + 65 `read_file` calls against 94 script calls, and `journal.py` and `hints.py` were never called.
 
 **Rules for Claude working on this repo:**
