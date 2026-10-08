@@ -103,7 +103,16 @@ def _state_path(name):
     return f'/tmp/swe_{name}_{tag}'
 
 
-SEEN = _state_path('seen.txt')
+def _stage():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'procedure.json')) as fh:
+            return json.load(fh).get('stage', '')
+    except (OSError, ValueError):
+        return ''
+
+
+# Repeats are counted per pipeline stage: a later stage that starts without the history must see the code again.
+SEEN = _state_path('seen' + (f'_{_stage()}' if _stage() not in ('', 'single') else '') + '.txt')
 GOOD = _state_path('good.patch')
 READS_BEFORE_NUDGE = 12
 

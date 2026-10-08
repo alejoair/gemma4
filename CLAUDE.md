@@ -66,10 +66,7 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
    - Use a skill copy that has `assets/procedure.json` to test the journal mode.
    - Run them through `scratchpad/harness_like.py <skill dir> <script> args…` too. It runs a script the way ADK's `run_skill_script` does: the skill's files are in a temporary directory that is deleted when the script ends, before the exit handlers run. Anything a script does at exit can no longer read its own files or start threads.
 3. **Replay.** `venv/bin/python replay.py <scripts dir> repos real_calls.json` must print NO PROBLEMS (pipeline mode).
-4. **Package and validate.**
-   - Copy `submission/` and `single/` into `ds3/`, and copy `submission/skills/swe/scripts` into `ds3/single/skills/swe/`.
-   - Remove every `__pycache__`: a `.pyc` file makes the harness reject the submission.
-   - Run `validate_submission.py ds3/single`.
+4. **Package and validate.** Run `python build.py ds3` (it leaves out `__pycache__`; a `.pyc` file makes the harness reject the submission), then `validate_submission.py ds3/single` and `ds3/pipeline`.
 5. **Run one task with the local 12B** (`one_task.sh <task>`).
 6. **Monitor it step by step while it runs.** Every 30–45 s, curl `/_monitor/conversation?since=<start>` and read each new call: its arguments, its result and the JOURNAL line. Never wait for the end of the run with a loop and never use a background monitor.
 7. **Stop at the first problem.** When a script error, a loop or a wrong JOURNAL decision shows up, stop the run, fix it and relaunch from step 1. Do not let the run go on to the timeout.
@@ -77,6 +74,21 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 9. **Commit and push** after each round of fixes.
 
 Local timing is not Kaggle timing. llama-server has a global reasoning budget of 3072 tokens, so a 12B call can take up to 60 s; on Kaggle the agent sets `thinking_budget: 512`.
+
+### The two systems built on the scripts
+- **Single agent (`single/`).** One `LlmAgent`.
+  - Tools: the skill `swe` (procedure stage `single`), `submit_patch`, and the three code-graph tools.
+  - The journal runs the whole procedure: LOCATE → UNDERSTAND → EDIT → VERIFY → SUBMIT.
+- **Pipeline (`pipeline/`).** A `SequentialAgent` of locator → planner → editor → submitter (no AgentTool), each with `include_contents: none`.
+  - Each stage has its own skill (`skills/locate`, `skills/plan`, `skills/edit`) whose `assets/procedure.json` sets `stage` and the `allowed` scripts. A script outside the stage answers NOT RUN.
+  - The journal knows the stage:
+    - the locator's NEXT ends with a ready-made report (LOCUS and REQUIREMENTS) to copy as its final message;
+    - the planner's NEXT asks for CHANGE blocks;
+    - the editor's NEXT asks for an EDITED/VERDICT report.
+  - Budgets and repeat guards count per stage, and the event log is shared through `/tmp`.
+  - State keys: the harness sets `problem_description` and `hints` (the task's hints text). The stages pass `locus`, `plan` and `edit_report` through `output_key`.
+- **Packaging.** `python build.py <out>` builds `<out>/single` and `<out>/pipeline`, copying `submission/skills/swe/scripts` into every skill and leaving `.pyc` out. The script copies inside `single/skills` and `pipeline/skills` are gitignored.
+- **Local runs.** `scratchpad/one_task.sh <task> [single|pipeline]`.
 
 ### Literature behind the design
 - **SWE-agent / ACI** (NeurIPS 2024, [arXiv 2405.15793](https://arxiv.org/pdf/2405.15793)).

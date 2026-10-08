@@ -257,16 +257,27 @@ def main():
         # escaped (\" for "). Try each repair, and the two together; keep the first one that compiles.
         unquoted = [l.replace('\\"', '"').replace("\\'", "'") for l in new]
         target = indent_of(lines[start - 1])
-        repairs = [(reindent(new, target), f'indentation adjusted: the first line now starts with {target} spaces, '
-                    'like the line it replaces'),
-                   (unquoted, 'escaped quotes \\" turned into "'),
-                   (reindent(unquoted, target), 'escaped quotes turned into " and indentation adjusted')]
-        for fixed, why in repairs:
-            candidate = eol.join(lines[:start - 1] + fixed + lines[end:]) + (eol if trailing else '')
-            if fixed != new and compiles(candidate, rel):
-                note = f' ({why})'
-                new, content = fixed, candidate
-                updated = lines[:start - 1] + new + lines[end:]
+        texts = [(new, ''), (reindent(new, target), f'indentation adjusted to {target} spaces like the line it replaces'),
+                 (unquoted, 'escaped quotes \\" turned into "'),
+                 (reindent(unquoted, target), 'escaped quotes turned into " and indentation adjusted')]
+        # A range longer than the text (lines 79-80 replaced by one line drops the body of an if): also try replacing
+        # only as many lines as the text has.
+        ends = [end] + ([start + len(new) - 1] if 0 < len(new) < end - start + 1 else [])
+        found = False
+        for e in ends:
+            for fixed, why in texts:
+                if fixed == new and e == end:
+                    continue
+                candidate = eol.join(lines[:start - 1] + fixed + lines[e:]) + (eol if trailing else '')
+                if compiles(candidate, rel):
+                    whys = [w for w in (why, f'your text has {len(new)} line(s), so only lines {start}-{e} were '
+                                             f'replaced; lines {e + 1}-{end} are kept' if e != end else '') if w]
+                    note = ' (' + '; '.join(whys) + ')'
+                    new, content, end = fixed, candidate, e
+                    updated = lines[:start - 1] + new + lines[end:]
+                    found = True
+                    break
+            if found:
                 break
     with open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='') as fh:
         fh.write(content)

@@ -32,6 +32,10 @@ def load_procedure():
 
 
 PROC = load_procedure()
+# The pipeline gives every stage its own skill and procedure: the stage (locate, plan, edit; 'single' for the single
+# agent) and the scripts it may run. A stage never does the work of another one.
+STAGE = (PROC or {}).get('stage', 'single')
+ALLOWED = (PROC or {}).get('allowed')
 
 
 def events():
@@ -44,6 +48,7 @@ def events():
 
 def record(event):
     event['t'] = time.time()
+    event['stage'] = STAGE
     try:
         with open(EVENTS, 'a') as fh:
             fh.write(json.dumps(event) + '\n')
@@ -202,9 +207,11 @@ def state(evts=None):
         'hints': any(e['script'] == 'hints.py' for e in done),
         'seen': seen[-1] if seen else None,
         'shown': shown[-1] if shown else None,
-        'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS and not e.get('repeat')),
+        # Budgets count the calls of this stage only (the pipeline's stages share the event log).
+        'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS and not e.get('repeat')
+                     and e.get('stage', STAGE) == STAGE),
         'edited': bool(applied),
-        'tries': sum(1 for e in done if e['script'] == 'try.py'),
+        'tries': sum(1 for e in done if e['script'] == 'try.py' and e.get('stage', STAGE) == STAGE),
         'last_edit_failed': bool(done) and done[-1]['script'] == 'edit.py' and done[-1].get('outcome') == 'not_applied',
         'last_edit_repeated': bool(done) and done[-1]['script'] == 'edit.py' and
                               done[-1].get('outcome') in ('repeated', 'no_change'),
@@ -255,9 +262,55 @@ def _place(seen):
     return f'"{seen["file"]}", "{seen["symbol"] or str(seen["start"]) + "-" + str(seen["end"])}"'
 
 
+def report_text(s):
+    """The locator's report, built from what the scripts found: the code shown and the requirements."""
+    lines = ['LOCUS:']
+    places = []
+    for e in events():
+        v = e.get('seen')
+        if v and e['script'] != 'edit.py':
+            key = (v['file'], v['symbol'] or f'{v["start"]}-{v["end"]}')
+            if key not in [p[:2] for p in places]:
+                places.append(key + (v['start'], v['end']))
+    lines += [f'- {f} :: {sym} lines {a}-{b}' for f, sym, a, b in places[-4:]] or ['- (no code shown yet)']
+    if s['reqs']:
+        lines.append('REQUIREMENTS:')
+        for r in s['reqs']:
+            where = '; '.join(r.get('facts') or []) or 'no code named'
+            lines.append(f'{r["id"]}. {r["text"]} -> {where}')
+    return '\n'.join(lines)
+
+
+def stage_next(s):
+    """The next action in the locate and plan stages of the pipeline, or None for the edit stage and the single
+    agent (they follow the full procedure)."""
+    if STAGE == 'locate':
+        if s['step'] in ('LOCATE', 'UNDERSTAND'):
+            return None
+        return ('your part is done: write this as your final message, then stop (you can add one line saying why '
+                'the first place is the one to change):\n' + report_text(s))
+    if STAGE == 'plan':
+        shown = {e['seen']['file'] for e in events() if e.get('seen') and e['script'] != 'edit.py'}
+        missing = [d for r in s['reqs'] for d in (r.get('defs') or [])[:1] if d['file'] not in shown]
+        if missing and s['reads'] < PROC.get('limits', {}).get('reads_before_edit', 4):
+            d = missing[0]
+            return f'call show.py ["{d["file"]}", "{d["symbol"]}"] to see the code of a requirement before planning it.'
+        return ('write the plan now as your final message: one CHANGE block per place (FILE, SYMBOL, LINES, CHANGE: '
+                'exactly what the new code must do, COVERS: requirement numbers), then stop.')
+    if STAGE == 'edit' and s['step'] in ('LOCATE', 'UNDERSTAND'):
+        return 'call show.py [file, symbol] on the first place of the plan, then edit.py with the numbers it prints.'
+    return None
+
+
 def next_call(s):
     """The exact next action for the current step."""
     step, seen = s['step'], s['seen']
+    staged = stage_next(s)
+    if staged:
+        return staged
+    if STAGE == 'edit' and step == 'SUBMIT':
+        return ('your changes are done and checked: write your final report now (EDITED: the files and lines you '
+                'changed; VERDICT: the last VERDICT line), then stop.')
     if step == 'LOCATE':
         return ('call locate.py with the function, class and option names and the error text of the statement, '
                 'for example ["Client.send", "timeout"].')
@@ -322,6 +375,11 @@ def journal_line(s=None):
 
 def gate(script):
     """Reason to refuse this call in the current step, or '' to run it."""
+    if ALLOWED and script not in ALLOWED and script != 'journal.py':
+        return (f'{script} is not part of the {STAGE} stage, which uses only {", ".join(ALLOWED)}. '
+                + {'locate': 'Your part is to find the code; write your report now',
+                   'plan': 'Your part is to plan the changes; write your plan now',
+                   'edit': 'Your part is to make and check the changes'}.get(STAGE, ''))
     if script in ('journal.py', 'check.py'):
         return ''
     s = state()

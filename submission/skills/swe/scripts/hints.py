@@ -5,7 +5,9 @@ is defined (and every twin definition, such as the sync and async versions of th
 exist yet, so it is a new name the fix must create. The list is saved for the journal, which shows which
 requirements the edits already cover. Then a rule-based checklist of what a fix of that kind usually touches.
 """
+import builtins
 import json
+import keyword
 import os
 import re
 import sys
@@ -14,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402,F401  (tees output to the call log)
 
 REQS = _common._state_path('requirements.json')
+BUILTIN_NAMES = set(dir(builtins))
 DEFS = []
 CODE_NAME = re.compile(r'`([^`]{2,60})`|\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[A-Za-z]\w*_\w+|_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*)\b')
 
@@ -72,8 +75,8 @@ def facts_for(root, name, sources):
         if m:
             line = src.count('\n', 0, m.start()) + 1
             return f'{name}: used in {rel} line {line} (not a function or class)', [rel]
-    return (f'{name}: NOT in the code yet: a new name the statement introduces, so the fix must create it '
-            '(or rename the existing code to it); check the spelling too', [])
+    return (f'{name}: not in the repository: either a new name the statement introduces, which the fix must create '
+            '(or rename existing code to), or a name from another library; check the spelling too', [])
 
 
 IMPERATIVE = re.compile(r"(^|[:;,]\s*)(add|fix|escape|remove|support|change|allow|make|use|return|raise|handle|rename|"
@@ -118,7 +121,9 @@ def requirements(args):
             # The journal checks a name on the edits only when it is code-like (backticks, a dot or an underscore;
             # not a prose word such as OpenAPI) and exists, or when the requirement creates it.
             code_like = f'`{name}' in item or '`.' + name.split('.')[-1] in item or '.' in name or '_' in name
-            if code_like and (files or creates):
+            # Builtins, keywords and dunders (repr, __eq__) are everywhere: they would never tell a covered requirement.
+            generic = name in BUILTIN_NAMES or keyword.iskeyword(name) or re.fullmatch(r'__\w+__', name)
+            if code_like and not generic and (files or creates):
                 tracked.append(name.split('.')[-1])
         if not tracked and IMPERATIVE.search(item):
             # An instruction that names no code: its most likely place, by the same search as locate.py, so the

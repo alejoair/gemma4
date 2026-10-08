@@ -1,0 +1,8 @@
+agent_class: SequentialAgent
+name: swe_pipeline
+description: Locate the code and the requirements, plan one change per place, make and check the changes, submit. Each stage has only the scripts of its phase; the journal of the swe scripts gives the next step.
+sub_agents:
+  - config_path: sub_agents/locator.yaml
+  - config_path: sub_agents/planner.yaml
+  - config_path: sub_agents/editor.yaml
+  - config_path: sub_agents/submitter.yaml
