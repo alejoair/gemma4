@@ -310,16 +310,24 @@ Rules common to every script:
 - No free `show.py`: the model never asks for code, it receives it. The whole context per task stays under about 10k
   tokens, far from the compaction threshold (14k).
 
-Reuse:
+No reuse: every script is written new for this design. The old scripts (`submission/skills/swe/scripts/`) were built
+as tools for a model that explores, and that assumption runs through their code. They stay in the repository only as a
+record. What they taught is kept as requirements, not as code:
 
-| New | From |
+| Learned constraint (from the old scripts and the runs) | Becomes |
 |---|---|
-| `start.py` | `locate.py`'s BM25, `hints.py`'s requirement splitting |
-| `pick.py` | `show.py`'s format, `callers.py`'s search, `hints.py`'s twins |
-| `repro.py` | `try.py`'s runner |
-| `change.py` | `edit.py`'s apply, repairs and guard; `check.py`'s tests and rollback |
-| `plan.py` | New |
-| `_journal.py` | Rewritten: states S0, D1–D5 |
+| `run_skill_script` copies the skill into a temporary directory that is deleted when the script ends, before the exit handlers run; no threads at exit | Every script finishes its work (state, checks) before returning |
+| A `.pyc` file in the package makes the harness reject the submission | The build leaves out `__pycache__` |
+| State must not leak between tasks | State files in `/tmp` keyed by the repository path |
+| The model packs arguments into one string, adds quotes or backticks, writes `\n` escapes | Argument parsing tolerant to these forms, with unit tests for each |
+| Files with CRLF line ends and non-UTF-8 bytes | Read and write preserving both |
+| Some repositories' tests import modules the package does not (`inline_snapshot`, `dirty_equals`) | The test runner provides stubs for them |
+| A test that already fails before the change is not the change's fault | Regression compares against the original's failures |
+| Slow test files | Run only the tests that use the changed names, with a time limit |
+| BM25F at function level beats the per-line count (top-1 4 → 6 of 20) | The ranking method of `start.py` (rewritten) |
+| Reproduction snippets must run outside the repository so they do not end up in the patch | `repro.py` runs in a temporary directory with the repository importable |
+
+The new scripts go in a new skill directory, so the old ones cannot be called by mistake.
 
 Unit tests, defined before writing the code (on the 14 local repositories):
 - `start.py`: recall@10 of the reference function, against the reference-patch benchmark; target ≥ 80% of the tasks.
