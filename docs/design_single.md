@@ -163,3 +163,47 @@ For each goal: the order of its parts, the conditions, and where to go back when
 Two points the earlier design lacked: "keep the last verified state" is explicit (never deliver something worse than
 what was already verified), and the 2.4 place list drives plans 4 and 5 (every place is edited and every place's
 coverage is checked; V6 made one edit and submitted).
+
+## HTA step 7: stopping rule (P×C)
+
+An operation is redescribed only when the probability of failing (P) times the cost of the failure (C) justifies it.
+P comes from small samples (10 tasks): orders of magnitude, not exact rates.
+
+| Op. | P (evidence) | C (if it fails) | Redescribe? |
+|---|---|---|---|
+| 1.1 Extract requirements | Medium: `hints.py` made up requirements ("__init__", "com") | Medium: misleads the coverage check | No (guarded by 5.3) |
+| 1.2 Statement names | Low: mechanical extraction | Low | No |
+| 1.3 Classify the change | No data: not done today | Medium | No |
+| **2.1–2.2 Candidates** | **High:** the right function is not #1 in 14/20 queries, not in the top 5 in 11/20 (BM25, 10 tasks) | **High:** wrong place = lost task | **Yes** |
+| **2.3 Confirm the place** | **High:** fastapi_14448 saw the right place and left it; 14583 and 3469 never reached the right file | High | **Yes** |
+| **2.4 Related places** | **High:** 28% of the fixes change 4+ functions; V6 covered **0 of 5** multi-place tasks | High | **Yes** |
+| **3.1 Decide the behaviour** | **High:** in **3 of 3** V6 tasks with the right place the change was wrong or incomplete | High | **Yes** |
+| **3.2 New code: where and signature** | No data, but in 33% of the tasks | High: hidden tests import the exact names | **Yes** |
+| 3.3 What to keep | Medium: requests_7328 broke the `max_redirects` check | High, but 5.1 catches it | No |
+| 4.1 Write the change text | Medium: 12B duplicates, escapes | Medium: 4.3 and 5.1 catch it | No |
+| 4.2 Apply it | Low: **14 of 15** edits applied in V6 | Low | No |
+| 4.3 Validity (syntax) | Low: deterministic guard | Low | No |
+| 5.1 Regression | Low: it works; V6's false OK is because it does not check the requested behaviour (5.2's job) | Medium | No |
+| **5.2 Reproduction** | **Total: not done today** | High: patches that do not meet the request are delivered | **Yes** |
+| **5.3 Coverage** | **High:** it counted "1/1 covered" for touching the function with a trivial change (fastapi_14851) | High | **Yes** |
+| 6.1 Remove leftovers | Low | Low | No |
+| 6.2 Submit | Low | Total (an exception loses the patch), but there is nothing to redescribe | No |
+
+Redescriptions of the high-P×C operations:
+
+- **2.2 →** 2.2.1 rank the repository's functions · 2.2.2 present the candidates compactly (file, signature, first
+  docstring line) · 2.2.3 choose the candidate(s) for the requirement
+- **2.3 →** 2.3.1 present the chosen candidate's full code · 2.3.2 judge: does this code do what the requirement talks
+  about? (yes/no and which lines)
+- **2.4 →** 2.4.1 same-named definitions in other files (copies) · 2.4.2 callers and overrides · 2.4.3 where entities of
+  the same kind are registered or exported (for new names) · 2.4.4 choose which must change
+- **3.1 →** 3.1.1 state what the code does now in the requirement's case · 3.1.2 state what it must do · 3.1.3 the
+  difference as a concrete line-level change
+- **3.2 →** 3.2.1 find a sibling entity of the same kind as a model · 3.2.2 fix the exact name and signature from the
+  statement
+- **5.2 →** 5.2.1 write a snippet that exercises the requirement's case · 5.2.2 run it on the original (must show the
+  problem) · 5.2.3 run it on the change (must show the fix)
+- **5.3 →** 5.3.1 per requirement: which edit covers it · 5.3.2 per place from 2.4: edited, or discarded with a reason
+
+Side finding: in V6 the journal refused 14 edits (NOT RUN), the time cut in SUBMIT seen in fastapi_14448. The redesign
+fixes this, not the HTA.
