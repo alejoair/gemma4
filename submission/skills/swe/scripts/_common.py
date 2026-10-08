@@ -145,15 +145,37 @@ def _at_exit():
         event = _journal.classify(script, text)
         if _REFUSED:
             event['refused'] = True
-        _journal.record(event)
+        if not _RECORDED:
+            _journal.record(event)
         if script != 'journal.py':
             print('\n' + _journal.journal_line())
         return
     _status_note()
 
 
+def after_edit():
+    """Called by edit.py when an edit was applied: with the procedure, record the edit now and verify it at once.
+    check.py is deterministic, so the engine runs it instead of asking the model to (Blueprint First); it runs
+    before the script ends because the harness deletes the skill's files right after."""
+    global _RECORDED
+    if not (PROCEDURE_ON and _journal is not None and _journal.PROC):
+        return
+    text = ''.join(sys.stdout.buf) if isinstance(sys.stdout, _Tee) else ''
+    _journal.record(_journal.classify('edit.py', text))
+    _RECORDED = True
+    check = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'check.py')
+    try:
+        r = subprocess.run([sys.executable, check], capture_output=True, text=True, timeout=110, env=dict(os.environ))
+        out = r.stdout
+    except subprocess.TimeoutExpired:
+        out = 'check.py did not finish in time.'
+    out = '\n'.join(l for l in out.splitlines() if not l.startswith('JOURNAL:')).strip()
+    print('\n===== check.py ran automatically on your edit =====\n' + out)
+
+
 atexit.register(_at_exit)
 _REFUSED = False
+_RECORDED = False
 _journal = None
 NO_REPEAT_GUARD = {'check.py', 'journal.py'}
 
@@ -176,6 +198,12 @@ def repeat_guard(next_step):
             fh.write(sig + '\n')
     except OSError:
         pass
+    if count and script == 'edit.py':
+        # An edit is deterministic: the same arguments give the same result again (the same error, or a second
+        # application of an edit that was already made), so a repeated edit is never run.
+        print(f'REPEATED EDIT: this exact edit.py call was already made ({count + 1} times now); its result is in the '
+              'conversation above. ' + next_step)
+        sys.exit(0)
     if count and PROCEDURE_ON:
         if script == 'show.py' and count == 1:
             # Printed again once: a history compaction may have dropped the first output.

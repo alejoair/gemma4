@@ -8,7 +8,7 @@ Procedure (the JOURNAL line at the end of every script output says which step yo
 1. LOCATE: scripts/locate.py, args = names and error text of the statement
 2. UNDERSTAND: scripts/hints.py, args = the sentences or bullets of the statement that ask for something (it lists the requirements and where each name is defined, or that it is new); then scripts/show.py, args = [file, symbol]
 3. EDIT: scripts/edit.py, args = [file, start, end, new lines] with the line numbers show.py printed, or [new file, its full text] to create a file; cover every requirement
-4. VERIFY: scripts/check.py, args = []
+4. VERIFY: check.py runs automatically after every applied edit (its VERDICT ends the edit.py output); scripts/check.py, args = [] tests again
 5. SUBMIT: the submit_patch tool
 
 Other scripts: scripts/callers.py [name] (who calls a function), scripts/try.py [lines of Python] (run a snippet outside the repository, at most twice), scripts/journal.py [] (the procedure, what is done and the next call).

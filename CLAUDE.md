@@ -62,7 +62,9 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 
 ### Iterative test loop (how every change to the scripts or prompts is tested)
 1. **Fix.** Change the scripts or prompts.
-2. **Dry test.** Run the affected scripts by hand on a repo in `scratchpad/repos/` with `PWD=<repo>`. Use a skill copy that has `assets/procedure.json` to test the journal mode.
+2. **Dry test.** Run the affected scripts by hand on a repo in `scratchpad/repos/` with `PWD=<repo>`.
+   - Use a skill copy that has `assets/procedure.json` to test the journal mode.
+   - Run them through `scratchpad/harness_like.py <skill dir> <script> args…` too. It runs a script the way ADK's `run_skill_script` does: the skill's files are in a temporary directory that is deleted when the script ends, before the exit handlers run. Anything a script does at exit can no longer read its own files or start threads.
 3. **Replay.** `venv/bin/python replay.py <scripts dir> repos real_calls.json` must print NO PROBLEMS (pipeline mode).
 4. **Package and validate.**
    - Copy `submission/` and `single/` into `ds3/`, and copy `submission/skills/swe/scripts` into `ds3/single/skills/swe/`.

@@ -8,7 +8,7 @@ You fix the issue in five steps. Every script output ends with a JOURNAL line: t
 1. LOCATE: locate.py with the function, class and option names and the error text of the statement -> the best candidates and their code.
 2. UNDERSTAND: hints.py with the sentences or bullets of the statement that ask for something, one per item -> the numbered requirements, where each name they mention is defined (every copy of it) or that it is new and must be created. Then show.py [file, symbol] on the code to change -> the code with line numbers.
 3. EDIT: edit.py [file, start, end, new lines] -> replaces lines start-end with the new lines (the fixed code with its indentation, without the line numbers). An edit that breaks the syntax is not applied and you see why. edit.py [new file, its full text] creates a file. Cover every requirement: the JOURNAL line counts the requirements your edits cover, and when the same code is in several files (for example the sync and the async version), edit each copy.
-4. VERIFY: check.py [] -> runs the related tests. If your edit broke them it is undone: go back to EDIT.
+4. VERIFY: after every applied edit, check.py runs automatically and its VERDICT is at the end of the edit.py output. If your edit broke the tests it is undone: go back to EDIT. Call check.py [] yourself only to test again.
 5. SUBMIT: the submit_patch tool, then one sentence naming the files and the change.
 Other scripts: callers.py [name] -> where a function is defined and who calls it; try.py [lines of Python] -> runs a snippet outside the repository, at most twice; journal.py [] -> the procedure, what is done and the next call.
 

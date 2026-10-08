@@ -42,11 +42,42 @@ def changed_names(root):
     return names[:40]
 
 
-def run_within(root, tests, limit):
+def focused_ids(root, test_file, names):
+    """The tests of a test file whose code uses one of the changed names (file::test or file::Class::test), so a
+    big test file runs only the part that exercises the change. Empty when none does or the file does not parse."""
+    import ast
+    src = read_text(root, test_file)
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return []
+    pats = [re.compile(r'\b' + re.escape(n) + r'\b') for n in names]
+    ids = []
+
+    def uses(node):
+        seg = ast.get_source_segment(src, node) or ''
+        return any(p.search(seg) for p in pats)
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test') and uses(node):
+            ids.append(f'{test_file}::{node.name}')
+        elif isinstance(node, ast.ClassDef) and node.name.startswith('Test'):
+            for m in node.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith('test') and uses(m):
+                    ids.append(f'{test_file}::{node.name}::{m.name}')
+    return ids
+
+
+def run_within(root, tests, limit, names=()):
     """Run the test files in parallel, each alone with its own time limit, so one slow file (sockets, servers)
-    neither delays nor hides the others. Returns (files run, files too slow, exit code, summary)."""
+    neither delays nor hides the others; a file runs only its tests that use the changed names when there are some.
+    Returns (files run, files too slow, exit code, summary)."""
+    def target(t):
+        ids = focused_ids(root, t, names) if names else []
+        return ids if 0 < len(ids) <= 80 else [t]
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(tests))) as pool:
-        results = list(pool.map(lambda t: run_pytest(root, [t], timeout=limit), tests))
+        results = list(pool.map(lambda t: run_pytest(root, target(t), timeout=limit), tests))
     ran, slow, codes, summaries = [], [], [], []
     for t, (code, summary) in zip(tests, results):
         if code is None:
@@ -173,13 +204,16 @@ def main():
         out.append(warning)
     # Tests that use the identifiers on the changed lines come first (they exercise the changed behaviour), then
     # the tests that import the changed module.
-    tests = find_tests_for_names(root, changed_names(root), limit=2)
+    names = changed_names(root)
+    tests = find_tests_for_names(root, names, limit=2)
     for rel in changed + untracked:
         if rel.endswith('.py') and not is_test_path(rel):
             for t in find_tests(root, rel):
                 if t not in tests:
                     tests.append(t)
-    tests, slow, code, summary = run_within(root, tests[:4], limit=35)
+    # Rare changed names select the tests (common words such as resp or self would select everything).
+    focus = [n for n in names if len(n) >= 5 or '_' in n]
+    tests, slow, code, summary = run_within(root, tests[:4], limit=35, names=focus)
     if slow:
         out.append('Skipped (slower than 35s): ' + ', '.join(slow))
     if tests:
@@ -207,6 +241,9 @@ def main():
             else:
                 out.append('VERDICT: TESTS FAIL. Read the failure above: fix it if your edit caused it, '
                            'otherwise the change is ready to submit.')
+    elif slow:
+        out.append('VERDICT: TESTS TIMED OUT. The related tests were too slow to run; the edit compiles and can be '
+                   'submitted, but it is not verified: make sure it keeps the existing behaviour.')
     else:
         out.append('VERDICT: OK. The edit compiles; no related tests were found. The change is ready to submit.')
     verdict = [l for l in out if l.startswith('VERDICT')]

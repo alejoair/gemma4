@@ -4,7 +4,7 @@
     "LOCATE: locate.py with the names and error text of the statement",
     "UNDERSTAND: hints.py with the sentences or bullets of the statement that ask for something (the requirements), then show.py [file, symbol] on the code to change",
     "EDIT: edit.py [file, start, end, new lines] with the line numbers shown",
-    "VERIFY: check.py []; if it undoes a breaking edit, go back to EDIT",
+    "VERIFY: check.py runs automatically after every applied edit; if it undoes a breaking edit, go back to EDIT",
     "SUBMIT: the submit_patch tool, then one sentence naming the files and the change"
   ],
   "limits": {

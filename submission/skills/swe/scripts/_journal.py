@@ -84,12 +84,20 @@ def classify(script, text):
                 break
         if 'seen' in event:
             break
-    if re.search(r'^(NOTE: you already ran|REPEATED CALL)', text, re.M):
+    if re.search(r'^(NOTE: you already ran|REPEATED CALL|REPEATED EDIT)', text, re.M):
         event['repeat'] = True  # nothing new was read
     if script == 'edit.py':
-        event['outcome'] = 'applied' if re.search(r'^(EDITED|CREATED) ', text, re.M) else 'not_applied'
+        event['outcome'] = ('applied' if re.search(r'^(EDITED|CREATED) ', text, re.M) else
+                            'repeated' if re.search(r'^REPEATED EDIT', text, re.M) else
+                            'no_change' if re.search(r'^NO CHANGE', text, re.M) else 'not_applied')
+        m = re.search(r'^(?:EDITED|CREATED) (\S+?):? (lines \d+-\d+ replaced by \d+ line\(s\)|with \d+ line\(s\))', text, re.M)
+        if m:
+            event['what'] = f'{m.group(1)} {m.group(2)}'
     elif script == 'check.py':
         verdict = next((l for l in reversed(text.splitlines()) if l.startswith('VERDICT')), '')
+        m = re.search(r'so your edit breaks them: (.+)$', text, re.M)
+        if m:
+            event['broke_tests'] = [t.split('::')[-1] for t in m.group(1).split(', ')][:3]
         event['outcome'] = ('ok' if verdict.startswith('VERDICT: OK') else
                             'none' if 'NO CHANGES' in verdict else
                             'timeout' if 'TIMED OUT' in verdict else
@@ -171,24 +179,40 @@ def state(evts=None):
     checks = [(i, e) for i, e in enumerate(done) if e['script'] == 'check.py' and e.get('outcome') != 'none']
     last_check = checks[-1] if checks else (-1, {})
     seen = [e['seen'] for e in done if e.get('seen')]
+    shown = [e['seen'] for e in done if e.get('seen') and e['script'] != 'edit.py']
     s = {
         'diff': bool(diff.strip()), 'good': good,
         'elapsed': time.time() - evts[0]['t'] if evts else 0,
         'located': any(e['script'] == 'locate.py' for e in done),
         'hints': any(e['script'] == 'hints.py' for e in done),
         'seen': seen[-1] if seen else None,
+        'shown': shown[-1] if shown else None,
         'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS and not e.get('repeat')),
         'edited': bool(applied),
         'tries': sum(1 for e in done if e['script'] == 'try.py'),
         'last_edit_failed': bool(done) and done[-1]['script'] == 'edit.py' and done[-1].get('outcome') == 'not_applied',
+        'last_edit_repeated': bool(done) and done[-1]['script'] == 'edit.py' and
+                              done[-1].get('outcome') in ('repeated', 'no_change'),
+        'same_failed_edit': len(done) > 1 and all(e['script'] == 'edit.py' and e.get('outcome') == 'not_applied'
+                                                  for e in done[-2:]) and done[-1].get('sig') == done[-2].get('sig'),
         'last_check': last_check[1].get('outcome', '') if last_check[0] > last_edit else '',
         'broke': bool(checks) and checks[-1][1].get('outcome') == 'broke' and checks[-1][0] > last_edit,
+        # After the undone edit, has the code been shown again (so the next call is edit.py, not show.py)?
+        'reshown': bool(checks) and any(e['script'] == 'show.py' for e in done[checks[-1][0] + 1:]),
         'fails': sum(1 for _, e in checks if e.get('outcome') == 'fail'),
         'counts': {},
         'reqs': requirements(diff),
         'oks': sum(1 for _, e in checks if e.get('outcome') == 'ok'),
     }
     s['open'] = [r for r in s['reqs'] if r['covered'] is False]
+    # Edits that check.py undid, with the tests they broke: kept in every JOURNAL line, so a model whose history was
+    # compacted does not make the same edit again.
+    s['undone'] = []
+    for i, e in enumerate(done):
+        if e['script'] == 'check.py' and e.get('outcome') == 'broke':
+            edits = [x.get('what') for x in done[:i] if x['script'] == 'edit.py' and x.get('outcome') == 'applied']
+            if edits and edits[-1]:
+                s['undone'].append(f'{edits[-1]} (broke {", ".join(e.get("broke_tests") or ["the syntax or tests"])})')
     for e in done:
         s['counts'][e['script']] = s['counts'].get(e['script'], 0) + 1
     late = s['elapsed'] > PROC.get('late_after_seconds', 200)
@@ -234,31 +258,30 @@ def next_call(s):
     if step == 'EDIT':
         if s['good'] and s['open']:
             r = s['open'][0]
-            where = f' ({", ".join(r["places"][:2])})' if r['places'] else ''
-            return (f'requirement {r["id"]} of the statement is not covered yet: "{r["text"]}"{where}. Make that change '
-                    'with show.py and edit.py, then check.py. If your change already covers it, call the submit_patch '
-                    'tool.')
-        if s['broke'] and seen:
-            return (f'your last edit was undone because it broke tests. Call show.py [{_place(seen)}] to see the '
+            names = f' (it names {", ".join(r["names"])}; hints.py said where they are)' if r['names'] else ''
+            return (f'requirement {r["id"]} of the statement may not be covered yet: "{r["text"]}"{names}. If it asks '
+                    'for a change your edits do not make, make it with show.py and edit.py, then check.py; if your change '
+                    'already covers it, call the submit_patch tool.')
+        if s['broke'] and seen and not s['reshown']:
+            return (f'your last edit was undone because it broke tests. Call show.py [{_place(s["shown"] or seen)}] to see the '
                     'current code, then edit.py with a corrected change that keeps the existing behaviour.')
         if s['last_check'] == 'fail':
             return ('read the failing tests above. If your edit caused them, fix it with edit.py; if not, call the '
                     'submit_patch tool.')
+        if s['last_edit_repeated']:
+            return ('that edit changed nothing (it was a repeat, or its lines were the same as the file). Send a '
+                    'different edit.py call whose new lines contain the fix' +
+                    (', or call check.py [] to test the change already made.' if s['diff'] else '.'))
         if s['last_edit_failed']:
+            if s['same_failed_edit']:
+                return ('this exact edit was already rejected: do not send it again. Read the error above and change '
+                        'the text: write the new lines with real line breaks and the indentation of the file, or '
+                        'replace fewer lines.')
             return 'call edit.py again for the same lines with corrected text (see the error above).'
-        r = next((x for x in s['open'] if x.get('defs')), None)
-        if r:
-            d = r['defs'][0]
-            if d:
-                copies = [f'{x["file"]} lines {x["start"]}-{x["end"]}' for x in r['defs'][1:3]]
-                return (f'requirement {r["id"]} ("{r["text"]}"): call edit.py ["{d["file"]}", A, B, new lines] with A-B '
-                        f'inside {d["symbol"]} lines {d["start"]}-{d["end"]}' +
-                        (f', then the same change in {", ".join(copies)}' if copies else '') +
-                        '. If you have not seen that code yet, show.py it first.')
         if seen:
             return (f'call edit.py ["{seen["file"]}", A, B, new lines]: A-B are the lines to replace, inside lines '
-                    f'{seen["start"]}-{seen["end"]} shown above; new lines is the fixed code with its indentation and '
-                    'without the line numbers.')
+                    f'{seen["start"]}-{seen["end"]} shown above (or the lines of other code you have seen that the fix '
+                    'needs); new lines is the fixed code with its indentation and without the line numbers.')
         return 'call edit.py [file, old lines, new lines] with the code you have seen.'
     if step == 'VERIFY':
         return 'call check.py [] to run the related tests on your change.'
@@ -276,14 +299,19 @@ def journal_line(s=None):
     if tracked:
         reqs = (f' Requirements covered by your edits: {sum(1 for r in tracked if r["covered"])}/{len(tracked)}' +
                 (' (open: ' + ', '.join(f'{r["id"]} {r["names"][0]}' for r in s['open']) + ')' if s['open'] else '') + '.')
-    return f'JOURNAL: step {STEP_NO[s["step"]]}/5 {s["step"]}. Done: {done}.{reqs} NEXT: {next_call(s)}'
+    undone = ''
+    if s.get('undone'):
+        undone = ' Undone edits, do not repeat them: ' + '; '.join(s['undone'][-2:]) + '.'
+    return f'JOURNAL: step {STEP_NO[s["step"]]}/5 {s["step"]}. Done: {done}.{reqs}{undone} NEXT: {next_call(s)}'
 
 
 def gate(script):
     """Reason to refuse this call in the current step, or '' to run it."""
-    if script in ('journal.py', 'check.py', 'edit.py'):
+    if script in ('journal.py', 'check.py'):
         return ''
     s = state()
+    if script == 'edit.py':
+        return edit_gate(s)
     limits = PROC.get('limits', {})
     if s['step'] == 'SUBMIT':
         if s['good']:
@@ -325,3 +353,23 @@ def quick_answer():
             lines.append(f'{name} is not defined anywhere in the repository: it is a new name the statement '
                          'introduces, so create it (or rename the existing code) with edit.py')
     return ('. Quick answer: ' + '; '.join(lines)) if lines else ''
+
+
+def edit_gate(s):
+    """Refuse an edit that overlaps the edit just made before check.py has tested it: rewriting the same lines again
+    and again shifts them and corrupts the file. Edits elsewhere (another place, the sync/async copy) are fine."""
+    if s['step'] != 'VERIFY':
+        return ''
+    done = [e for e in events() if not e.get('refused')]
+    last = next((e for e in reversed(done) if e['script'] == 'edit.py' and e.get('outcome') == 'applied'), None)
+    m = re.match(r'(\S+) lines (\d+)-\d+ replaced by (\d+) line', (last or {}).get('what', ''))
+    args = sys.argv[1:]
+    nums = re.findall(r'\d+', ' '.join(args[1:3])) if len(args) > 2 else []
+    if not m or not nums or not re.fullmatch(r'[\d\s,:\-]+', args[1]):
+        return ''
+    a, n = int(m.group(2)), int(m.group(3))
+    lo, hi = min(int(x) for x in nums[:2]), max(int(x) for x in nums[:2])
+    if args[0].lstrip('./') == m.group(1) and lo <= a + max(n, 1) - 1 and hi >= a:
+        return (f'your last edit already changed {m.group(1)} lines {a}-{a + max(n, 1) - 1}, which this edit overlaps; '
+                'test it first with check.py [] (it shows the updated code), then fix it if needed')
+    return ''

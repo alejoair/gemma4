@@ -10,7 +10,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, is_test_path, read_text, repo_root  # noqa: E402
+from _common import after_edit, clip, is_test_path, read_text, repeat_guard, repo_root  # noqa: E402
 from show import resolve_file  # noqa: E402
 
 CONTEXT = 4
@@ -21,20 +21,25 @@ def numbered(lines, first):
     return [f'{i:>5}|{line}' for i, line in enumerate(lines, first)]
 
 
+def escaped(text):
+    """True when the line breaks of text are mostly written as literal \\n escapes (a model that escaped its text,
+    sometimes with a stray real line break after a backslash)."""
+    return '\\n' in text and text.count('\\n') > text.count('\n')
+
+
 def unescape(item):
-    """One argument with literal \\n, \\t and \\" escapes (and no real line break) turned into the text they mean."""
+    """One argument with literal \\n, \\t and \\" escapes turned into the text they mean."""
     item = item.replace('⏎', '\n')
-    if '\n' not in item and '\\n' in item:
-        item = item.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
+    if escaped(item):
+        item = item.replace('\\\n', '\n').replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t') \
+            .replace('\\"', '"')
     return item
 
 
 def clean_text(text):
     """The new text as file lines: real newlines (or escaped \\n when the model sent none), and without the line
     number prefixes of show.py when every line carries one."""
-    text = text.replace('⏎', '\n')
-    if '\n' not in text and '\\n' in text:
-        text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
+    text = unescape(text)
     lines = text.split('\n')
     if lines and lines[-1] == '':
         lines = lines[:-1]
@@ -130,6 +135,7 @@ def create(root, rel, args):
     out = [f'CREATED {rel} with {len(lines)} line(s):'] + numbered(lines[:40], 1)
     out.append('NEXT: run check.py.')
     print(clip('\n'.join(out), 5000))
+    after_edit()
 
 
 def undefined_names(content, first, last):
@@ -168,6 +174,8 @@ def undefined_names(content, first, last):
 
 def main():
     args = sys.argv[1:]
+    repeat_guard('If it was not applied, change the text (real line breaks, the indentation of the file) or the lines; '
+                 'if it was applied, the change is already in the file.')
     if len(args) < 2:
         usage('Missing arguments.')
         return
@@ -218,6 +226,10 @@ def main():
         usage(f'Lines {start}-{end} are outside {rel}, which has {len(lines)} lines.')
         return
     new = clean_text(text)
+    if [l.rstrip() for l in new] == [l.rstrip() for l in lines[start - 1:end]]:
+        print(f'NO CHANGE: your new lines are identical to lines {start}-{end} of {rel}, so the file is unchanged. '
+              'Write the fixed code: the lines as they must be after the fix.')
+        return
     note = ''
     updated = lines[:start - 1] + new + lines[end:]
     content = eol.join(updated) + (eol if trailing else '')
@@ -268,6 +280,7 @@ def main():
     out.append('NEXT: if more lines must change, call edit.py again (line numbers below this edit have shifted '
                f'by {len(new) - (end - start + 1)}); otherwise run check.py.')
     print(clip('\n'.join(out), 5000))
+    after_edit()
 
 
 if __name__ == '__main__':
