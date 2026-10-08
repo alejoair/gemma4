@@ -24,7 +24,8 @@ def numbered(lines, first):
 def escaped(text):
     """True when the line breaks of text are mostly written as literal \\n escapes (a model that escaped its text,
     sometimes with a stray real line break after a backslash)."""
-    return '\\n' in text and text.count('\\n') > text.count('\n')
+    # A real line break right after a backslash (a stray "\\" + newline) is part of the escaping, not a real break.
+    return '\\n' in text and text.count('\\n') > text.count('\n') - text.count('\\\n')
 
 
 def unescape(item):
@@ -41,6 +42,11 @@ def clean_text(text):
     number prefixes of show.py when every line carries one."""
     text = unescape(text)
     lines = text.split('\n')
+    # Pieces of the tool call itself that leaked into the text (a malformed call: '],file_path:', 'skill_name:',
+    # the <|"|> quote token): the text ends before them.
+    leak = next((i for i, l in enumerate(lines) if re.search(r'^\s*\]?,?\s*(file_path|skill_name)\s*:|<\|"\|>|<tool_call\|>', l)), None)
+    if leak is not None:
+        lines = lines[:leak]
     if lines and lines[-1] == '':
         lines = lines[:-1]
     if lines and all(NUMBERED.match(l) for l in lines if l.strip()):

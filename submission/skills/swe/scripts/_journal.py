@@ -271,12 +271,6 @@ def next_call(s):
                     '(or show.py on another candidate of the locate.py list if that one fits the statement better).')
         return 'call show.py [file, symbol] on the best candidate of the locate.py list.'
     if step == 'EDIT':
-        if s['good'] and s['open']:
-            r = s['open'][0]
-            names = f' (it names {", ".join(r["names"])}; hints.py said where they are)' if r['names'] else ''
-            return (f'requirement {r["id"]} of the statement may not be covered yet: "{r["text"]}"{names}. If it asks '
-                    'for a change your edits do not make, make it with show.py and edit.py, then check.py; if your change '
-                    'already covers it, call the submit_patch tool.')
         if s['broke'] and seen and not s['reshown']:
             return (f'your last edit was undone because it broke tests. Call show.py [{_place(s["shown"] or seen)}] to see the '
                     'current code, then edit.py with a corrected change that keeps the existing behaviour.')
@@ -293,6 +287,12 @@ def next_call(s):
                         'the text: write the new lines with real line breaks and the indentation of the file, or '
                         'replace fewer lines.')
             return 'call edit.py again for the same lines with corrected text (see the error above).'
+        if s['good'] and s['open']:
+            r = s['open'][0]
+            names = f' (it names {", ".join(r["names"])}; hints.py said where they are)' if r['names'] else ''
+            return (f'requirement {r["id"]} of the statement may not be covered yet: "{r["text"]}"{names}. If it asks '
+                    'for a change your edits do not make, make it with show.py and edit.py, then check.py; if your change '
+                    'already covers it, call the submit_patch tool.')
         if seen:
             return (f'call edit.py ["{seen["file"]}", A, B, new lines]: A-B are the lines to replace, inside lines '
                     f'{seen["start"]}-{seen["end"]} shown above (or the lines of other code you have seen that the fix '
