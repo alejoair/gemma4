@@ -47,17 +47,13 @@ Loops are stopped by the repeat guard (the same read is reprinted once, then ref
 - Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md`: date, commit, system, tools, generation, budget, result, tool-call counts, failures seen and what changed next. Update it as soon as a run finishes.
 
-### Scripts of the skill `swe`
-- `journal.py`: the steps to follow, and the phase and next step.
-- `locate.py`: finds the functions from statement words, with numbered code.
-- `show.py`: shows numbered code for a symbol or a line range.
-- `edit.py`: replaces lines. The syntax guard reverts a broken edit and shows why.
-- `check.py`: runs the related tests and prints a VERDICT. It rolls back an edit that breaks tests.
-- `hints.py`: a checklist for that kind of fix.
-- `callers.py`: the definition of a name, its callers and its tests.
-- `try.py`: runs a snippet outside the repository.
-- `tests_for.py`: a library that `check.py` and `try.py` use.
-- `_common.py`: argument cleaning, repeat guard, the call log and STATUS lines.
+### Scripts: being redesigned
+The old scripts of the skill `swe` (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, `callers.py`, `try.py`,
+`journal.py`, `_journal.py`, `_common.py`, `tests_for.py`) were removed on 2026-10-08: they were a toolbox for a model
+that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in
+`docs/old_scripts_lessons.md`; the new design, made with Hierarchical Task Analysis and function allocation, is in
+`docs/design_single.md`. The new scripts go in a new skill directory. `single/`, `pipeline/`, `submission/` and
+`build.py` still describe the old system until the new one replaces them.
 
 ### Design methodology (SOP-Agent / StateFlow / Blueprint First)
 1. **Procedure as a state machine.** Write the states, the entry and exit condition of each, and the transitions. A script decides each transition from the real state, never the model.
