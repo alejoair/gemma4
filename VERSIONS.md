@@ -16,6 +16,23 @@ One row per evaluated version. Update this file after every Kaggle run or submis
 | V4 | 10-08 11:50 | 8622645 | Single agent driven by the journal (`_journal.py`, `procedure.json`) | `submit_patch` + 3 graph tools + skill `swe` (no `run_command` / `read_file` / `edit_file`) | Yes: JOURNAL line with NEXT, gate refuses out-of-phase calls, auto-check after edit | thinking 512, out 4096, T 0.2 | same | **1/10** | rich_3006 | 4 / 2 | 228 scripts (show 111, locate 41, try 26, edit 24, hints 13, journal 3), 0 `run_command` | (1) The 31B ignores NEXT: up to 16–17 show.py calls before hints.py (fastapi_14448, 14851). (2) 39 calls lost to a mangled `skill_name` (`「swe」`, `` `swe` ``, empty) → SKILL_NOT_FOUND. (3) 55 calls refused by the gate, and the model retries them. (4) 9/10 tasks reach the 14,336-token compaction threshold. (5) fastapi_14986: 2/2 requirements covered, then 5 more edits in the SUBMIT step | V5 = pipeline. Pending: NEXT compliance, skill_name mangling, context size |
 | V5 | 10-08 13:05 | 756d010 | Pipeline B: SequentialAgent locator → planner → editor → submitter, `include_contents: none`, one skill per stage | per stage (see `pipeline/sub_agents`) | Yes, stage-aware | locator 256, planner 1024, editor 512, submitter 0 | same | running | | | | | |
 
+## V4 per task (single agent + journal)
+
+| Task | Resolved | Patch chars | End | Edits applied / not applied | Automatic check verdicts | NOT RUN (gate) | What went wrong |
+|---|---|---|---|---|---|---|---|
+| fastapi_14448 | 0 | 860 | timeout | 0 / 0 (1 cut by the timeout) | – | 7 | 16 show.py before hints.py; first edit at 300 s |
+| fastapi_14583 | 0 | 0 | timeout | 2 / 0 | – | 8 | 12 calls with a mangled `skill_name`; reads files with try.py |
+| fastapi_14851 | 0 | 0 | timeout | 0 / 0 | – | 14 | 17 show.py before hints.py, never edited |
+| fastapi_14986 | 0 | 1661 | submitted | 6 / 2 | OK ×4 | 3 | 2/2 requirements covered, then kept editing in SUBMIT; check OK but hidden tests fail |
+| fastapi_15800 | 0 | 1132 | submitted | 2 / 0 | OK ×2 | 5 | check OK, hidden tests fail (semantics) |
+| httpx_3672 | 0 | 2408 | submitted | 5 / 2 | OK, NO CHANGES, OK, OK | 8 | check OK, hidden tests fail |
+| requests_7328 | 0 | 895 | submitted | 1 / 0 | TESTS FAIL ×2 | 1 | submitted with failing tests |
+| rich_3006 | **1** | 558 | submitted | 1 / 0 | OK | 1 | – (9 model calls, 49 s) |
+| rich_3469 | 0 | 677 | submitted | 1 / 0 | OK | 4 | check OK, hidden tests fail |
+| rich_3521 | 0 | 471 | timeout | 1 / 0 | OK | 4 | resolved in V3; edited but did not submit before the timeout |
+
+Readings: (a) the automatic check said OK in 5 failed tasks, so the related tests do not exercise the new behaviour and OK is weak evidence; (b) the reading phase is where time is lost (NEXT ignored, gate refusals retried, mangled `skill_name`).
+
 ## Competition submissions
 
 | S | Date (UTC) | Kaggle ref | System | Budget | Public LB | Notes |
