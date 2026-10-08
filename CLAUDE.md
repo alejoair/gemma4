@@ -27,15 +27,7 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 
 ## System design (the user's idea; keep it)
 
-**Principle.** Deterministic scripts help a small LLM do SWE. The skill's scripts do the work. The ADK config (agents, prompts, tools) is only the container that makes the model use them.
-
-**The journal is the core.** The journal (the procedure engine inside the scripts) gives the steps the agent must follow and the next step of each. It is essential, not optional.
-
-**The journal forces the order; the model does not choose it** (the user's rule, after V4, where the 31B ignored the suggested next step and made 16–17 reads before the requirement step). A script called outside its step does not run and answers with the call to make; a refused call never runs on a retry. Loops are stopped by refusing repeats, never by a fixed count that can leave the model without a valid move.
-
-**Localization.** BM25F at function level is the measured baseline (details in `docs/old_scripts_lessons.md`). The embeddings cannot rank a text query: `search_similar_code` compares stored node vectors (node → node), with no text encoder offline.
-
-**The agents must use the scripts.** If the model does the work with `run_command` (grep, cat, sed, python, pytest) or `read_file` / `edit_file`, the system is not acting. Kaggle single v2 showed exactly this: 96 `run_command` + 65 `read_file` calls against 94 script calls, and `journal.py` and `hints.py` were never called.
+**The only design principle: make the task easier for the 31B model** (`gemma-4-31b-it-qat-w4a16-ct`). Every design choice is judged by this alone; there are no other design principles.
 
 **Rules for Claude working on this repo:**
 - Never remove or replace a piece of this design because it has few or no calls. Zero calls means it is not wired into the prompts or tools. Find out why and wire it.
@@ -46,7 +38,7 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …) and the old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`) were removed: they were built for a model that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in `docs/old_scripts_lessons.md`; their results are in `VERSIONS.md`. The new single agent is built from `docs/design_single.md`.
 
 ### Design methodology
-Use established methods, not an ad-hoc list: Hierarchical Task Analysis (Stanton 2006) → function allocation (Parasuraman, Sheridan & Wickens 2000, levels of automation) → workflow-vs-agent patterns (Anthropic, *Building Effective Agents*, 2024) → detailed design → V-model verification. The work so far is in `docs/design_single.md`. In every step, the model must not decide the path or what to read: scripts prepare each decision's input.
+Use established methods, not an ad-hoc list: Hierarchical Task Analysis (Stanton 2006) → function allocation (Parasuraman, Sheridan & Wickens 2000, levels of automation) → workflow-vs-agent patterns (Anthropic, *Building Effective Agents*, 2024) → detailed design → V-model verification. The work so far is in `docs/design_single.md`.
 
 **Acceptance before Kaggle:** every script passes its unit tests, the replay of real calls shows no problems, and the local model passes the iterative loop below on the 10 local tasks; then a Kaggle run with 10 tasks. If a launch is requested before that, say plainly which criterion is not met.
 
