@@ -17,7 +17,8 @@ if __name__ == '__main__':
 K1, B = 1.2, 0.75
 FIELDS = {'name': 3.0, 'code': 1.0, 'prose': 0.4, 'path': 1.0}  # path: the file's directories and name
 DOC_PRIOR = 0.5      # docs_src/, scripts/, examples/: searched, but below the package
-MODULE_PRIOR = 0.3   # the lines of a file outside every function and class
+MODULE_PRIOR = 1.0   # the lines outside every function and class (0.3 lost 4 of 128 module-level hits, gained none)
+CODE_WORDS = {'self', 'cls', 'none', 'true', 'fals', 'return', 'def', 'class', 'import', 'from'}  # in every function
 IDENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 PART = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+')
 
@@ -94,8 +95,11 @@ def _docstring_lines(tree):
     return out
 
 
-def index_file(root, rel):
+def index_file(root, rel, names=None):
+    """The documents of one file. names, when given, receives every identifier of the file."""
     text = _repo.read_text(root, rel)
+    if names is not None:
+        names.update(IDENT.findall(text))
     lines = text.splitlines()
     tree = _code.parse(text)
     syms = _code.symbols(tree)
@@ -128,7 +132,9 @@ def index_file(root, rel):
 class Index:
     def __init__(self, root):
         self.root = root
-        self.docs = [d for rel in _repo.iter_py(root) for d in index_file(root, rel)]
+        self.names = set()      # every identifier in the code: what 'defined' means for a new entity
+        self.files = _repo.iter_py(root)
+        self.docs = [d for rel in self.files for d in index_file(root, rel, self.names)]
         self.df = Counter()
         for d in self.docs:
             self.df.update(set().union(*(d.tf[f].keys() for f in FIELDS)))
@@ -146,7 +152,8 @@ class Index:
         q = {}
 
         def put(tok, w):
-            q[tok] = max(q.get(tok, 0), w)
+            if tok not in CODE_WORDS:
+                q[tok] = max(q.get(tok, 0), w)
 
         wholes = None
         for term, w in terms.items():
@@ -195,3 +202,23 @@ class Index:
             out.append((s, doc, matched))
         out.sort(key=lambda x: (-x[0], x[1].rel, x[1].start))
         return out[:n]
+
+
+def owner_class(index, var):
+    """The class an object named var belongs to, for a new entity asked as var.new_name: a class named like var, else
+    the class var is most often made from in the code and examples (app = FastAPI() -> FastAPI). (rel, qualname) or
+    None."""
+    classes = {}
+    for d in index.docs:
+        if d.sym is not None and d.sym.kind == 'class' and not _repo.is_doc_path(d.rel):
+            classes.setdefault(d.sym.name.split('.')[-1], (d.rel, d.sym.name))
+    for name, place in classes.items():
+        if name.lower() == var.lower():
+            return place
+    made = Counter()
+    pattern = re.compile(rf'^\s*{re.escape(var)}\s*=\s*([A-Z]\w*)\(', re.M)
+    for rel in index.files:
+        for cls in pattern.findall(_repo.read_text(index.root, rel)):
+            if cls in classes:
+                made[cls] += 1
+    return classes[made.most_common(1)[0][0]] if made else None

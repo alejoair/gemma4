@@ -43,7 +43,8 @@ def unpack(args):
             items = json.loads(cand)
         except ValueError:
             continue
-        if isinstance(items, list) and len(items) > 1 and all(isinstance(i, str) for i in items):
+        if isinstance(items, list) and items and all(isinstance(i, str) for i in items) and (
+                len(items) > 1 or raw.startswith('[')):
             return items
     return args
 

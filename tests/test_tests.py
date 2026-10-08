@@ -94,3 +94,14 @@ def test_going_back_restores_the_last_verified_state(repo):
     _state.save('verified', {})
     _tests.restore_verified(str(repo))
     assert (repo / 'pkg/calc.py').read_text() == CALC
+
+
+def test_a_test_file_that_runs_out_of_time_is_not_counted_and_left_out_later(repo, monkeypatch):
+    setup(repo, {'tests/test_slow.py': 'import time\nfrom pkg.calc import scale\n\n\n'
+                                       'def test_slow():\n    time.sleep(30)\n    assert scale(1) == 2\n'})
+    monkeypatch.setattr(_tests, 'FILE_TIMEOUT', 3)
+    verdict, detail, _ = _tests.check(str(repo), {'pkg/calc.py': ['scale']})
+    assert verdict == 'OK' and 'out of time, not counted: tests/test_slow.py' in detail
+    assert _state.load('slow_tests') == ['tests/test_slow.py']
+    verdict, detail, _ = _tests.check(str(repo), {'pkg/calc.py': ['scale']})
+    assert verdict == 'OK' and 'out of time' not in detail

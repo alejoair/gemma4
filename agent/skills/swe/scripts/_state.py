@@ -12,10 +12,16 @@ if __name__ == '__main__':
     raise SystemExit(0)
 
 
+_HEADS = {}
+
+
 def directory():
+    """One directory per repository path and original commit: a reused sandbox path never sees an earlier task."""
     root = _repo.repo_root()
     base = os.environ.get('SWE_STATE_ROOT', '/tmp')
-    tag = hashlib.sha1(os.path.abspath(root).encode()).hexdigest()[:10]
+    if root not in _HEADS:
+        _HEADS[root] = (_repo.git(root, 'rev-parse', 'HEAD') or '').strip()
+    tag = hashlib.sha1((os.path.abspath(root) + _HEADS[root]).encode()).hexdigest()[:10]
     d = os.path.join(base, f'swe_state_{tag}')
     os.makedirs(d, exist_ok=True)
     return d

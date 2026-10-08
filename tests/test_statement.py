@@ -69,3 +69,31 @@ def test_model_terms_names_phrases_and_paths():
     assert terms['Session'] == 5 and terms['send'] == 3 and terms['history'] == 3
     assert terms['server_sent_event'] == 3 and terms['Server'] == 2
     assert terms['sessions'] == 3 and paths == ['requests/sessions.py']
+
+
+def test_requirements_are_title_bullets_and_sentences_naming_code():
+    text = _statement.clean('''Server connection handling.
+
+* Add `HTTPParser.keep_alive`.
+* `HTTPParser.complete` -> `.reset`
+- [x] Bug fix
+- [ ] New feature
+
+Some context without code. Then `Session.send()` overwrites it.
+
+```python
+client.get("/")
+```''')
+    assert _statement.requirements(text) == ['Server connection handling.', 'Add `HTTPParser.keep_alive`.',
+                                             '`HTTPParser.complete` -> `.reset`',
+                                             'Then `Session.send()` overwrites it.']
+
+
+def test_change_type_new_rename_fix():
+    defined = {'complete', 'send', 'convert_underscores'}.__contains__
+    assert _statement.change_type('Add `HTTPParser.keep_alive`.', defined) == ('new', ['HTTPParser.keep_alive'])
+    assert _statement.change_type('`HTTPParser.complete` -> `.reset`', defined)[0] == 'rename'
+    assert _statement.change_type('Fix `Session.send()` and `KeyboardException`', defined)[0] == 'fix'
+    assert _statement.change_type('Add support for `app.frontend("/", directory="dist")`', defined) == \
+        ('new', ['app.frontend'])
+    assert _statement.code_names('Run `mypy -p rich --strict` and `x == True`') == ['x']

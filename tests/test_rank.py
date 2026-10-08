@@ -104,3 +104,16 @@ def test_a_file_the_statement_names_counts_double(repo):
 def test_nothing_matching_gives_no_candidates(repo):
     write(repo, {'pkg/sessions.py': SESSIONS})
     assert _rank.Index(str(repo)).rank({'zebra': 1}) == []
+
+
+def test_owner_class_of_a_new_entity(repo):
+    write(repo, {'pkg/app.py': 'class FastAPI:\n    def get(self, path):\n        pass\n',
+                 'pkg/routing.py': 'class APIRouter:\n    pass\n',
+                 'docs_src/tutorial.py': 'from pkg.app import FastAPI\n\napp = FastAPI()\n',
+                 'docs_src/other.py': 'app = FastAPI()\nrouter = APIRouter()\n'})
+    index = _rank.Index(str(repo))
+    assert _rank.owner_class(index, 'app') == ('pkg/app.py', 'FastAPI')
+    assert _rank.owner_class(index, 'router') == ('pkg/routing.py', 'APIRouter')
+    assert _rank.owner_class(index, 'fastapi') == ('pkg/app.py', 'FastAPI')
+    assert _rank.owner_class(index, 'client') is None
+    assert 'FastAPI' in index.names and 'get' in index.names

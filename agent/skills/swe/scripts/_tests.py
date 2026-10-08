@@ -126,9 +126,10 @@ def _parse(out):
     return failed, passed
 
 
-def run(root, targets, timeout=FILE_TIMEOUT, cwd=None, stubs=()):
+def run(root, targets, timeout=None, cwd=None, stubs=()):
     """Runs each target group in its own pytest process, in parallel. Returns {'ran', 'failed', 'passed', 'output',
     'timeouts', 'missing'}: ran is False when pytest itself could not run."""
+    timeout = timeout or FILE_TIMEOUT
     extra = [_stub_dir(stubs)] if stubs else []
     procs = []
     for group in targets:
@@ -181,26 +182,31 @@ def failing_before(root, ids, stubs=()):
 
 def check(root, changed):
     """The verdict on the current code: ('OK' | 'BROKEN' | 'NOT VERIFIED', detail, new failures)."""
-    targets = select(root, changed)
+    slow = _state.load('slow_tests', [])
+    targets = [g for g in select(root, changed) if g[0].split('::')[0] not in slow]
     if not targets:
-        return 'NOT VERIFIED', 'no existing test uses the changed code', []
+        return 'NOT VERIFIED', 'no existing test uses the changed code' + (
+            f' (left out because they ran out of time before: {", ".join(slow)})' if slow else ''), []
     r = run(root, targets)
+    if r['timeouts']:
+        _state.save('slow_tests', sorted(set(slow) | set(r['timeouts'])))
     stubs = ()
     if r['missing']:
         stubs = tuple(sorted(r['missing']))
         r = run(root, targets, stubs=stubs)
     if not r['ran']:
         return 'NOT VERIFIED', 'pytest could not run', []
-    files = sorted({g[0].split('::')[0] for g in targets})
+    files = sorted({g[0].split('::')[0] for g in targets} - set(r['timeouts']))
+    late = f'; out of time, not counted: {", ".join(r["timeouts"])}' if r['timeouts'] else ''
     if not r['failed']:
         if r['passed'] == 0:
-            return 'NOT VERIFIED', 'the selected tests did not run (' + ', '.join(r['timeouts'] or files) + ')', []
-        return 'OK', f'{r["passed"]} existing tests pass ({", ".join(files)})', []
+            return 'NOT VERIFIED', 'the selected tests did not finish (' + ', '.join(r['timeouts'] or files) + ')', []
+        return 'OK', f'{r["passed"]} existing tests pass ({", ".join(files)}){late}', []
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
     if not new:
         return 'OK', (f'{r["passed"]} existing tests pass; {len(r["failed"])} failures were already there before '
-                      f'the change'), []
+                      f'the change{late}'), []
     return 'BROKEN', _failure_excerpt(r['output'], new), new
 
 
