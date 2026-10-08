@@ -9,6 +9,7 @@ import difflib
 import math
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -109,6 +110,17 @@ def main():
         os.execv(sys.executable, [sys.executable, show] + args)
     repeat_guard('pick the best candidate from the earlier output and write the report, or run show.py <file> <symbol>.')
     root = repo_root()
+    shell = re.match(r'\s*(find|grep|ls|cat|rg|git)\s', text)
+    if shell:
+        # A shell command given to locate.py: search for the quoted words it was looking for instead.
+        words = grep_patterns(text)
+        print(f'locate.py is not a shell: "{shell.group(1)}" commands run with the run_command tool. '
+              + (f'Searching the code for {", ".join(words)} instead.' if words else ''))
+        if not words:
+            print('NEXT: call locate.py with the names or words to find, for example ["split_cells", "Segment"].')
+            return
+        text = ' '.join(words)
+        sys.argv[1:] = words
     m = re.fullmatch(r'(?:async\s+)?(?:class|def)\s+([A-Za-z_][\w.]*)\W*', text)
     if m:
         text = m.group(1)
@@ -232,6 +244,23 @@ def main():
         nxt = next(i for i, l in enumerate(out) if l.startswith('NEXT'))
         out.insert(nxt, 'Files that import ' + '; '.join(f'{t}: {", ".join(fs)}' for t, fs in imports.items()))
     print(clip('\n'.join(out)))
+
+
+def grep_patterns(command):
+    """The search patterns of grep/rg inside a shell command (the first non-option argument after each grep)."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    found = []
+    for i, tok in enumerate(tokens):
+        if tok in ('grep', 'rg', 'egrep'):
+            for nxt in tokens[i + 1:]:
+                if not nxt.startswith('-'):
+                    if nxt not in found:
+                        found.append(nxt)
+                    break
+    return found
 
 
 def find_in_file(root, rel, words):

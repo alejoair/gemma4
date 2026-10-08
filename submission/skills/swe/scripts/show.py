@@ -124,6 +124,14 @@ def main():
                 print('NEXT: run locate.py with this name and words from the statement to find where it lives.')
                 return
             args = [defs[0][0], args[0]]
+    if os.path.isdir(os.path.join(root, args[0])):
+        # A directory: list its Python files instead of showing one of them.
+        d = args[0].rstrip('/')
+        files = sorted(f for f in all_files(os.path.join(root, d)) if f.endswith('.py'))
+        print(f'{d}/ is a directory with {len(files)} Python files: ' + ', '.join(files[:60]) +
+              (' ...' if len(files) > 60 else ''))
+        print(f'NEXT: call show.py with one file, for example ["{d}/{files[0] if files else "<file>.py"}", symbol].')
+        return
     rel, extra = resolve_file(root, args[0])
     if rel is None:
         if extra:
