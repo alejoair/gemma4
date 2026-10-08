@@ -446,7 +446,14 @@ def gate(script):
                 + {'locate': 'Your part is to find the code; write your report now',
                    'plan': 'Your part is to plan the changes; write your plan now',
                    'edit': 'Your part is to make and check the changes'}.get(STAGE, ''))
-    if script == 'journal.py' or os.environ.get('SWE_AUTO_CHECK'):
+    if os.environ.get('SWE_AUTO_CHECK'):
+        return ''
+    if script == 'journal.py':
+        # journal.py only repeats the JOURNAL line: called again with nothing done in between, it is a loop.
+        evts = events()
+        if evts and evts[-1]['script'] == 'journal.py':
+            return ('nothing has changed since your last journal.py call, so its answer is the same. Do this now: '
+                    + next_call(state()).rstrip('.'))
         return ''
     s = state()
     allowed = expected(s)
@@ -464,6 +471,11 @@ def gate(script):
                    f'{s["step"]} ' + (f'only {", ".join(sorted(allowed))} can run' if allowed else 'no script can run'))
             if script in READERS and s['step'] == 'EDIT' and 'show.py' not in allowed:
                 why += '; the time for reading is over, so make the change with the code you have seen'
+        sig = call_signature(script)
+        again = sum(1 for e in events() if e.get('refused') and e.get('sig') == sig)
+        if again:
+            why = (f'this exact call was already refused {again} time{"s" if again > 1 else ""} and will never run in '
+                   f'this step; repeating it only loses time ({why})')
         return f'{why}. Do this now: {next_call(s).rstrip(".")}' + (quick_answer() if script in READERS else '')
     if script == 'edit.py':
         return edit_gate(s)

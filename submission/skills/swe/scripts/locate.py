@@ -4,6 +4,7 @@ Deterministic code search. Extracts identifiers, error messages and option names
 function and class of the package's source files (tests and docs excluded), and prints the best candidates
 with their code, so the caller only has to pick one.
 """
+import ast
 import collections
 import difflib
 import math
@@ -208,63 +209,130 @@ def main():
     print(clip('\n'.join(out)))
 
 
+SUB = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+')
+K1, B = 1.2, 0.75          # BM25 constants (term saturation, length normalisation)
+NAME_W, PROSE_W = 3.0, 0.4  # BM25F field weights: the symbol's name, comments and long strings (docstrings, Doc texts)  # BM25F field weights: the symbol's name, comments and long strings (docstrings, Doc texts)
+
+
+def stem(word):
+    """A light stemmer: plural and verb endings, so 'wraps', 'wrapped' and 'wrapper' meet 'wrap'."""
+    w = word.lower()
+    for suf in ('ing', 'ers', 'ies', 'ed', 'er', 'es', 's'):
+        if w.endswith(suf) and len(w) - len(suf) >= 3 and not w.endswith(('ss', 'us', 'is')):
+            w = w[:-len(suf)] + ('y' if suf == 'ies' else '')
+            break
+    if len(w) > 4 and w[-1] == w[-2] and w[-1] not in 'aeiouls':
+        w = w[:-1]  # wrapp -> wrap
+    return w
+
+
+def subtokens(line):
+    """Stemmed words of a line of code: identifiers split at '_' and case changes (_unwrapped_call -> unwrap, call;
+    getHTTPHeader -> get, http, header), plus 'unX' -> 'X' (unwrap also meets wrap)."""
+    out = []
+    for ident in WORD.findall(line):
+        for part in SUB.findall(ident):
+            if len(part) < 3:
+                continue
+            st = stem(part)
+            out.append(st)
+            if st.startswith('un') and len(st) >= 6:
+                out.append(st[2:])
+    return out
+
+
+def prose_lines(tree):
+    """Line numbers inside string constants that span several lines (docstrings, Doc("...") texts)."""
+    out = set()
+    if tree is None:
+        return out
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and getattr(node, 'end_lineno', None) \
+                and node.end_lineno > node.lineno:
+            out.update(range(node.lineno, node.end_lineno + 1))
+    return out
+
+
+def owner_map(syms, n_lines):
+    """For each line, the innermost function or class that contains it (None at module level)."""
+    owner = [None] * (n_lines + 2)
+    for sym in sorted(syms, key=lambda x: -(x[3] - x[2])):
+        for i in range(sym[2], min(sym[3], n_lines) + 1):
+            owner[i] = sym
+    return owner
+
+
 def rank(root, text, terms, sources=None):
-    """Score every function and class of the source (docs and scripts at half weight) for the weighted terms:
-    (ranked keys, scores, hits, hit_lines, info, file_scores, replaced, strong, sources)."""
-    # Docs examples (docs_src/) and repository scripts (scripts/) are searched too, at half weight: some issues are
-    # fixed there (tutorial code, release scripts).
+    """BM25F over every function and class of the source (each one a document made of its own lines; docs and
+    scripts at half weight): (ranked keys, scores, hits, hit_lines, info, file_scores, replaced, strong, sources).
+    Plain words of the statement match stemmed sub-words of the code; code-like terms (weight > 1) match exactly.
+    BM25 normalises by length and saturates repeated words, so a long function that repeats common words of the
+    statement does not outrank the short one that uses its rare names."""
     if sources is None:
         sources = {rel: read_text(root, rel) for rel in iter_py(root, docs=True)}
     replaced = add_close_identifiers(terms, sources, text)
     strong = [t for t, w in terms.items() if w >= 3]
-    files = {}
-    df = collections.Counter()
+    plain = {t: stem(t) for t, w in terms.items() if w == 1 and ' ' not in t}
+    docs = {}  # key -> {'len': weighted length, 'tf': Counter(term -> weighted count), 'lines': [(i, text)]}
+    info = {}
     for rel, src in sources.items():
         if not src:
             continue
-        low = src.lower()
-        # Same case rule as the scoring below: plain words ignore case, code-like terms must match exactly.
-        present = [t for t in terms if (t.lower() in low if terms[t] == 1 else t in src)]
-        if present:
-            files[rel] = (src, present)
-            df.update(present)
-    n_files = max(len(files), 1)
-    idf = {t: math.log(1 + n_files / df[t]) for t in df}
+        exact = [t for t in terms if t not in plain and t in src]
+        if not exact and not plain:
+            continue
+        tree = parse(src)
+        syms = symbols(tree)
+        prose = prose_lines(tree)
+        lines = src.splitlines()
+        owner = owner_map(syms, len(lines))
+        file_weight = 0.5 if is_doc_path(rel) else 1.0
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith(('import ', 'from ')):
+                continue
+            sym = owner[i]
+            key = (rel, sym[0] if sym else '<module>')
+            if key not in docs:
+                docs[key] = {'len': 0.0, 'tf': collections.Counter(), 'lines': [], 'w': file_weight}
+                info[key] = (sym[1], sym[2], sym[3]) if sym else ('module', i, i)
+            d = docs[key]
+            is_def = bool(sym) and i == sym[2]
+            fw = NAME_W if is_def else PROSE_W if (i in prose or stripped.startswith('#')) else 1.0
+            words = subtokens(line)
+            d['len'] += len(words) * (1.0 if fw == NAME_W else fw)
+            matched = False
+            if plain:
+                bag = collections.Counter(words)
+                for t, st in plain.items():
+                    if bag.get(st):
+                        d['tf'][t] += bag[st] * fw
+                        matched = True
+            for t in exact:
+                if t in line:
+                    d['tf'][t] += fw
+                    matched = True
+            if matched and len(d['lines']) < 4:
+                d['lines'].append((i, stripped[:120]))
+    n = max(len(docs), 1)
+    avg = sum(d['len'] for d in docs.values()) / n or 1.0
+    df = collections.Counter(t for d in docs.values() for t in d['tf'])
+    idf = {t: math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5)) for t in df}
     scores = collections.Counter()
     hits = collections.defaultdict(set)
     hit_lines = collections.defaultdict(list)
-    info = {}
     file_scores = collections.Counter()
-    for rel, (src, present) in files.items():
-        syms = symbols(parse(src))
-        lines = src.splitlines()
-        file_weight = 0.5 if is_doc_path(rel) else 1.0
-        for t in present:
-            w = terms[t] * idf[t]
-            pat = re.compile(re.escape(t), re.IGNORECASE if terms[t] == 1 else 0)
-            for i, line in enumerate(lines, 1):
-                if not pat.search(line):
-                    continue
-                stripped = line.strip()
-                if stripped.startswith(('import ', 'from ')):
-                    continue
-                lw = w * file_weight * (0.4 if stripped.startswith('#') else 1.0)
-                enc = enclosing(syms, i)
-                if enc is None:
-                    key = (rel, '<module>')
-                    info.setdefault(key, ('module', i, i))
-                    lw *= 0.3
-                else:
-                    key = (rel, enc[0])
-                    info.setdefault(key, (enc[1], enc[2], enc[3]))
-                if re.match(r'\s*(async\s+def|def|class)\s+' + re.escape(t) + r'\b', line):
-                    lw += 3 * idf[t]
-                scores[key] += lw
-                hits[key].add(t)
-                file_scores[rel] += lw
-                if len(hit_lines[key]) < 4:
-                    hit_lines[key].append((i, stripped[:120]))
-    ranked = sorted(scores, key=lambda k: (-(scores[k] * (1 + len(hits[k]))), k))
+    for key, d in docs.items():
+        if not d['tf']:
+            continue
+        norm = K1 * (1 - B + B * d['len'] / avg)
+        sc = sum(terms[t] * idf[t] * tf * (K1 + 1) / (tf + norm) for t, tf in d['tf'].items())
+        sc *= d['w'] * (0.3 if key[1] == '<module>' else 1.0)
+        scores[key] = sc
+        hits[key] = set(d['tf'])
+        hit_lines[key] = d['lines']
+        file_scores[key[0]] += sc
+    ranked = sorted(scores, key=lambda k: (-scores[k], k))
     return ranked, scores, hits, hit_lines, info, file_scores, replaced, strong, sources
 
 
@@ -279,7 +347,7 @@ def save_ranking(ranked, scores, hits, info):
             continue
         kind, start, end = info[(rel, name)]
         top.append({'file': rel, 'symbol': name, 'start': start, 'end': end,
-                    'score': round(scores[(rel, name)] * (1 + len(hits[(rel, name)])), 2)})
+                    'score': round(scores[(rel, name)], 2)})
     try:
         with open(_state_path('ranking.json'), 'w') as fh:
             json.dump(top, fh)

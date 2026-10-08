@@ -32,7 +32,14 @@ def split_items(args):
             continue
         for l in lines:
             items += [x.strip() for x in re.split(r'(?<=[.!?])\s+(?=[A-Z`])', l) if len(x.strip()) > 3]
+    # A link or an issue reference ("Fixes #2875", "fixes https://github.com/...") asks for nothing by itself.
+    items = [re.sub(r'https?://\S+', '', x).strip() for x in items]
+    items = [x for x in items if not REFERENCE.fullmatch(x)]
     return list(dict.fromkeys(items))[:10]
+
+
+REFERENCE = re.compile(r'(?i)(?:(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|see|refs?|related(?: to)?|should fix(?: / related to)?)'
+                       r'\b)?[\s:/#\d,.()-]*')
 
 
 def names_in(text):
