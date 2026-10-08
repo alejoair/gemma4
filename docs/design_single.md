@@ -207,3 +207,53 @@ Redescriptions of the high-P×C operations:
 
 Side finding: in V6 the journal refused 14 edits (NOT RUN), the time cut in SUBMIT seen in fastapi_14448. The redesign
 fixes this, not the HTA.
+
+## Function allocation
+
+Model: Parasuraman, Sheridan & Wickens (2000), four stages (information acquisition, information analysis, decision
+and action selection, action implementation), each with a level of automation (LOA) on Sheridan's 1–10 scale. Here the
+"human operator" is the LLM and the "automation" is the scripts: LOA 10 = the script does it without asking; 7 = the
+script does it and informs the model; 4 = the script proposes, the model decides; 1 = the model does it.
+
+Criterion (Fitts, adapted to an LLM): to the script go search, counting, comparing, executing, exact recall,
+bookkeeping and anything repeatable; to the LLM go understanding intent in natural language, judging what code does,
+and generating new code. Our own constraint: a script runs only when the model calls it, so every script operation
+with no decision in between is chained into the same call.
+
+| Op. | Stage | Who | LOA | Why |
+|---|---|---|---|---|
+| 1.1 Requirements | Analysis | Script splits sentences and bullets; the LLM restates them when choosing candidates | 4 | Splitting is mechanical; knowing what asks for something needs understanding |
+| 1.2 Names | Acquisition | Script | 10 | Exact extraction and definition lookup |
+| 1.3 Change type | Analysis | Script (does the name exist? "add/deprecate/rename"?), the LLM may correct it | 7 | Cheap heuristic on objective data |
+| 2.1 Files | Acquisition | Script (BM25) | 10 | Search |
+| 2.2.1–2.2.2 Rank and present | Acquisition | Script | 10 | Search and format |
+| **2.2.3 Choose candidates** | **Decision** | **LLM** on the script's list | 4 | Judgement among options; the model does not search, it chooses |
+| 2.3.1 Show the chosen code | Acquisition | Script, in the same call that receives the choice | 10 | No decision in between |
+| **2.3.2 Confirm the place** | **Decision** | **LLM** | 4 | Judge whether the code does what the requirement talks about |
+| 2.4.1–2.4.3 Copies, callers, exports | Acquisition | Script, in the same call | 10 | Exact search |
+| **2.4.4 Which places to change** | **Decision** | **LLM** on the script's list | 4 | Judgement |
+| **3.1 New behaviour** | **Decision** | **LLM** | 1 | Understanding and reasoning about code |
+| 3.2.1 Sibling entity as a model | Acquisition | Script | 10 | Search by kind |
+| **3.2.2 Name and signature** | Decision | Script extracts the statement's exact names; **the LLM decides** | 4 | Hidden tests use those names |
+| 3.3 What to keep | Analysis | Script lists the tests that touch the place | 7 | Objective data |
+| **4.1 Write the change** | **Implementation** | **LLM** | 1 | Code generation |
+| 4.2 Apply | Implementation | Script | 10 | Mechanical, with repairs |
+| 4.3 Check syntax | Analysis | Script, reverts on failure | 10 | Deterministic |
+| 5.1 Regression | Analysis | Script, automatic after 4.2 | 10 | Running tests |
+| **5.2.1 Reproduction snippet** | **Implementation** | **LLM** | 1 | Code generation from the requirement |
+| 5.2.2–5.2.3 Run it on the original and on the change | Analysis | Script, both runs in one call | 10 | Run and compare |
+| 5.3.1 Requirement ↔ edit | Analysis | Script proposes the map; **the LLM confirms** | 4 | Semantic but anchored to data |
+| 5.3.2 Place ↔ edit | Analysis | Script | 10 | Diff against the place list |
+| 6.1 Remove leftovers | Implementation | Script | 10 | Mechanical |
+| 6.2 Submit | Implementation | The LLM calls `submit_patch` when the script says so | 7 | The tool belongs to the harness |
+| **Plans (which step is next)** | Decision | **Script (the journal)** | **10** | The model never decides the path |
+
+Result: the LLM has **5 decision points** per task, each with its input prepared by a script:
+- **D1** choose candidates (2.2.3);
+- **D2** confirm the place and choose the related places (2.3.2 + 2.4.4);
+- **D3** write the reproduction snippet (5.2.1);
+- **D4** write the change for each place (3.1 + 3.2.2 + 4.1), retried when 4.3, 5.1 or 5.2 fail;
+- **D5** confirm coverage and submit (5.3.1 + 6.2).
+
+Everything else is deterministic and chained inside those calls. Against the earlier design: "what to read" (2.1–2.3)
+was LOA 1 (the model decided); now reading is LOA 10 and choosing is LOA 4.
