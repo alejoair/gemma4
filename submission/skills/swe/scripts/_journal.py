@@ -58,9 +58,19 @@ SEEN_RE = [
 ]
 
 
+def call_signature(script):
+    return script + ' ' + ' '.join(a.strip().lower() for a in sys.argv[1:])
+
+
+def insisted(script):
+    """The same call was refused before: run it this once (a model that repeats a refused read is stuck on it)."""
+    sig = call_signature(script)
+    return any(e.get('refused') and e.get('sig') == sig for e in events())
+
+
 def classify(script, text):
     """What a finished script call did, read from its own output."""
-    event = {'script': script}
+    event = {'script': script, 'sig': call_signature(script)}
     # Code the model has seen in full: show.py, edit.py, and locate.py when it prints one definition.
     for line in text.splitlines() if script in ('show.py', 'edit.py', 'locate.py') else []:
         for rx in SEEN_RE:
@@ -74,8 +84,10 @@ def classify(script, text):
                 break
         if 'seen' in event:
             break
+    if re.search(r'^(NOTE: you already ran|REPEATED CALL)', text, re.M):
+        event['repeat'] = True  # nothing new was read
     if script == 'edit.py':
-        event['outcome'] = 'applied' if re.search(r'^EDITED ', text, re.M) else 'not_applied'
+        event['outcome'] = 'applied' if re.search(r'^(EDITED|CREATED) ', text, re.M) else 'not_applied'
     elif script == 'check.py':
         verdict = next((l for l in reversed(text.splitlines()) if l.startswith('VERDICT')), '')
         event['outcome'] = ('ok' if verdict.startswith('VERDICT: OK') else
@@ -89,14 +101,56 @@ def classify(script, text):
 def worktree():
     """(diff text, True when the diff is exactly what check.py approved)."""
     try:
-        root = _common.repo_root()
-        r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
-                           text=True, timeout=20)
-        diff = r.stdout if r.returncode == 0 else ''
+        diff = _common.worktree_diff(_common.repo_root()) or ''
         good = open(_common.GOOD).read() if os.path.exists(_common.GOOD) else ''
     except Exception:  # noqa: BLE001
         return '', False
     return diff, bool(diff.strip()) and diff == good
+
+
+REQS = _common._state_path('requirements.json')
+
+
+def requirements(diff):
+    """The requirements hints.py saved, each with covered=True when one of its names is on an added line of the
+    diff (None when it names nothing the diff could show)."""
+    try:
+        with open(REQS) as fh:
+            reqs = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    added = '\n'.join(l[1:] for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++'))
+    touched = touched_symbols(diff)
+    for r in reqs:
+        r['covered'] = (any(n in touched or re.search(r'\b' + re.escape(n) + r'\b', added) for n in r['names'])
+                        if r['names'] else None)
+    return reqs
+
+
+def touched_symbols(diff):
+    """Names of the functions and classes (every level) that contain a changed line of the diff."""
+    root = _common.repo_root()
+    changed = {}
+    current = None
+    for line in diff.splitlines():
+        m = re.match(r'^\+\+\+ b/(\S+)', line)
+        if m:
+            current = m.group(1)
+            changed.setdefault(current, [])
+            continue
+        m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+        if m and current:
+            start, count = int(m.group(1)), int(m.group(2) or 1)
+            changed[current] += list(range(start, start + max(count, 1)))
+    names = set()
+    for rel, lines in changed.items():
+        if not rel.endswith('.py'):
+            continue
+        syms = _common.symbols(_common.parse(_common.read_text(root, rel)))
+        for qual, _, start, end in syms:
+            if not lines or any(start <= n <= end for n in lines):
+                names.update(qual.split('.'))
+    return names
 
 
 def candidate():
@@ -123,7 +177,7 @@ def state(evts=None):
         'located': any(e['script'] == 'locate.py' for e in done),
         'hints': any(e['script'] == 'hints.py' for e in done),
         'seen': seen[-1] if seen else None,
-        'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS),
+        'reads': sum(1 for e in done[last_edit + 1:] if e['script'] in READERS and not e.get('repeat')),
         'edited': bool(applied),
         'tries': sum(1 for e in done if e['script'] == 'try.py'),
         'last_edit_failed': bool(done) and done[-1]['script'] == 'edit.py' and done[-1].get('outcome') == 'not_applied',
@@ -131,11 +185,16 @@ def state(evts=None):
         'broke': bool(checks) and checks[-1][1].get('outcome') == 'broke' and checks[-1][0] > last_edit,
         'fails': sum(1 for _, e in checks if e.get('outcome') == 'fail'),
         'counts': {},
+        'reqs': requirements(diff),
+        'oks': sum(1 for _, e in checks if e.get('outcome') == 'ok'),
     }
+    s['open'] = [r for r in s['reqs'] if r['covered'] is False]
     for e in done:
         s['counts'][e['script']] = s['counts'].get(e['script'], 0) + 1
     late = s['elapsed'] > PROC.get('late_after_seconds', 200)
-    if s['diff'] and (good or s['last_check'] == 'timeout' or late or s['fails'] >= 2):
+    if s['diff'] and good and s['open'] and s['oks'] < 3 and not late:
+        s['step'] = 'EDIT'  # checked, but a requirement of the statement is not covered yet
+    elif s['diff'] and (good or s['last_check'] == 'timeout' or late or s['fails'] >= 2):
         s['step'] = 'SUBMIT'
     elif s['diff'] and s['last_check'] == 'fail':
         s['step'] = 'EDIT'
@@ -165,13 +224,20 @@ def next_call(s):
                 'for example ["Client.send", "timeout"].')
     if step == 'UNDERSTAND':
         if not s['hints']:
-            return 'call hints.py with the key words of the statement, to get the checklist of what the fix must cover.'
+            return ('call hints.py with the sentences or bullets of the statement that ask for something, one per '
+                    'item: it lists the requirements and where each name is defined, or that it is new.')
         c = candidate()
         if c:
             return (f'call show.py ["{c["file"]}", "{c["symbol"]}"] to see the numbered code of the best candidate '
                     '(or show.py on another candidate of the locate.py list if that one fits the statement better).')
         return 'call show.py [file, symbol] on the best candidate of the locate.py list.'
     if step == 'EDIT':
+        if s['good'] and s['open']:
+            r = s['open'][0]
+            where = f' ({", ".join(r["places"][:2])})' if r['places'] else ''
+            return (f'requirement {r["id"]} of the statement is not covered yet: "{r["text"]}"{where}. Make that change '
+                    'with show.py and edit.py, then check.py. If your change already covers it, call the submit_patch '
+                    'tool.')
         if s['broke'] and seen:
             return (f'your last edit was undone because it broke tests. Call show.py [{_place(seen)}] to see the '
                     'current code, then edit.py with a corrected change that keeps the existing behaviour.')
@@ -180,6 +246,15 @@ def next_call(s):
                     'submit_patch tool.')
         if s['last_edit_failed']:
             return 'call edit.py again for the same lines with corrected text (see the error above).'
+        r = next((x for x in s['open'] if x.get('defs')), None)
+        if r:
+            d = r['defs'][0]
+            if d:
+                copies = [f'{x["file"]} lines {x["start"]}-{x["end"]}' for x in r['defs'][1:3]]
+                return (f'requirement {r["id"]} ("{r["text"]}"): call edit.py ["{d["file"]}", A, B, new lines] with A-B '
+                        f'inside {d["symbol"]} lines {d["start"]}-{d["end"]}' +
+                        (f', then the same change in {", ".join(copies)}' if copies else '') +
+                        '. If you have not seen that code yet, show.py it first.')
         if seen:
             return (f'call edit.py ["{seen["file"]}", A, B, new lines]: A-B are the lines to replace, inside lines '
                     f'{seen["start"]}-{seen["end"]} shown above; new lines is the fixed code with its indentation and '
@@ -196,7 +271,12 @@ def next_call(s):
 def journal_line(s=None):
     s = state() if s is None else s
     done = ', '.join(f'{k[:-3]} x{v}' for k, v in s['counts'].items() if k != 'journal.py') or 'nothing yet'
-    return f'JOURNAL: step {STEP_NO[s["step"]]}/5 {s["step"]}. Done: {done}. NEXT: {next_call(s)}'
+    reqs = ''
+    tracked = [r for r in s['reqs'] if r['covered'] is not None]
+    if tracked:
+        reqs = (f' Requirements covered by your edits: {sum(1 for r in tracked if r["covered"])}/{len(tracked)}' +
+                (' (open: ' + ', '.join(f'{r["id"]} {r["names"][0]}' for r in s['open']) + ')' if s['open'] else '') + '.')
+    return f'JOURNAL: step {STEP_NO[s["step"]]}/5 {s["step"]}. Done: {done}.{reqs} NEXT: {next_call(s)}'
 
 
 def gate(script):
@@ -212,7 +292,7 @@ def gate(script):
         return 'time is almost up and your change is in place; there is no time left to read more'
     if script in READERS:
         cap = limits.get('reads_after_edit', 4) if s['edited'] else limits.get('reads_before_edit', 6)
-        if s['reads'] >= cap:
+        if s['reads'] >= cap and not insisted(script):
             return (f'you have used your {cap} reading calls for this step; the code you need is already in the '
                     'conversation above' + quick_answer())
     if script == 'try.py' and s['tries'] >= limits.get('tries', 2):

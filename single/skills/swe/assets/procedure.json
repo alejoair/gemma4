@@ -2,14 +2,14 @@
   "description": "The procedure the single agent follows. The scripts derive the current step from what they really did and print the next call in a JOURNAL line (scripts/_journal.py).",
   "steps": [
     "LOCATE: locate.py with the names and error text of the statement",
-    "UNDERSTAND: hints.py with the key words of the statement, then show.py [file, symbol] on the code to change",
+    "UNDERSTAND: hints.py with the sentences or bullets of the statement that ask for something (the requirements), then show.py [file, symbol] on the code to change",
     "EDIT: edit.py [file, start, end, new lines] with the line numbers shown",
     "VERIFY: check.py []; if it undoes a breaking edit, go back to EDIT",
     "SUBMIT: the submit_patch tool, then one sentence naming the files and the change"
   ],
   "limits": {
-    "reads_before_edit": 6,
-    "reads_after_edit": 4,
+    "reads_before_edit": 8,
+    "reads_after_edit": 5,
     "tries": 2
   },
   "late_after_seconds": 200

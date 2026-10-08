@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import GOOD, _state_path, clip, is_test_path, read_text, repo_root  # noqa: E402
+from _common import GOOD, _state_path, clip, is_test_path, read_text, repo_root, worktree_diff  # noqa: E402
 from tests_for import failed_ids, find_tests, find_tests_for_names, run_pytest  # noqa: E402
 
 BUILTINS = set(dir(builtins)) | {'self', 'return', 'None', 'True', 'False'}
@@ -67,11 +67,10 @@ def run_within(root, tests, limit):
 
 def save_good(root):
     """Remember the current diff as the last state that passed check.py."""
-    r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
-                       text=True, timeout=30)
-    if r.returncode == 0:
+    diff = worktree_diff(root)
+    if diff is not None:
         with open(GOOD, 'w') as fh:
-            fh.write(r.stdout)
+            fh.write(diff)
 
 
 def rollback(root, changed):
@@ -83,9 +82,12 @@ def rollback(root, changed):
     subprocess.run(['git', '-c', 'safe.directory=*', 'checkout', '--', *tracked], cwd=root, capture_output=True,
                    timeout=30)
     restored = 'the original code'
-    if os.path.exists(GOOD) and os.path.getsize(GOOD):
-        r = subprocess.run(['git', '-c', 'safe.directory=*', 'apply', '--whitespace=nowarn', GOOD], cwd=root,
-                           capture_output=True, text=True, timeout=30)
+    good = open(GOOD).read() if os.path.exists(GOOD) else ''
+    # Only the git part of the saved state can be applied; new files listed after it were never removed.
+    good = re.split(r'^\+\+\+ b/\S+ \(new file\)$', good, maxsplit=1, flags=re.M)[0]
+    if good.strip():
+        r = subprocess.run(['git', '-c', 'safe.directory=*', 'apply', '--whitespace=nowarn', '-'], cwd=root,
+                           input=good, capture_output=True, text=True, timeout=30)
         restored = 'the last version that passed check.py' if r.returncode == 0 else 'the original code'
     return f'Your edit was undone: {", ".join(tracked)} is back to {restored}.'
 

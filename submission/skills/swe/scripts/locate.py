@@ -134,6 +134,9 @@ def main():
             out = [f'Definition of {text}: {rel} :: {name} ({kind}) lines {start}-{end}  graph id: {graph_id(rel, name)}']
             if len(defs) > 1:
                 out.append('Other definitions: ' + ', '.join(f'{r} :: {s[0]}' for r, s in defs[1:]))
+                if any(s[0] == name and r != rel for r, s in defs[1:]):
+                    out.append('The same code is in several files (for example sync and async versions): a fix '
+                               'there must change every copy.')
             out += ['----- code -----'] + [f'{n:>5}|{l}' for n, l in enumerate(lines[start - 1:min(end, start + 59)], start)]
             if end > start + 59:
                 out.append(f'----- {end - start - 59} more lines: show.py {rel} {start + 60} {end} -----')
@@ -238,6 +241,16 @@ def main():
         missing = [t for t in strong if not any(t in hits[k] for k in ranked[:5])]
         if missing:
             out.append('Terms not found in the top candidates: ' + ', '.join(missing[:8]))
+    new_names = [t for t, w in terms.items() if w >= 3 and ' ' not in t and re.fullmatch(r'[A-Za-z_][\w.]*', t)
+                 and not any(re.search(r'(?<![\w])' + re.escape(t.split('.')[-1]) + r'\b', src) for src in sources.values())]
+    if new_names:
+        out.append('Not anywhere in the code: ' + ', '.join(new_names[:6]) + '. If the statement asks for them, they '
+                   'are new names the fix must create (or a rename of existing code); check the spelling too.')
+    if best_name != '<module>':
+        twins = [r for r, sym in find_definitions(root, best_name, limit=4) if r != best_rel and sym[0] == best_name]
+        if twins:
+            out.append(f'{best_name} of #1 is also defined in {", ".join(twins)}: the same code in several files '
+                       '(for example sync and async versions); a fix there must change every copy.')
     imports = importing_files(sources, [t for t in terms if '.' in t.strip('.')])
     if imports:
         # Before the closing NEXT lines, so clipping a long output keeps both.

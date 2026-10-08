@@ -10,7 +10,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _common import clip, read_text, repo_root  # noqa: E402
+from _common import clip, is_test_path, read_text, repo_root  # noqa: E402
 from show import resolve_file  # noqa: E402
 
 CONTEXT = 4
@@ -103,15 +103,91 @@ def usage(msg):
     print('NEXT: call show.py [file, symbol] to see the numbered lines, then call edit.py with that range.')
 
 
+def create(root, rel, args):
+    """A file that does not exist yet: create it with the text (a range given before the text is ignored)."""
+    top = rel.replace('\\', '/').split('/')[0]
+    if os.path.isabs(rel) or '..' in rel.split('/') or not (os.path.isdir(os.path.join(root, top)) or '/' not in rel):
+        usage(f'File not found: {rel}.')
+        return
+    _, _, rest = parse_range(args)
+    rest = [r for r in rest if r != '']
+    if not rest:
+        usage(f'{rel} does not exist. To create it, call edit.py [{rel!r}, its full text].')
+        return
+    lines = clean_text('\n'.join(unescape(r) for r in rest))
+    content = '\n'.join(lines) + '\n'
+    if rel.endswith('.py') and not compiles(content, rel):
+        try:
+            compile(content, rel, 'exec')
+        except SyntaxError as e:
+            print(f'FILE NOT CREATED: its text causes "SyntaxError: {e.msg}" at line {e.lineno}.')
+            print(f'NEXT: call edit.py [{rel!r}, its full text] again with corrected text.')
+            return
+    path = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(path) or root, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(content)
+    out = [f'CREATED {rel} with {len(lines)} line(s):'] + numbered(lines[:40], 1)
+    out.append('NEXT: run check.py.')
+    print(clip('\n'.join(out), 5000))
+
+
+def undefined_names(content, first, last):
+    """Names read on lines first..last that nothing in the file defines (no import, assignment, def, class or
+    parameter) and that are not builtins: usually a missing import or a typo."""
+    import ast
+    import builtins
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    bound = set(dir(builtins)) | {'__file__', '__name__', '__doc__', '__class__'}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                bound.add((a.asname or a.name).split('.')[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            bound.update(node.names)
+    if any(isinstance(n, ast.ImportFrom) and any(a.name == '*' for a in n.names) for n in ast.walk(tree)):
+        return []
+    missing = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and first <= node.lineno <= last \
+                and node.id not in bound and node.id not in missing:
+            missing.append(node.id)
+    return missing
+
+
 def main():
     args = sys.argv[1:]
-    if len(args) < 3:
+    if len(args) < 2:
         usage('Missing arguments.')
         return
     root = repo_root()
-    rel, _ = resolve_file(root, args[0])
+    given = args[0][2:] if args[0].startswith('./') else args[0]
+    if is_test_path(given):
+        print(f'NOT DONE: {given} is a test file. The hidden tests are already written; change only the code.')
+        return
+    rel, same = resolve_file(root, args[0])
+    if rel is None and not same:
+        create(root, given, args[1:])
+        return
     if rel is None:
-        usage(f'File not found: {args[0]}.')
+        usage(f'File not found: {args[0]}. Files with that name: {", ".join(same)}.')
+        return
+    if is_test_path(rel):
+        print(f'NOT DONE: {rel} is a test file. The hidden tests are already written; change only the code.')
+        return
+    if len(args) < 3:
+        usage(f'Missing arguments: {rel} exists, so give the lines to replace and the new text.')
         return
     start, end, rest = parse_range(args[1:])
     path = os.path.join(root, rel)
@@ -180,6 +256,10 @@ def main():
     kept = {m.group(1) for m in map(defs.match, new) if m}
     gone = [m.group(1) for m in map(defs.match, lines[start - 1:end]) if m and m.group(1) not in kept]
     out = [f'EDITED {rel}: lines {start}-{end} replaced by {len(new)} line(s){note}. Updated code:']
+    missing = undefined_names(content, start, new_end) if rel.endswith('.py') else []
+    if missing:
+        out.insert(0, f'WARNING: {", ".join(missing)} on your new lines is not defined or imported anywhere in {rel} '
+                      '(a missing import or a typo): fix it with another edit.py call.')
     if gone:
         out.insert(0, f'WARNING: this edit deleted the definition of {", ".join(gone)} (it was inside lines {start}-{end} '
                       'and is not in your new text). If the statement does not ask to remove it, put it back: call '

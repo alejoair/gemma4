@@ -49,6 +49,33 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 - `tests_for.py`: a library that `check.py` and `try.py` use.
 - `_common.py`: argument cleaning, repeat guard, the call log and STATUS lines.
 
+### Design methodology (SOP-Agent / StateFlow / Blueprint First)
+1. **Procedure as a state machine.** Write the states, the entry and exit condition of each, and the transitions. A script decides each transition from the real state, never the model.
+2. **Budget per state.** On Kaggle one 31B call takes about 12 s (6–30 s), so about 20–25 calls fit in a task. The procedure must finish in about 12 calls, leaving room for retries.
+3. **Contract per state.** Which scripts the state allows, what it produces, and where that is stored (state files in `/tmp`).
+4. **Failures and recovery.** Every known failure gets a transition back: edit not applied → retry edit; check broke tests → rollback and back to EDIT; time almost up → SUBMIT.
+5. **Tools per state.** Only the tools of that phase. In the single agent the scripts refuse out-of-phase calls; in the sequential system each stage gets only its phase's scripts.
+6. **Acceptance before Kaggle.**
+   - The replay shows no problems.
+   - The 12B passes the iterative loop below on the 10 local tasks.
+   - Then a Kaggle run with 10 tasks.
+
+### Iterative test loop (how every change to the scripts or prompts is tested)
+1. **Fix.** Change the scripts or prompts.
+2. **Dry test.** Run the affected scripts by hand on a repo in `scratchpad/repos/` with `PWD=<repo>`. Use a skill copy that has `assets/procedure.json` to test the journal mode.
+3. **Replay.** `venv/bin/python replay.py <scripts dir> repos real_calls.json` must print NO PROBLEMS (pipeline mode).
+4. **Package and validate.**
+   - Copy `submission/` and `single/` into `ds3/`, and copy `submission/skills/swe/scripts` into `ds3/single/skills/swe/`.
+   - Remove every `__pycache__`: a `.pyc` file makes the harness reject the submission.
+   - Run `validate_submission.py ds3/single`.
+5. **Run one task with the local 12B** (`one_task.sh <task>`).
+6. **Monitor it step by step while it runs.** Every 30–45 s, curl `/_monitor/conversation?since=<start>` and read each new call: its arguments, its result and the JOURNAL line. Never wait for the end of the run with a loop and never use a background monitor.
+7. **Stop at the first problem.** When a script error, a loop or a wrong JOURNAL decision shows up, stop the run, fix it and relaunch from step 1. Do not let the run go on to the timeout.
+8. **Analyse each finished task before the next one.** Record the result, the calls used, the wasted calls and their cause, and the fix.
+9. **Commit and push** after each round of fixes.
+
+Local timing is not Kaggle timing. llama-server has a global reasoning budget of 3072 tokens, so a 12B call can take up to 60 s; on Kaggle the agent sets `thinking_budget: 512`.
+
 ### Literature behind the design
 - **SWE-agent / ACI** (NeurIPS 2024, [arXiv 2405.15793](https://arxiv.org/pdf/2405.15793)).
   - Tools designed for the model, not raw shell.

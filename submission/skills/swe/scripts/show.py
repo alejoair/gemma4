@@ -200,6 +200,18 @@ def main():
                 found = find_symbol(syms, args[1])
                 if found:
                     print(f'{args[1]} is not defined anywhere; the closest symbol in {rel} is {found[0][0]}:')
+        if found and found[0][1] == 'class' and found[0][3] - found[0][2] + 1 > MAX_LINES:
+            # A class too long for one screen: its outline (header and the methods with their lines), so the next
+            # call shows exactly the method to change instead of the first lines of the class.
+            name, kind, start, end = found[0]
+            members = [x for x in syms if x[0].startswith(name + '.') and x[0].count('.') == name.count('.') + 1]
+            first = min([m[2] for m in members] or [end + 1])
+            head = [f'{n:>5}|{t}' for n, t in enumerate(lines[start - 1:min(first - 1, start + 24)], start)]
+            out = [f'Outline of class {name} in {rel} (lines {start}-{end}, too long to show at once):'] + head
+            out += ['Methods (name lines):'] + [f'  {m[0]} {m[2]}-{m[3]}' for m in members]
+            out.append(f'NEXT: call show.py ["{rel}", "{name}.<method>"] with the method to change.')
+            print(clip('\n'.join(out), 5000))
+            return
         if found:
             name, kind, start, end = found[0]
             remember_candidate(rel, name, start, end, lines[start - 1:end])

@@ -6,8 +6,8 @@ Run each script with run_skill_script, skill_name "swe", file_path "scripts/<nam
 
 Procedure (the JOURNAL line at the end of every script output says which step you are in and the exact next call):
 1. LOCATE: scripts/locate.py, args = names and error text of the statement
-2. UNDERSTAND: scripts/hints.py, args = key words of the statement; then scripts/show.py, args = [file, symbol]
-3. EDIT: scripts/edit.py, args = [file, start, end, new lines] with the line numbers show.py printed
+2. UNDERSTAND: scripts/hints.py, args = the sentences or bullets of the statement that ask for something (it lists the requirements and where each name is defined, or that it is new); then scripts/show.py, args = [file, symbol]
+3. EDIT: scripts/edit.py, args = [file, start, end, new lines] with the line numbers show.py printed, or [new file, its full text] to create a file; cover every requirement
 4. VERIFY: scripts/check.py, args = []
 5. SUBMIT: the submit_patch tool
 

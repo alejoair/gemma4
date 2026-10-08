@@ -91,7 +91,7 @@ sys.argv = _split_packed(sys.argv)
 
 # edit.py keeps its new text exactly as given (indentation matters); only its file and range are cleaned.
 # try.py keeps its code exactly as given too.
-_keep_from = {'edit.py': 4, 'try.py': 1}.get(os.path.basename(sys.argv[0]), len(sys.argv))
+_keep_from = {'edit.py': 4, 'try.py': 1, 'hints.py': 1}.get(os.path.basename(sys.argv[0]), len(sys.argv))
 if os.path.basename(sys.argv[0]) == 'edit.py' and len(sys.argv) > 3 and not _clean(sys.argv[3]).isdigit():
     _keep_from = 3  # [file, "start-end", text]: the text starts at the third argument
 sys.argv = [sys.argv[0]] + [_clean(a) if i < _keep_from else a for i, a in enumerate(sys.argv[1:], 1)]
@@ -114,13 +114,13 @@ def _status_note():
     if os.path.basename(sys.argv[0]) == 'check.py':
         return
     try:
-        root = repo_root()
-        r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
-                           text=True, timeout=20)
+        diff = worktree_diff(repo_root())
         good = open(GOOD).read() if os.path.exists(GOOD) else ''
     except Exception:  # noqa: BLE001
         return
-    if r.returncode == 0 and not r.stdout.strip():
+    if diff is None:
+        return
+    if not diff.strip():
         # Reading without editing is how small models run out of time: after many reads, say so.
         try:
             with open(SEEN) as fh:
@@ -132,7 +132,7 @@ def _status_note():
                   'edit, make the edit now with edit.py from the code you have already seen. If your job is to report, '
                   'write the report now.')
         return
-    if r.returncode == 0 and r.stdout and r.stdout == good:
+    if diff and diff == good:
         files = sorted(set(re.findall(r'^\+\+\+ b/(\S+)', good, re.M)))
         print(f'\nSTATUS: your current changes ({", ".join(files)}) already passed check.py. If the statement needs '
               'no other change, finish now as your instructions say.')
@@ -368,6 +368,27 @@ def clip(text, limit=MAX_OUT):
     return '\n'.join([cut, '[... output clipped ...]'] + tail)
 
 
+def worktree_diff(root):
+    """git diff of the tracked files plus every new (untracked, not hidden) file as added lines: the change the
+    submitted patch will contain. None when git fails."""
+    try:
+        r = subprocess.run(['git', '-c', 'safe.directory=*', 'diff', '--binary'], cwd=root, capture_output=True,
+                           text=True, timeout=20)
+        u = subprocess.run(['git', '-c', 'safe.directory=*', 'ls-files', '--others', '--exclude-standard'], cwd=root,
+                           capture_output=True, text=True, timeout=20)
+    except Exception:  # noqa: BLE001
+        return None
+    if r.returncode != 0:
+        return None
+    out = r.stdout
+    for rel in sorted(u.stdout.splitlines()):
+        if not rel or any(p.startswith('.') or p == '__pycache__' for p in rel.split('/')) or rel.endswith('.pyc'):
+            continue
+        text = read_text(root, rel)
+        out += f'+++ b/{rel} (new file)\n' + ''.join('+' + l + '\n' for l in text.splitlines())
+    return out
+
+
 WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
@@ -386,7 +407,7 @@ def find_definitions(root, name, limit=5):
             break
         if '.' in name:
             loose += [(rel, sym) for sym in find_symbol(syms, tail, strict=True)]
-    return (strict + loose)[:limit]
+    return list(dict.fromkeys(strict + loose))[:limit]
 
 
 def is_symbol_name(text):

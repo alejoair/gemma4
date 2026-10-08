@@ -1,14 +1,104 @@
-"""hints.py <problem statement text>
+"""hints.py <the sentences or bullets of the problem statement that ask for something>
 
-Rule-based SWE checklist. Reads the statement and prints the places a fix of that kind usually has to touch and
-the searches that find them, so the model follows a concrete plan instead of improvising one.
+Turns the statement into a numbered list of requirements. For every name a requirement mentions it says where it
+is defined (and every twin definition, such as the sync and async versions of the same code) or that it does not
+exist yet, so it is a new name the fix must create. The list is saved for the journal, which shows which
+requirements the edits already cover. Then a rule-based checklist of what a fix of that kind usually touches.
 """
+import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402,F401  (tees output to the call log)
+
+REQS = _common._state_path('requirements.json')
+DEFS = []
+CODE_NAME = re.compile(r'`([^`]{2,60})`|\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[A-Za-z]\w*_\w+|_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*)\b')
+
+
+def split_items(args):
+    """The requirement texts: each bullet or numbered line of a multi-line item, else each sentence."""
+    items = []
+    for a in args:
+        lines = [l.strip() for l in a.replace('\\n', '\n').splitlines() if l.strip()]
+        bullets = [re.sub(r'^([-*\u2022]|\d+[.)])\s+', '', l) for l in lines if re.match(r'^([-*\u2022]|\d+[.)])\s+', l)]
+        if bullets:
+            items += bullets
+            continue
+        for l in lines:
+            items += [x.strip() for x in re.split(r'(?<=[.!?])\s+(?=[A-Z`])', l) if len(x.strip()) > 3]
+    return list(dict.fromkeys(items))[:10]
+
+
+def names_in(text):
+    out = []
+    for m in CODE_NAME.finditer(text):
+        name = (m.group(1) or m.group(2)).strip().strip('()').lstrip('.')
+        name = re.sub(r'\(.*$', '', name)
+        if re.fullmatch(r'[A-Za-z_][\w.]*', name) and len(name) > 2 and not name.endswith('.py') and name not in out:
+            out.append(name)
+    return out[:6]
+
+
+def facts_for(root, name, sources):
+    """Where the name is defined (all twins), where it is used, or that it is new."""
+    defs = []
+    for d in _common.find_definitions(root, name, limit=4):
+        if (d[1][0] == name or d[1][0].endswith('.' + name) or '.' not in name) and d not in defs:
+            defs.append(d)
+    if defs:
+        DEFS.extend({'file': rel, 'symbol': q, 'start': s, 'end': e} for rel, (q, _, s, e) in defs)
+        places = [f'{rel} :: {q} lines {s}-{e}' for rel, (q, _, s, e) in defs]
+        twins = len({q for _, (q, _, _, _) in defs}) < len(defs)
+        return (f'{name}: defined in ' + ' and in '.join(places) +
+                (' (the same code in several files: change every one of them)' if twins else ''), [d[0] for d in defs])
+    if '.' in name:
+        # Owner.new_member: the member is new, but the owner exists; the place to add it is the owner.
+        owner = name.rsplit('.', 1)[0]
+        odefs = [d for d in _common.find_definitions(root, owner, limit=4) if d[1][0] == owner.split('.')[-1] or
+                 d[1][0].endswith('.' + owner.split('.')[-1]) or d[1][0] == owner]
+        odefs = list(dict.fromkeys(odefs))
+        if odefs and not any(re.search(r'\b' + re.escape(name.split('.')[-1]) + r'\b', _common.read_text(root, r))
+                             for r, _ in odefs):
+            DEFS.extend({'file': rel, 'symbol': q, 'start': s, 'end': e} for rel, (q, _, s, e) in odefs)
+            return (f'{name}: {name.split(".")[-1]} is NOT in {owner} yet: add it to ' + ' and to '.join(
+                f'{rel} :: {q} lines {s}-{e}' for rel, (q, _, s, e) in odefs), [d[0] for d in odefs])
+    tail = name.split('.')[-1]
+    pat = re.compile(r'(?<![\w.])' + re.escape(tail) + r'\b' if '.' not in name else re.escape(name))
+    for rel, src in sources.items():
+        m = pat.search(src)
+        if m:
+            line = src.count('\n', 0, m.start()) + 1
+            return f'{name}: used in {rel} line {line} (not a function or class)', [rel]
+    return (f'{name}: NOT in the code yet: a new name the statement introduces, so the fix must create it '
+            '(or rename the existing code to it); check the spelling too', [])
+
+
+def requirements(args):
+    items = split_items(args)
+    if len(items) < 2 and not any(names_in(i) for i in items):
+        return []
+    root = _common.repo_root()
+    sources = {rel: _common.read_text(root, rel) for rel in _common.iter_py(root, docs=True)}
+    reqs = []
+    for n, item in enumerate(items, 1):
+        names = names_in(item)
+        facts, places, tracked = [], [], []
+        creates = re.search(r'\b(add|adds|added|create|new|introduce|rename|support)\b|->', item, re.I) and \
+            not re.search(r"\b(don'?t|do not|never|no longer|remove|stop)\b", item, re.I)
+        DEFS.clear()
+        for name in names:
+            fact, files = facts_for(root, name, sources)
+            facts.append(fact)
+            places += [f for f in files if f not in places]
+            # The journal checks a name on the edits only when it exists, or when the requirement creates it.
+            if files or creates:
+                tracked.append(name.split('.')[-1])
+        reqs.append({'id': n, 'text': item[:200], 'names': tracked, 'places': places, 'facts': facts,
+                     'defs': list(DEFS)})
+    return reqs
 
 RULES = [
     (r'\b(error|exception|raise[sd]?|traceback|warning)\b',
@@ -51,9 +141,22 @@ def main():
     text = ' '.join(sys.argv[1:])
     if not text.strip():
         print('usage: hints.py <problem statement text>')
-        print('NEXT: call hints.py with the key words and names of the problem statement.')
+        print('NEXT: call hints.py with the sentences or bullets of the statement that ask for something, one per item.')
         return
     _common.repeat_guard('follow the checklist printed earlier and continue your procedure.')
+    reqs = requirements(sys.argv[1:])
+    if reqs:
+        print(f'Requirements of the statement ({len(reqs)}):')
+        for r in reqs:
+            print(f'{r["id"]}. {r["text"]}')
+            for fact in r['facts']:
+                print(f'   - {fact}')
+        try:
+            with open(REQS, 'w') as fh:
+                json.dump(reqs, fh)
+        except OSError:
+            pass
+        print()
     low = text.lower()
     # Lower-case words match the lowered text; patterns with capitals (ENV_VAR names) match the original text.
     found = [msg for pat, msg in RULES if re.search(pat, low) or re.search(pat, text)]
