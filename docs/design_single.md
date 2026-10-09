@@ -583,3 +583,14 @@ failures; the harness said 0/1 because of this container's environment, as in ea
 limit): it chose twice, a file path was refused, then it added `HTTPParser.reset` (OK, 32 existing tests pass). Seen:
 the 12B packed an edit into one string (`"P1,378,399,    def complete..."`), refused twice before it sent the four
 items. Fixed: an edit packed as `P1,start,end,text` or `P1 | start | end | text` is read.
+
+**Local 12B, fastapi_14986: not resolved.** The candidates held the right code (C2 `FastAPI.setup.openapi`, C3
+`FastAPI.__init__`); the 12B chose C9, then C2, sent an edit equal to the old lines, then a broken one (undone), went
+back, and ended repeating `"self.servers.append"` ten times in the choose step (it wanted to find code by its text).
+Fixed: a code fragment that is not a function or class name opens the function that contains it; two repeats in the
+choose step open the first candidate. rich_3469 ("fix superfluous space") was stopped early: nothing in the statement
+locates the code (the reference function is not among the candidates).
+
+Tally of the local 12B loop with thinking on (2026-10-09): rich_3006 resolved earlier; httpx_3672 resolved by the
+local re-verification; rich_3521, rich_3469 (statements without information), requests_7328, fastapi_14986 not
+resolved. Every run found a protocol problem, each fixed with a unit test (102 tests).

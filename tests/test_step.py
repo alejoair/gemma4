@@ -194,3 +194,19 @@ def test_a_bare_file_path_in_the_edit_step_does_not_open_the_file(repo):
     call(repo, 'C1')
     out = call(repo, 'pkg/sessions.py')
     assert out.startswith('A file is not a place to edit') and 'EDIT P1' in out
+
+
+def test_a_code_fragment_opens_the_function_containing_it(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    out = call(repo, 'resp.history = hist[1:]')
+    assert 'P1 pkg/sessions.py :: SessionRedirectMixin.resolve_redirects' in out
+
+
+def test_repeats_in_the_choose_step_open_the_first_candidate(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'no_such_thing_here')
+    call(repo, 'no_such_thing_here')
+    out = call(repo, 'no_such_thing_here')
+    assert 'The first candidate is opened now' in out and 'Edit the chosen code now' in out

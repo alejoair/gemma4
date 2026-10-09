@@ -257,7 +257,26 @@ def _resolve(root, names):
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
         for r, s in found[:1]:
             out.append({'rel': r, 'name': s.name, 'start': s.start, 'end': s.end, 'line': ''})
+        if not found and len(raw) >= 4 and not rel:
+            hit = _find_text(root, table, raw)        # a code fragment: the function or class that contains it
+            if hit:
+                out.append(hit)
     return out
+
+
+def _find_text(root, table, text):
+    """The innermost function or class whose lines contain text literally (package code before docs and scripts)."""
+    needle = re.sub(r'\s+', ' ', text.strip())
+    for rel in sorted(table.syms, key=lambda r: (_repo.is_doc_path(r), r)):
+        lines = _repo.read_lines(root, rel)
+        for i, line in enumerate(lines, 1):
+            if needle in re.sub(r'\s+', ' ', line):
+                syms = table.syms[rel]
+                owner = _code.owner_map(syms, len(lines))[i]
+                if owner is None:
+                    return {'rel': rel, 'name': MODULE, 'start': 1, 'end': len(lines), 'line': ''}
+                return {'rel': rel, 'name': owner.name, 'start': owner.start, 'end': owner.end, 'line': ''}
+    return None
 
 
 def d1(root, state, args):
@@ -520,6 +539,9 @@ def main(argv):
             _tests.save_verified(root)
             out += (' The chosen places are planned now, so edit them.\n\n'
                     + _window(root, state, state['current']))
+        elif state['step'] == 'D1' and state['candidates'] and state['repeats'] >= 2:
+            # stuck on choosing: the first candidate is opened, so the work moves on (another can be chosen later)
+            out += ' The first candidate is opened now.\n\n' + d1(root, state, [state['candidates'][0]['id']])
         else:
             out += f' The call to make now is different: {now}' 
     else:
