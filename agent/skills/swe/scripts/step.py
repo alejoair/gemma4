@@ -725,8 +725,10 @@ def d3(root, state, args):
             re.fullmatch(r'(?i)C\d+|([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) and not re.fullmatch(r'(?i)P\d+', x)
             for x in names):
         added = _add_named(root, state, names)
-    elif not added and len(names) == 1 and names[0] != _args.clean(items[0]) and '::' in names[0]:
-        added = _add_named(root, state, names)         # "C11:file::Name"
+    elif not added and len(names) == 1 and (
+            (names[0] != _args.clean(items[0]) and '::' in names[0])        # "C11:file::Name"
+            or re.fullmatch(r'([\w./-]+::)?[A-Z_]\w*\.[A-Za-z_]\w*(\(\))?', names[0])):   # a qualified Class.method
+        added = _add_named(root, state, names)
     if added:
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
