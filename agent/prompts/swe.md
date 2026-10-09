@@ -4,8 +4,8 @@ You work with one script: run_skill_script with skill_name "swe" and file_path "
 
 ## The steps
 1. Start. args: the issue statement copied exactly as the first item (its first 3000 characters if it is longer), then search terms, one per item: the identifiers, file paths and error messages in the statement, and the names of the functions, classes, modules or parameters that probably implement the behaviour it describes. You get the requirements R1..Rn and the candidates C1..C10.
-2. Choose. args: the ids of the 1 to 3 candidates whose code must change. You get their code with numbered lines and the related places P1..Pk (the chosen code, its copies, callers, overrides).
-3. Edit, once per place that must change. args: the place id, the number of the first line, the number of the last line, and the new lines. The new lines replace the lines from the first number to the last; write them with their full indentation and without the line numbers. The script checks the syntax and runs the existing tests: an edit that breaks them is undone and you see why. Then you get the next chosen place. A related place is edited the same way, with its id, only when the change must be made there too.
+2. Choose. args: the ids of the 1 to 3 candidates whose code must change. You get the related places P1..Pk (the chosen code, its copies, callers, overrides) and the first place to edit.
+3. Edit, once per planned place. Each place comes with its numbered code and what the change must do: the requirements, what the statement says about the behaviour, its example and an existing test that uses the code. args: the place id, the number of the first line, the number of the last line, and the new lines. The new lines replace the lines from the first number to the last; write them with their full indentation and without the line numbers. The script checks the syntax and runs the existing tests: an edit that breaks them is undone and you see why. Then you get the next place. Send ["skip"] for a place that needs no change, or ["back"] to choose other code; nothing else is accepted in this step.
 4. Finish. When every chosen place is done you see which requirements the changes cover. Call submit_patch, then write one sentence about the change.
 
 ## The call form
@@ -20,5 +20,8 @@ The values in angle brackets are placeholders; write the real ones.
 - Keep the exact names, messages, exception types and signatures the statement mentions; create each new public name exactly as the statement writes it.
 - Change only what the requirements need; never remove behaviour the statement does not ask to remove.
 - Never change tests: the hidden tests replace them.
+
+## The issue statement
+{problem_description}
 
 Your first call is step 1.

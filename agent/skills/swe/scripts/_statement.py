@@ -39,6 +39,7 @@ def clean(text):
     text = re.sub(r'https?://\S+', '', text)
     text = re.sub(r'(?<![\w.])#\d+\b', '', text)
     text = re.sub(r'(?<![\w.])@[\w-]+', '', text)
+    text = re.sub(r'(?<![\w`]):[a-z_+-]+:(?![\w`])', '', text)                  # emoji shortcodes
     paras, seen = [], set()
     for para in re.split(r'\n\s*\n', text):
         key = re.sub(r'\W+', ' ', para).strip().lower()
@@ -170,6 +171,53 @@ def requirements(text):
         if re.search(r'`[^`]+`', sentence) or any(_shape(w) >= 4 for w in re.findall(IDENT, sentence)):
             put(sentence)
     return out[:MAX_REQUIREMENTS]
+
+
+STRONG_WORDS = re.compile(
+    r"(?i)\b(should|shouldn't|expected?|expecting|instead|wrong|incorrect(ly)?|errors?|exceptions?|raises?|fails?|"
+    r"failing|crash\w*|must|returns?|missing|ignored?|broken|bug|avoid\w*|prevent\w*|escape\w*|never|always)\b")
+MILD_WORDS = re.compile(r"(?i)\b(has to|have to|needs? to|now|also|only|support\w*|handle\w*|allow\w*|check\w*|"
+                        r"not enough|unwrap\w*|await\w*|keep\w*|store\w*|remove\w*)\b")
+OPINION = re.compile(r"(?i)\b(i think|i don't|i do not|i wouldn't|i suspect|i received|doesn't hurt|probably|"
+                     r"unfortunately|thanks?|thank you|hope|happy to|let me know)\b")
+
+
+def behaviour(text, skip=(), limit=700):
+    """The sentences of a cleaned statement about what happens or what should happen (outside code blocks), not
+    already in skip, in their order, at most limit characters: what the change must do, shown next to the code being
+    edited. A short statement is kept whole but for opinions; a long one keeps its best sentences: those with words
+    about behaviour and with code in them."""
+    prose = re.sub(r'```.*?(```|\Z)', ' ', text, flags=re.S)
+    lines = [l.strip() for l in prose.split('\n') if l.strip() and not l.strip().startswith(('#', '|'))]
+    known = [re.sub(r'\W+', ' ', s).strip().lower() for s in skip]
+    sentences = []
+    for sentence in re.split(r'(?<=[.!?:])\s+', ' '.join(lines[1:] if len(lines) > 1 else lines)):
+        sentence = sentence.strip(' -*•')
+        key = re.sub(r'\W+', ' ', sentence).strip().lower()
+        if len(key) < 12 or OPINION.search(sentence) or any(key in k or k in key for k in known):
+            continue
+        score = 2 * bool(STRONG_WORDS.search(sentence)) + 2 * bool(re.search(r'`[^`]+`', sentence)) + \
+            bool(any(_shape(w) >= 4 for w in re.findall(IDENT, sentence))) + bool(MILD_WORDS.search(sentence))
+        sentences.append((score, sentence))
+    keep = set(range(len(sentences)))
+    if sum(len(x) + 1 for _, x in sentences) > limit:
+        keep, size = set(), 0
+        for i in sorted(range(len(sentences)), key=lambda i: (-sentences[i][0], i)):
+            if sentences[i][0] > 0 and size + len(sentences[i][1]) <= limit:
+                keep.add(i)
+                size += len(sentences[i][1]) + 1
+    return [x for i, (_, x) in enumerate(sentences) if i in keep]
+
+
+def example(text, max_lines=14):
+    """The first code block of the statement (a reproduction or an expected use), at most max_lines lines."""
+    m = re.search(r'```[\w+-]*\n(.*?)(```|\Z)', text, flags=re.S)
+    if not m:
+        return ''
+    lines = [l.rstrip() for l in m.group(1).strip('\n').split('\n')]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + ['...']
+    return '\n'.join(lines)
 
 
 def code_names(text):

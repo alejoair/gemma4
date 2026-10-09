@@ -2,9 +2,10 @@
 step produced, a fixed verdict when something was checked, and the exact next call (docs/design_single.md, v1).
 
     S0  args [statement, search terms...]   -> requirements and candidates C1..C10
-    D1  args ["C2", "C5"]                    -> the chosen code and the related places P1..Pk
-    D2  args ["P1: what changes", ...]       -> the first planned place, numbered
+    D1  args ["C2", "C5"]                    -> the related places P1..Pk and the first planned place, numbered, with
+                                                what the change must do
     D3  args ["P1", first, last, new lines]  -> edit, syntax, existing tests; the next place, or the finish
+        or ["skip"], ["back"], ["P<n>"]      -> nothing else is accepted in this step
     D4  submit_patch, or ["R2"]              -> back to D1 for a requirement that is not covered
 """
 import os
@@ -27,10 +28,10 @@ import _tests  # noqa: E402
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
-EDIT_LINES = 50         # the edit window: the place's head and the part its plan line is about
+EDIT_LINES = 60         # the edit window: the place's head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
-MAX_CHARS = 12000       # a safety cap on one answer (about 3,500 tokens); the end with NEXT is always kept
+MAX_CHARS = 8000        # a cap on one answer (about 2,300 tokens) against context growth; the end with NEXT is kept
 
 
 # ---------------------------------------------------------------------------------------------------------- views
@@ -96,41 +97,57 @@ def _focus(state, entry=None):
 
 
 def _window(root, state, i):
-    """The place of plan entry i, ready to edit."""
+    """The place of plan entry i, ready to edit: its code, then what the change must do (the requirements, the
+    statement's sentences about the behaviour, its example, an existing test that uses the code), then how to send
+    the edit. The task is repeated in every window so that it is next to the decision even after the history is
+    compacted."""
     entry = state['plan'][i]
     p = _place(state, entry['place'])
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
     done = sum(1 for e in state['plan'] if e['status'] != 'todo')
-    head = f'EDIT {p["id"]} ({done + 1} of {len(state["plan"])} planned): {p["rel"]} :: {p["name"]}. Plan: ' \
-           f'{entry["intent"] or "(no plan line: change what the requirements need here)"}'
+    head = f'EDIT {p["id"]} ({done + 1} of {len(state["plan"])}): {p["rel"]} :: {p["name"]}'
+    if p['reason'] != 'chosen':
+        head += f' ({p["reason"]})'
     if p['name'] == '<exports>':
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
-    hint = ('Send the line numbers of the lines to replace and the new lines with their full indentation. To add '
-            'lines, replace the line before them with that same line followed by the new ones.')
-    named = _named_lines(root, p, entry['intent'])
-    if named:
-        hint = 'The plan names code on ' + '; '.join(f'line {n} (`{frag}`)' for n, frag in named) + '.\n' + hint
-    return f'{head}\n{body}\n{hint}'
+    parts = [head, body, _task_view(root, state, p)]
+    if p['reason'] != 'chosen':
+        parts.append(f'This place was added because it is related to the chosen code: make the same change here if '
+                     f'it needs it, or send ["skip"] if it needs none.')
+    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation. To '
+                 'add lines, replace the line before them with that same line followed by the new ones. In this step '
+                 'only an edit, ["skip"] or ["back"] (to choose other code) is accepted.')
+    return '\n'.join(parts)
 
 
-def _named_lines(root, p, intent, limit=3):
-    """[(line number, fragment)] for the code fragments in backticks of the plan line found in the place."""
-    if p['name'] == '<exports>':
-        start, lines = 1, _repo.read_lines(root, p['rel'])
-    else:
-        start, lines = p['start'], _repo.read_lines(root, p['rel'])[p['start'] - 1:p['end']]
-    out = []
-    for frag in re.findall(r'`([^`\n]{6,})`', intent):
-        norm = re.sub(r'\s+', ' ', frag.strip())
-        for i, line in enumerate(lines):
-            if norm in re.sub(r'\s+', ' ', line):
-                out.append((start + i, norm))
-                break
-    return out[:limit]
+def _task_view(root, state, p):
+    """What the change must do, for the window of place p."""
+    out = ['What the change must do:']
+    for r in state['requirements']:
+        out.append(f'  {r["id"]} {r["text"][:200]}')
+    st = _state.load('statement', {})
+    text = st.get('text', '')
+    said = _statement.behaviour(text, skip=[r['text'] for r in state['requirements']])
+    if said:
+        out.append('  The statement says: ' + ' '.join(said))
+    ex = _statement.example(text)
+    if ex:
+        out.append('  Its example:\n' + '\n'.join('    ' + l for l in ex.split('\n')))
+    if p['name'] not in (MODULE, '<exports>'):
+        cache = state.setdefault('tests_seen', {})
+        key = f'{p["rel"]}::{p["name"]}'
+        if key not in cache:
+            found = _tests.example(root, p['rel'], p['name'])
+            cache[key] = [found[0], found[1]] if found else None
+        if cache[key]:
+            rel, lines = cache[key]
+            out.append(f'An existing test that uses {p["name"].split(".")[-1]} ({rel}), how it is used today:\n'
+                       + '\n'.join('    ' + l for l in lines))
+    return '\n'.join(out)
 
 
 def _requirements_view(state):
@@ -306,20 +323,6 @@ def d1(root, state, args):
     _journal.choose(state, places)
     out = []
     focus = _focus(state)
-    limit = CODE_LINES if len(chosen) == 1 else CODE_LINES // 2
-    cut = set()
-    for p in places:
-        if p['reason'] != 'chosen':
-            continue
-        sym = table.get(p['rel'], p['name']) if p['name'] != MODULE else None
-        if sym is not None and sym.kind == 'class' and sym.end - sym.start + 1 > CLASS_OUTLINE_AT:
-            body = _outline(root, p['rel'], sym)
-            cut.add(p['id'])
-        else:
-            body = _code_view(root, p['rel'], p['start'], p['end'], focus, limit=limit)
-            if 'not shown) ...' in body:
-                cut.add(p['id'])
-        out.append(f'{p["id"]} {p["rel"]} :: {p["name"]}\n{body}')
     new = [(r, n) for r in state['requirements'] if r['type'] == 'new' for n in r['names']]
     for r, name in new[:1]:
         owner = next((c for c in chosen if 'where the new' in c.get('line', '')), None)
@@ -329,17 +332,22 @@ def d1(root, state, args):
         sib = _impact.sibling(table, owner['rel'], owner['name'], name.split('.')[-1], keywords)
         if sib is not None:
             out.append(f'An existing method of {owner["name"]} to model the new `{name.split(".")[-1]}` on:\n'
-                       + _code_view(root, owner['rel'], sib.start, sib.end, focus, limit=60))
+                       + _code_view(root, owner['rel'], sib.start, sib.end, focus, limit=40))
     places_view = '\n'.join('  ' + _place_line(p) for p in places)
-    # No separate plan step: the chosen places are the plan and this answer is the first edit window (a free-text
-    # plan was the step where the local model looped or ran away in 4 of 5 runs). Related places are edited by id.
-    _journal.set_plan(state, [(p['id'], '') for p in places if p['reason'] == 'chosen'])
+    # No separate plan step: the chosen places, with their copies in a file of the same name and their async/sync
+    # twins (the same change is needed there), are the plan, and this answer is the first edit window (a free-text
+    # plan was the step where the local model looped or ran away in 4 of 5 runs). Each place's code is shown once,
+    # in its own window. Other related places are edited by id.
+    bases = {c['rel'].split('/')[-1] for c in chosen}
+    planned = [p['id'] for p in places if p['reason'] == 'chosen'
+               or p['reason'].startswith('async/sync twin')
+               or (p['reason'].startswith('same definition') and p['rel'].split('/')[-1] in bases)]
+    _journal.set_plan(state, [(pid, '') for pid in planned])
     _tests.save_verified(root)
-    first = state['plan'][state['current']]['place']
-    window = ('\n\n' + _window(root, state, state['current'])) if first in cut else ''
-    return ('\n\n'.join(out) + f'\n\nPlaces (the chosen code and the code related to it):\n{places_view}\n\n'
-            f'Edit the chosen code now, starting with {first}. A related place needs an edit only when the change '
-            f'must be made there too: edit it with its id. To choose other candidates, send ["back"].' + window)
+    out.append(f'Places (the chosen code and the code related to it):\n{places_view}\n'
+               f'They are edited one at a time, starting with {planned[0]}. A related place outside the plan needs an '
+               f'edit only when the change must be made there too: send ["P<n>"] to open it.')
+    return '\n\n'.join(out + [_window(root, state, state['current'])])
 
 
 def d2(root, state, args):
@@ -379,50 +387,54 @@ def d2(root, state, args):
     return _window(root, state, state['current'])
 
 
+def _is_skip(text):
+    return _args.clean(text or '').lower().strip('[]"\' .') in ('skip', 'no change', 'none', 'no edit')
+
+
 def d3(root, state, args):
-    ids, others = _args.ids(args, 'C')
-    if ids and not others:                     # candidate ids: choose again (the edits made so far stay)
-        _journal.back(state)
-        return d1(root, state, args)
-    if _args.plan(args) == 'back':
+    """Only an edit of a listed place, ["skip"] (the open place needs no change), ["back"] (choose other code) or a
+    listed place id alone (open that place) is accepted; anything else is refused, changes nothing and counts as a
+    failed attempt at the open place, so that the model edits instead of browsing (SOP-Agent: only the valid actions
+    of the step)."""
+    word = _args.plan(args)
+    if word == 'back':
         _journal.back(state)
         return 'The edits made so far stay. ' + _candidates_view(state) + '\n\nChoose the code to change.'
     if _journal.time_is_up(state):
         state['step'] = 'D4'
         return 'TIME IS UP: no more edits are accepted. ' + _finish_view(root, state)
+    items = [x for x in args if x is not None and x.strip()]
+    single = _args.clean(items[0]) if len(items) == 1 else ''
+    cur = state['current']
+    if _is_skip(single) and cur is not None:
+        pid = state['plan'][cur]['place']
+        move = _journal.skip(state, cur)
+        head = f'{pid} skipped: it keeps its code.'
+        if move == 'next':
+            return head + '\n\n' + _window(root, state, state['current'])
+        if move == 'back':
+            return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
+        return head + '\n\n' + _finish_view(root, state)
+    if re.fullmatch(r'(?i)P\d+', single) and _place(state, single.upper()):
+        i = _journal.target(state, single.upper())       # a place id alone: open that place for editing
+        state['plan'][i]['status'] = 'todo'
+        state['current'] = i
+        return _window(root, state, i)
     e = _args.edit(args)
-    colon = any(re.match(r'\s*[\["\'`「]*\s*P\d+\s*[:=]', a or '') for a in args)
-    replan = _args.plan(args) if e is None and colon else []
-    if replan and replan != 'back' and all(_place(state, p) and not _args.is_placeholder(i) for p, i in replan):
-        for pid, intent in replan:                  # a corrected plan line: the edit follows it
-            state['plan'][_journal.target(state, pid)].update(intent=intent, status='todo')
-        state['current'] = _journal.target(state, replan[0][0])
-        return 'Plan updated. Nothing was changed in the code.\n\n' + _window(root, state, state['current'])
-    if e is None and len([x for x in args if x and x.strip()]) == 1:
-        name = _args.clean(next(x for x in args if x and x.strip()))
-        if re.fullmatch(r'(?i)P\d+', name) and _place(state, name.upper()):
-            i = _journal.target(state, name.upper())       # a place id alone: open that place for editing
-            state['plan'][i]['status'] = 'todo'
-            state['current'] = i
-            return _window(root, state, i)
-        if name.endswith('.py') or ('/' in name and '::' not in name):
-            cur = state['current']
-            return ('A file is not a place to edit: name a function or class ("<file>::<Name>") or a candidate id '
-                    '("C<n>"), or edit the place below. Nothing was changed.\n'
-                    + (_window(root, state, cur) if cur is not None else ''))
-        if re.fullmatch(r'[\w./-]*(::)?[\w.]+(\(\))?', name) and _resolve(root, [name]):
-            _journal.back(state)                # a code name: open that code (the edits made so far stay)
-            return d1(root, state, [name])
     if e is None:
-        cur = state['current']
-        again = _window(root, state, cur) if cur is not None else ''
-        items = [x for x in args if x is not None]
-        if len(items) < 4:
-            why = f'it has {len(items)} items; it needs 4: the place id, two line numbers and the new lines.'
-        else:
+        if len(items) == 4 or (len(items) > 1 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0] or '')):
             why = (f'the second and third items must be line numbers like 79 and 82, not "{items[1][:40]}" and '
-                   f'"{items[2][:40]}".')
-        return f'The edit was not read: {why} Nothing was changed.\n' + again
+                   f'"{items[2][:40]}".' if len(items) >= 3 else
+                   f'it has {len(items)} items; it needs 4: the place id, two line numbers and the new lines.')
+            msg = f'The edit was not read: {why} Nothing was changed.'
+            return msg + ('\n' + _window(root, state, cur) if cur is not None else '')
+        else:
+            msg = ('NOT RUN: this step only edits the open place. Accepted: an edit ["P<n>", "<first line number>", '
+                   '"<last line number>", "<new lines>"], ["skip"] if the place needs no change, or ["back"] to choose '
+                   'other code. Nothing was opened or changed.')
+        if cur is None:
+            return msg
+        return _failed(root, state, cur, msg, 'not an edit')
     pid, start, end, text = e
     p = _place(state, pid)
     if p is None:
@@ -447,8 +459,8 @@ def d3(root, state, args):
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
         return _failed(root, state, i, f'BROKEN: the edit made existing tests fail, so it was undone.\n{detail}\n'
-                       f'If the plan line was wrong, send the corrected edit, or first the corrected plan line '
-                       f'["{pid}: <what changes there>"].', 'BROKEN ' + ' '.join(new_failures[:3]))
+                       f'Read the failing test: send a corrected edit of {pid} that keeps it passing.',
+                       'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
     what = 'OK' if verdict == 'OK' else 'APPLIED, NOT VERIFIED'
     head = f'{what}: {pid} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
@@ -530,7 +542,8 @@ def main(argv):
     state = _state.load('journal') or _journal.new()
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else list(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
-    if state['step'] != 'S0' and _journal.repeated(state, args):
+    skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
+    if state['step'] != 'S0' and not skip and _journal.repeated(state, args):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer: '
                f'{state.get("answer", "")}).')

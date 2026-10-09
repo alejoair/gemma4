@@ -99,6 +99,58 @@ def select(root, changed):
     return targets
 
 
+COMMON_IN_TESTS = 12     # a name used in more test files than this says little: only its own test file is searched
+
+
+def example(root, rel, name, max_lines=14):
+    """(test file, its lines) of the shortest existing test that uses the place's name (a call, an attribute or a
+    decorator): the module's own test file first, then tests in files that also name the owner class. A name used in
+    many test files is looked up only in the module's own test file. None when no test uses it, and for functions
+    nested in functions (no test can call them)."""
+    parts = name.split('.')
+    short = parts[-1]
+    if short.startswith('__') and len(parts) > 1:
+        short, parts = parts[-2], parts[:-1]            # Class.__init__ -> Class
+    if not re.fullmatch(r'\w{3,}', short) or short in COMMON:
+        return None
+    if len(parts) > 2 or (len(parts) == 2 and not parts[0][:1].isupper()):
+        return None                                     # setup.openapi: a closure
+    owner = parts[0] if len(parts) == 2 else None
+    pattern = re.compile(rf'(?<![\w]){re.escape(short)}\b')
+    stem = os.path.basename(rel)[:-3].lstrip('_')
+    own = {f'test_{stem}.py', f'{stem}_test.py'}
+    files = []
+    for r in _repo.iter_py(root, tests=True):
+        if not _repo.is_test_path(r) or os.path.basename(r) == 'conftest.py':
+            continue
+        text = _repo.read_text(root, r)
+        if pattern.search(text):
+            files.append((r, text))
+    if len(files) > COMMON_IN_TESTS:
+        files = [(r, t) for r, t in files if os.path.basename(r) in own]
+    best = None
+    for r, text in files:
+        try:
+            funcs = _test_functions(ast.parse(text))
+        except (SyntaxError, ValueError):
+            continue
+        lines = text.splitlines()
+        names_owner = owner is None or owner in text
+        for fname, a, b in funcs:
+            body = lines[a - 1:b]
+            if not any(pattern.search(l) for l in body):
+                continue
+            key = (os.path.basename(r) not in own, not names_owner, max(b - a + 1, 4), r, a)
+            if best is None or key < best[0]:
+                best = (key, r, body)
+    if best is None:
+        return None
+    _, r, body = best
+    if len(body) > max_lines:
+        body = body[:max_lines] + ['    ...']
+    return r, body
+
+
 def _env(root, extra=()):
     env = dict(os.environ)
     paths = list(extra) + [root] + ([os.path.join(root, 'src')] if os.path.isdir(os.path.join(root, 'src')) else [])

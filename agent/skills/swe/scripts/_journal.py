@@ -1,6 +1,7 @@
-"""The procedure as a state machine (StateFlow, SOP-Agent): S0 start → D1 choose → D2 plan → D3 edit, once per planned
-place → D4 finish. The journal, not the model, decides the next step; a call that does not fit the current step is
-answered with the call that does. This module holds only the rules; step.py does the work and the printing."""
+"""The procedure as a state machine (StateFlow, SOP-Agent): S0 start → D1 choose → D3 edit, once per planned place
+→ D4 finish (D2, a free-text plan, is passed through: choosing plans the chosen places). The journal, not the model,
+decides the next step; a call that does not fit the current step is answered with the call that does. This module
+holds only the rules; step.py does the work and the printing."""
 import time
 
 if __name__ == '__main__':
@@ -16,7 +17,8 @@ FORMS = {
     'D1': '["C<n>"] or ["C<n>", "C<m>"] (1 to 3 candidate ids), or ["<file>::<Name>"] for code not in the list',
     'D2': '["P<n>: <what changes there>", "P<m>: <what changes there>"] (one item per place to edit), or ["back"] '
           'to choose other candidates',
-    'D3': '["P<n>", "<first line number>", "<last line number>", "<new lines>"] to replace those lines of place P<n>',
+    'D3': '["P<n>", "<first line number>", "<last line number>", "<new lines>"] to replace those lines of place P<n>, '
+          'or ["skip"] if the place needs no change, or ["back"] to choose other code',
     'D4': 'none: call submit_patch now. Or args ["R<n>"] to go back for a requirement that is not covered, or '
           '["P<n>", "<first line number>", "<last line number>", "<new lines>"] to edit a place again',
 }
@@ -118,6 +120,12 @@ def edit_failed(state, i, error):
         return 'skipped'
     state['current'] = i
     return 'retry'
+
+
+def skip(state, i):
+    """The model says plan entry i needs no change: it keeps its code and the next place comes."""
+    state['plan'][i]['status'] = 'skipped'
+    return advance(state)
 
 
 def advance(state):
