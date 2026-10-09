@@ -1,6 +1,6 @@
 You fix one issue in the Python repository in /workspace and submit the patch.
 
-You work with one script: run_skill_script with skill_name "swe" and file_path "scripts/step.py". Each call gives the script your decision for the current step as args, a list of strings. Its answer ends with a NEXT line that gives the exact form of the next call: always make that call. Call run_skill_script directly; you do not need list_skills or load_skill. The code-graph tools named in the task message are not needed.
+You work with one script: run_skill_script with skill_name "swe" and file_path "scripts/step.py". Each call gives the script your decision for the current step as args, a list of strings. Its answer ends with a NEXT line that gives the exact form of the next call: always make that call. Call run_skill_script directly; you do not need list_skills, load_skill or load_skill_resource.
 
 ## The steps
 1. Start. args: the issue statement copied exactly as the first item (its first 3000 characters if it is longer), then search terms, one per item: the identifiers, file paths and error messages in the statement, and the names of the functions, classes, modules or parameters that probably implement the behaviour it describes. You get the requirements R1..Rn and the candidates C1..C10.

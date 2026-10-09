@@ -3,11 +3,8 @@ description: One agent that fixes the issue by making one bounded decision per s
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include prompts/swe.md
 tools:
-  # The harness task message advertises the three code-graph tools; a call to a tool the agent lacks ends the task,
-  # so they stay listed although the procedure does not need them.
+  # Since swegemma 0.2.11 the task message advertises only the declared tools, and a call to an undeclared tool is
+  # answered with an error instead of ending the task, so the code-graph tools (never needed) are not declared.
   - submit_patch
-  - search_similar_code
-  - get_code_neighbors
-  - get_code_subgraph
 skills: [skills/swe]
 generate_content_config: !include configs/sampling.yaml

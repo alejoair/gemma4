@@ -143,6 +143,18 @@ Most numbers come from abstracts and summaries; check them in the PDFs before ci
 
 ## ADK config and harness behaviour (checked in the installed adk_submission 0.2.12, swegemma 0.2.7, google-adk 1.39.1)
 
+**Harness update on 2026-10-09 (Kaggle wheelhouse: swegemma 0.2.11, adk_submission 0.2.13).** It changes some of the points below:
+- A `ToolErrorPlugin` turns calls to undeclared tools, and tool exceptions, into error responses; they no longer end the task.
+- The task message lists only the declared tools. Our agent therefore declares only `submit_patch`; the skill tools come with `skills:`.
+- An exception during the agent run keeps the unsubmitted `git diff`.
+- Patches drop changes to test and runner-config files.
+- Skill tool arguments given as one-item lists are coerced to strings.
+- `include_thoughts: false` now strips thoughts from the history; we use `true`.
+- The workspace tree in the prompt is pruned (no docs or tests, depth 3).
+- `swegemma.models.discovery` is gone; use `adk_submission.discovery.discover_declared_models`.
+
+The bullets below describe 0.2.7 where they differ.
+
 - Agent classes: `LlmAgent`, `SequentialAgent`, `ParallelAgent`, `LoopAgent`. Tools are the 9 harness tools, the skill tools, or `agent_tool: {config_path, skip_summarization}`. Not in the schema: ADK `planner`, `code_executor`, `input_schema`, `output_schema`, `response_schema`.
 - Callbacks validate but do nothing: the harness compiles without a callback registry.
 - There is no `exit_loop` tool, so a `LoopAgent` always runs all `max_iterations`. The only early stop is `submit_patch` followed by a final text.
