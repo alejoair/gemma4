@@ -117,8 +117,8 @@ def apply(root, rel, start, end, text):
     new = [l + nl for l in text.replace('\r\n', '\n').split('\n')]
     if text.endswith('\n') or text.endswith('\r\n'):
         new = new[:-1]
-    if not text.strip():
-        new = []                # empty new lines delete the range (the model sends "" to remove a line)
+    if not text.strip() or text.strip() == 'DELETE':
+        new = []                # "DELETE" (or empty new lines) deletes the range
     repairs = []
     if new and start > 1 and new[0].strip() == lines[start - 2].strip() and _meaningful(new[0]) \
             and lines[start - 1].strip() != new[0].strip():

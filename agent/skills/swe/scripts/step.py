@@ -121,8 +121,8 @@ def _window(root, state, i):
     if p['reason'] != 'chosen':
         parts.append(f'This place was added because it is related to the chosen code: make the same change here if '
                      f'it needs it, or send ["skip"] if it needs none.')
-    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation ("" '
-                 'deletes the lines). To add lines, replace the line before them with that same line followed by the '
+    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation ("DELETE" '
+                 'as the new lines deletes them). To add lines, replace the line before them with that same line followed by the '
                  'new ones. Also accepted: ["skip"] (this place needs no change), ["done"] (all needed changes are '
                  'made), ["P<n>"] (open another listed place), ["C<n>"] (add a candidate), ["back"] (choose again), '
                  f'and up to {MAX_LOOKUPS} questions per place: ["<name>"] (where it is defined and called), '
@@ -673,7 +673,13 @@ def d3(root, state, args):
     if _journal.time_is_up(state):
         state['step'] = 'D4'
         return 'TIME IS UP: no more edits are accepted. ' + _finish_view(root, state)
-    items = [x for x in args if x is not None and x.strip()]
+    raw = [x for x in args if x is not None]
+    if len(raw) == 4 and not raw[3].strip() and re.fullmatch(r'(?i)\W*P\d+\W*', raw[0] or ''):
+        pid = _args.clean(raw[0]).upper()
+        return (f'The new lines are empty, which is unclear. To see lines {raw[1]}-{raw[2]} of {pid} send ["{pid}", '
+                f'"{raw[1]}", "{raw[2]}"]; to delete them send ["{pid}", "{raw[1]}", "{raw[2]}", "DELETE"]. Nothing was '
+                'changed.')
+    items = [x for x in raw if x.strip()]
     if len(items) == 2 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) and '\n' not in items[1].strip() \
             and not re.match(r'\s*\d', items[1]):
         items = [items[1]]          # ["P2", "search x"]: a question asked about the open place
