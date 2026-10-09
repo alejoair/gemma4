@@ -845,24 +845,18 @@ def d3(root, state, args):
     return _after_edit(root, state, i, p, _edit.apply(root, p['rel'], start, end, text), before)
 
 
-SHOW_CHANGED = 40   # numbered lines shown after an edit: the changed lines with 2 around them
+SHOW_CHANGED = 40   # diff lines shown after an edit
 
 
-def _changed_view(before, after):
-    """The lines that an edit changed, numbered as they are now, with 2 lines around each change (a rewritten whole
-    function is not shown again: only what differs)."""
-    keep = set()
-    for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
-        if tag != 'equal':
-            keep.update(range(max(1, j1 - 1), min(len(after), max(j2, j1 + 1) + 2) + 1))
-    nums = sorted(keep)[:SHOW_CHANGED]
-    out, prev = [], None
-    for n in nums:
-        if prev is not None and n > prev + 1:
-            out.append('      ...')
-        out.append(_code.numbered(after, n, n, collapse=[]))
-        prev = n
-    return '\n'.join(out)
+def _changed_view(before, after, rel=''):
+    """The edit as a unified diff (git's format, which models have read most): removed lines with -, added lines
+    with +, 2 lines around, so that a line removed by mistake is visible (V10: an edit dropped a public parameter and
+    the answer showed only the new lines)."""
+    lines = list(difflib.unified_diff([l.rstrip('\r\n') for l in before], [l.rstrip('\r\n') for l in after],
+                                      fromfile=f'a/{rel}', tofile=f'b/{rel}', n=2, lineterm=''))
+    if len(lines) > SHOW_CHANGED:
+        lines = lines[:SHOW_CHANGED] + [f'... ({len(lines) - SHOW_CHANGED} more diff lines)']
+    return '\n'.join(lines)
 
 
 def _after_edit(root, state, i, p, r, before):
@@ -884,7 +878,7 @@ def _after_edit(root, state, i, p, r, before):
     cover = _status.changed_statements(before, after)
     verdict, detail, new_failures = _tests.check(root, changed, renamed, cover={p['rel']: cover} if cover else None)
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
-    shown = _changed_view(before, _repo.read_lines(root, p['rel']))
+    shown = _changed_view(before, _repo.read_lines(root, p['rel']), p['rel'])
     if verdict == 'BROKEN':
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
