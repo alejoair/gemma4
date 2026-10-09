@@ -11,6 +11,7 @@ step produced, a fixed verdict when something was checked, and the exact next ca
 """
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -127,7 +128,7 @@ def _window(root, state, i):
                  'made), ["P<n>"] (open another listed place), ["C<n>"] (add a candidate), ["back"] (choose again), '
                  f'and up to {MAX_LOOKUPS} questions per place: ["<name>"] (where it is defined and called), '
                  '["<file>.py"] (its classes and functions), ["P<n>", "<first line>", "<last line>"] (those lines), '
-                 '["search <text>"] (the lines that contain the text).')
+                 '["search <text>"] (the lines that contain the text), ["python -c <code>"] (runs it and shows the output).')
     return '\n'.join(parts)
 
 
@@ -513,6 +514,28 @@ def _show_lines(root, state, items):
             + _code.numbered(lines, a, b, collapse=[]))      # asked for: long texts shown in full
 
 
+RUN_TIMEOUT = 20
+
+
+def _run_snippet(root, code):
+    """`python -c <code>` in the repository with the current code (a reproduction or a check): exit status and the
+    end of its output. The code is run as given; files it writes are its own business (SWE-agent: run python)."""
+    code = code.strip().rstrip(']').strip()
+    if len(code) > 2 and code[0] in '"\'' and code.endswith(code[0]):
+        code = code[1:-1]
+    elif code[:1] in '"\'':
+        code = code[1:]                                  # an unclosed opening quote
+    code = code.replace('\\"', '"').replace("\\'", "'")
+    try:
+        r = subprocess.run([sys.executable, '-c', code], cwd=root, env=_tests._env(root), capture_output=True,
+                           text=True, timeout=RUN_TIMEOUT)
+        out, status = (r.stdout + r.stderr).strip(), f'exit status {r.returncode}'
+    except subprocess.TimeoutExpired:
+        out, status = '', f'stopped after {RUN_TIMEOUT} s'
+    out = out if len(out) <= 1500 else '...\n' + out[-1500:]
+    return f'Ran the code ({status}):\n{out or "(no output)"}'
+
+
 def _unwrap(text):
     """The text without a pair of brackets around all of it (a list copied as one item)."""
     text = text.strip()
@@ -523,6 +546,13 @@ def _lookup(root, state, text):
     """A bare code name (or "def name") that is not a listed place, sent in the edit step: the answer says where code
     of that name is defined, or that none exists, without opening it, so that the model need not search for it. At
     most MAX_LOOKUPS per place; later ones are refused like other calls."""
+    run = re.fullmatch(r'(?s)\s*(?:python3?\s+-c\s+|run:?\s+)(.+)', text.strip())
+    if run:
+        entry = state['plan'][state['current']]
+        entry['lookups'] = entry.get('lookups', 0) + 1
+        if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
+            return LIMIT
+        return _run_snippet(root, run.group(1))
     text = _unwrap(_args.clean(text).strip('"\'\\ '))
     if re.fullmatch(r'[\w./-]+/[\w.-]+', text) and not text.endswith('.py') \
             and os.path.isfile(os.path.join(root, text + '.py')):
