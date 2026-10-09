@@ -410,8 +410,10 @@ def _context_view(root, p, focus=None):
                 # a short member of the same class (a property, a helper): its code, since its name says little
                 text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
-                line = _code.skeleton(r, x)
-                text = '  ' + (line if len(line) <= 200 else line[:197] + '...')
+                doc_line = _code.first_doc_line(x)
+                line = f'{r} :: {x.name} ({x.kind}, lines {x.start}-{x.end}) {_short_signature(x)}' + (
+                    f' — {doc_line[:80]}' if doc_line else '')
+                text = '  ' + line
             if chars + len(text) > USES_CHARS:
                 break
             uses.append(text)

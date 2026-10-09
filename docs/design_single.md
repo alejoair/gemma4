@@ -670,3 +670,30 @@ besides rich_3006; batch 1 produced fewer.
 - `async def` written into the sync class.
 
 The harness on Kaggle was updated the same day (swegemma 0.2.11). The local runs still use 0.2.7.
+
+### Local 12B batch 4 (2026-10-09 evening, v13 = the checklist fixes, fixed during the run up to the commit after cf27011)
+
+Run with the local 12B (reasoning budget 3072, Kaggle's is 512), monitored call by call. Stopped at 20:08 UTC when the
+gateway went down (Cloudflare 502, then 530); httpx_3672 and the four tasks after it did not run.
+
+| Task | Result | What happened |
+|---|---|---|
+| fastapi_14448 | no patch | The model moved between file names looking for "the function that analyses callables" and never chose `Dependant._unwrapped_call` (listed first when it sent `fastapi/dependencies/models.py` in a dry run) |
+| fastapi_14583 | no patch | It asked for `fastapi/_compat/v1.py` in a loop: the change is in its top-level code, which a file's candidate list could not reach then (fixed) |
+| fastapi_14851 | patch, 9 tests fail | Edited `FastAPI.on_event` by line range; the re-implementation the issue asks for is larger |
+| fastapi_14986 | patch, 3 of 7 tests pass | Escaped the Swagger UI values with `json.dumps` by line edits and called submit_patch itself |
+| fastapi_15800 | patch, not resolved | — |
+
+System faults found and fixed during the batch:
+- the window did not list properties the place reads on other objects (`dependant.is_gen_callable`);
+- a file path at the choose step opened the whole module as one place;
+- a bare name the repository does not define (`is_async_callable`, Starlette's) fell back to a text search that opened
+  a module through its import line;
+- the edit step refused names of code the window had just shown (`Dependant`), and file names;
+- a name the repository uses but does not define gave nothing (now: the code that uses it, as candidates);
+- a file's candidates did not include its top-level code;
+- signatures in the "uses" list carried whole `Doc(...)` texts.
+
+Model faults: navigating by file names instead of choosing; reasoning at the 3,072-token budget (55–70 s per call);
+copying placeholders (`'<first line number>'`) into a call; once, a repository file path in the tool's `file_path`
+parameter (the ADK's parameter name invites it).
