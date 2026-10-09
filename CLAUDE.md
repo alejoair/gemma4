@@ -100,9 +100,9 @@ Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, S4 (= V3) pen
 v1, commit bea4f0f) queued: the hourly routine "Kaggle S4/S5 hourly check" submits it when S4 is scored and no
 submission was made that UTC day.
 
-**Running on 2026-10-09:** Kaggle notebooks `alejoair7/gemma4-eval-single` (V11 = commit 66423f9, before the D3
-redesign) and `alejoair7/gemma4-eval-single-b` (V12 = commit bc3f2a3, D3 redesign + `fix-issue`, still with ids).
-Compare them per task when both finish.
+Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
+(vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
+submit_patch in all 10 tasks. `tools/kaggle_eval.py` (the Kaggle eval script) now has a vLLM /health watchdog.
 
 ## Open gaps
 
