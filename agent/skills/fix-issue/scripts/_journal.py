@@ -12,19 +12,20 @@ MAX_FAILS = 2        # failed edits of one place before it is left at its last v
 EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
 TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
 CALL_LIMIT = 30      # eval_config.yaml max_tool_calls
-CALL = 'run_skill_script with skill_name "fix-issue", file_path "scripts/step.py" and args '
+CALL = 'run_skill_script with skill_name fix-issue, file_path scripts/step.py and args '
 
+# The forms use single quotes: every answer reaches the model as JSON, where a double quote reads as \" (B15)
 FORMS = {
-    'S0': '["<the issue statement, copied>", "<search term>", "<search term>", ...]',
-    'D1': '["<candidate name>"] or ["<candidate name>", "<candidate name>"] (1 to 3 names from the list), or '
-          '["<file>::<Name>"] for code not in the list',
-    'D2': '["P<n>: <what changes there>", "P<m>: <what changes there>"] (one item per place to edit), or ["back"] '
-          'to choose other candidates',
-    'D3': '["<place name>", "<the whole new function or class>"] or ["<place name>", "<first line number>", '
-          '"<last line number>", "<new lines>"], or ["skip"] if the place needs no change, or ["back"] to choose other '
-          'code',
-    'D4': 'none: call submit_patch now. Or args ["back"] to choose code for a requirement that nothing changed '
-          'covers, or ["<place name>", "<the whole new function or class>"] to edit a place again',
+    'S0': "['<the issue statement, or its first paragraph>', '<search term>', '<search term>', ...]",
+    'D1': "['<candidate name>'] or ['<candidate name>', '<candidate name>'] (1 to 3 names from the list), or "
+          "['<file>::<Name>'] for code not in the list",
+    'D2': "['P<n>: <what changes there>', 'P<m>: <what changes there>'] (one item per place to edit), or ['back'] "
+          "to choose other candidates",
+    'D3': "['<place name>', '<the whole new function or class>'] or ['<place name>', '<first line number>', "
+          "'<last line number>', '<new lines>'], or ['skip'] if the place needs no change, or ['back'] to choose other "
+          "code",
+    'D4': "none: call submit_patch now. Or args ['back'] to choose code for a requirement that nothing changed "
+          "covers, or ['<place name>', '<the whole new function or class>'] to edit a place again",
 }
 
 
@@ -52,8 +53,8 @@ def next_call(state):
     if step == 'D3' and state['current'] is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
-        return (f'NEXT: call {CALL}["{pid}", "<the whole new function or class>"] or ["{pid}", "<first line number>", '
-                f'"<last line number>", "<new lines>"], or ["skip"]')
+        return (f"NEXT: call {CALL}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
+                f"'<last line number>', '<new lines>'], or ['skip']")
     return f'NEXT: call {CALL}{FORMS[step]}'
 
 

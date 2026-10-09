@@ -200,7 +200,7 @@ def _window(root, state, i):
     p = _place(state, entry['place'])
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
-    head = f'EDIT {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])} to edit)'
+    head = f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])} to edit)'
     if p['reason'] != 'chosen':
         head += f' ({p["reason"]})'
     if p['name'] == '<exports>':
@@ -209,8 +209,8 @@ def _window(root, state, i):
     else:
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
         if 'not shown) ...' in body:
-            body += (f'\n{p["handle"]} is too long to show whole: change it with line numbers, or rewrite only a member '
-                     'that is shown whole.')
+            body += (f'\n{p["handle"]} is longer than the window: rewrite one of its members whole, from its def line '
+                     'to its last line, or change the lines shown here by their numbers.')
         members = _members(root, p)
         if members:
             body = members + '\n' + body
@@ -221,15 +221,15 @@ def _window(root, state, i):
     parts.append(_task_view(root, state, p))
     if p['reason'] != 'chosen':
         parts.append('This place was added because it is related to the chosen code: make the same change here if '
-                     'it needs it, or send ["skip"] if it needs none.')
+                     "it needs it, or send ['skip'] if it needs none.")
     name = p['handle']
     parts.append(f'Answer with one of:\n'
-                 f'  ["{name}", "<the whole new function or class>"]: it replaces the definition of the same name (a new '
-                 f'name is added after {name}); write it whole, from its def or class line to its last line.\n'
-                 f'  ["{name}", "<first line number>", "<last line number>", "<new lines>"]: replaces those lines, with '
-                 f'their full indentation ("DELETE" deletes them).\n'
-                 f'  ["skip"] if {name} needs no change; ["<name of another listed place>"] to open it; ["back"] to '
-                 f'choose other code. Questions are not answered in this step.')
+                 f"  ['{name}', '<the whole new function or class>']: it replaces the definition of the same name (a new "
+                 f"name is added after {name}); write it whole, from its def or class line to its last line.\n"
+                 f"  ['{name}', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with "
+                 f"their full indentation ('DELETE' deletes them).\n"
+                 f"  ['skip'] if {name} needs no change; ['<name of another listed place>'] to open it; ['back'] to "
+                 f"choose other code. Questions are not answered in this step.")
     return '\n'.join(parts)
 
 
@@ -391,7 +391,7 @@ def _candidates_view(state, title='Candidates (the code most related to the stat
     for c in state['candidates']:
         out.append(f'  {c["handle"]}  {c["line"]}')
     if not state['candidates']:
-        out.append('  (none found: name the code to change as "<file>::<Name>")')
+        out.append("  (none found: name the code to change as '<file>::<Name>')")
     return '\n'.join(out)
 
 
@@ -725,8 +725,8 @@ def _whole_edit(root, p, text):
     if not defs or other:
         return _edit.Result(False, p['start'], p['end'],
                             'the new code must be whole functions or classes only (a def or class line and its body); '
-                            f'to change other lines send their numbers: ["{p["handle"]}", "<first line number>", '
-                            '"<last line number>", "<new lines>"]; nothing was changed', [], [])
+                            f"to change other lines send their numbers: ['{p['handle']}', '<first line number>', "
+                            "'<last line number>', '<new lines>']; nothing was changed", [], [])
     src_lines = src.split('\n')
     try:
         before = _repo.read_lines(root, rel)
@@ -787,8 +787,8 @@ def d3(root, state, args):
     raw = [x for x in args if x is not None]
     if len(raw) == 4 and not raw[3].strip() and re.fullmatch(r'(?i)\W*P\d+\W*', raw[0] or ''):
         name = _name_of(state, _args.clean(raw[0]).upper())
-        return (f'The new lines are empty, which is unclear. To delete lines {raw[1]}-{raw[2]} of {name} send '
-                f'["{name}", "{raw[1]}", "{raw[2]}", "DELETE"]. Nothing was changed.')
+        return (f"The new lines are empty, which is unclear. To delete lines {raw[1]}-{raw[2]} of {name} send "
+                f"['{name}', '{raw[1]}', '{raw[2]}', 'DELETE']. Nothing was changed.")
     items = [x for x in raw if x.strip()]
     single = _args.clean(items[0].replace('\\"', '"').replace("\\'", "'")) if len(items) == 1 else ''
     cur = state['current']
@@ -826,11 +826,11 @@ def d3(root, state, args):
                    'name, two line numbers and the new lines.')
             msg = f'The edit was not read: {why} Nothing was changed.'
         else:
-            msg = ('NOT RUN: this step only edits; questions are not answered here (the code the place uses and its '
-                   'callers are listed in the window). Accepted: the whole new function or class ["<place name>", '
-                   '"<code>"], a line edit ["<place name>", "<first line number>", "<last line number>", "<new '
-                   'lines>"], ["skip"] if the place needs no change, ["<name of another listed place>"] to open it, '
-                   'or ["back"] to choose other code. Nothing was opened or changed.')
+            msg = ("Not run: this step only edits; questions are not answered here (the code the place uses and its "
+                   "callers are listed in the window). Accepted: the whole new function or class ['<place name>', "
+                   "'<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
+                   "lines>'], ['skip'] if the place needs no change, ['<name of another listed place>'] to open it, "
+                   "or ['back'] to choose other code. Nothing was opened or changed.")
         if cur is None:
             return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
         return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
@@ -869,7 +869,7 @@ def _after_edit(root, state, i, p, r, before):
     BROKEN (undone), or OK / not verified with the changed lines, then the next place or the finish."""
     pid = p['id']
     if not r.applied:
-        return _failed(root, state, i, f'NOT APPLIED: {r.error}.', r.error)
+        return _failed(root, state, i, f'Not applied: {r.error}.', r.error)
     _refresh(root, state, p['rel'])
     new_lines = _repo.read_lines(root, p['rel'])[r.start - 1:r.end]
     changed = {}
