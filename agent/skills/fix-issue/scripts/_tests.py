@@ -389,12 +389,32 @@ def _ran_it(r, cover, detail):
 
 
 def _failure_excerpt(output, ids, limit=1500):
-    """The short failure lines of the new failures, then the end of the first traceback."""
-    lines = [l for l in output.splitlines() if l.startswith(('FAILED', 'ERROR')) and any(i in l for i in ids)]
-    m = re.search(r'(?ms)^_{3,} .*?(?=^_{3,} |^=+ short test summary)', output)
-    tb = m.group(0).strip().splitlines()[-25:] if m else []
-    text = '\n'.join(lines[:8] + [''] + tb)
-    return text[-limit:]
+    """Per new failing test (at most 3): its name and file, the line pytest marks with '>' and its 'E' lines (what was
+    expected and what came). A failing test with expected vs actual is the feedback models repair best from; traceback
+    frames add little (Self-Debugging: 88.8 vs 89.5 with traces; FeedbackEval)."""
+    out = []
+    for test_id in ids[:3]:
+        parts = test_id.split('::')
+        name = parts[-1]
+        head = re.compile(rf'(?m)^_{{3,}} (?:\S+\.)?{re.escape(name)} _{{3,}}$')
+        m = head.search(output)
+        marked, errors = '', []
+        if m:
+            nxt = re.search(r'(?m)^(_{3,} |=+ short test summary)', output[m.end():])
+            body = output[m.end():m.end() + nxt.start()] if nxt else output[m.end():]
+            lines = body.splitlines()
+            arrows = [l for l in lines if l.startswith('>')]
+            marked = arrows[-1][1:].strip() if arrows else ''
+            errors = [l[1:].strip() for l in lines if l.startswith('E ')][:6]
+        else:
+            short = [l for l in output.splitlines() if l.startswith(('FAILED', 'ERROR')) and test_id in l]
+            errors = [short[0].split(' - ', 1)[-1]] if short and ' - ' in short[0] else []
+        out.append(f'  {name} ({parts[0]}):')
+        if marked:
+            out.append(f'    the test runs: {marked[:200]}')
+        out.extend(f'    {e[:200]}' for e in errors)
+    more = f'\n  and {len(ids) - 3} more failing tests' if len(ids) > 3 else ''
+    return ('\n'.join(out) + more)[:limit]
 
 
 # The last verified state: the content of every changed file when the tests last passed (None: the file did not

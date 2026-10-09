@@ -551,8 +551,8 @@ def d1(root, state, args):
     if others and len(chosen) < 3:
         chosen += _resolve(root, others)[:3 - len(chosen)]
     if not chosen:
-        msg = f'{", ".join(others)} is not a listed candidate nor a name found in the code. ' if others else \
-            'No candidate was chosen. '
+        msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
+               if others else 'No candidate was chosen. ')
         return msg + 'Nothing was opened.\n\n' + _candidates_view(state)
     table = _impact.Table(root, docs=True)
     places = []
@@ -816,7 +816,7 @@ def d3(root, state, args):
         pid, text = whole
         p = _place(state, pid)
         if p is None:
-            return (f'"{items[0][:60]}" is not a listed place. Nothing was changed.\nPlaces:\n'
+            return ('The first item is not the name of a listed place. Nothing was changed.\nPlaces:\n'
                     + '\n'.join('  ' + _place_line(q) for q in state['places']))
         i = _journal.target(state, pid)
         before = _repo.read_lines(root, p['rel'])
@@ -824,8 +824,7 @@ def d3(root, state, args):
     e = _args.edit(args)
     if e is None:
         if len(items) == 4 or (len(items) > 1 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0] or '')):
-            why = (f'the second and third items must be line numbers like 79 and 82, not "{items[1][:40]}" and '
-                   f'"{items[2][:40]}".' if len(items) >= 4 else
+            why = ('the second and third items must be line numbers, like 79 and 82.' if len(items) >= 4 else
                    f'it has {len(items)} items: send the place name and the whole new function or class, or the place '
                    'name, two line numbers and the new lines.')
             msg = f'The edit was not read: {why} Nothing was changed.'
@@ -841,7 +840,7 @@ def d3(root, state, args):
     pid, start, end, text = e
     p = _place(state, pid)
     if p is None:
-        return (f'"{items[0][:60]}" is not a listed place. Nothing was changed.\nPlaces:\n'
+        return ('The first item is not the name of a listed place. Nothing was changed.\nPlaces:\n'
                 + '\n'.join('  ' + _place_line(q) for q in state['places']))
     i = _journal.target(state, pid)
     before = _repo.read_lines(root, p['rel'])
@@ -891,9 +890,11 @@ def _after_edit(root, state, i, p, r, before):
     if verdict == 'BROKEN':
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
-        return _failed(root, state, i, f'BROKEN: the edit made existing tests fail, so it was undone.\n{detail}\n'
-                       f'Read the failing test: send a corrected edit of {p["handle"]} that keeps it passing.',
-                       'BROKEN ' + ' '.join(new_failures[:3]))
+        n = len(new_failures)
+        return _failed(root, state, i, f'Undone: {n} existing test{"s" if n > 1 else ""} that passed before the edit '
+                       f'failed after it, so {p["handle"]} is back as it was before the edit.\n{detail}\n'
+                       f'Send {p["handle"]} again with a change that keeps {"these tests" if n > 1 else "this test"} '
+                       'passing.', 'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
@@ -904,11 +905,11 @@ def _after_edit(root, state, i, p, r, before):
 
 
 def _failed(root, state, i, message, error):
-    pid = state['plan'][i]['place']
+    name = _name_of(state, state['plan'][i]['place'])  # before the plan may be emptied
     move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
-    left = f'{_name_of(state, pid)} failed {_journal.MAX_FAILS} times and keeps its last verified code.'
+    left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
     if state['step'] == 'D3':
         return f'{message}\n{left}\n\n' + _window(root, state, state['current'])
     if state['step'] == 'D1':
@@ -989,6 +990,28 @@ def _is_statement_again(args):
     return bool(known) and len(head) >= 30 and head in known
 
 
+def _move_on(root, state):
+    """The third same call in a row: the work moves on from where it is stuck."""
+    if state['step'] == 'D3' and state.get('current') is not None:
+        name = _name_of(state, state['plan'][state['current']]['place'])
+        move = _journal.skip(state, state['current'])
+        head = f'The same call came three times, so {name} keeps its code and the work moves on.'
+        if move == 'next':
+            return head + '\n\n' + _window(root, state, state['current'])
+        if move == 'back':
+            return head + ' Nothing is changed yet, so choose other code.\n\n' + _candidates_view(state)
+        return head + '\n\n' + _finish_view(root, state)
+    if state['step'] == 'D2' and state['places']:
+        chosen = [(p['id'], '') for p in state['places'] if p['reason'] == 'chosen'] or [(state['places'][0]['id'], '')]
+        _journal.set_plan(state, chosen)
+        _tests.save_verified(root)
+        return 'The chosen code is planned now, so edit it.\n\n' + _window(root, state, state['current'])
+    if state['step'] == 'D1' and state['candidates']:
+        return ('The same call came three times, so the first candidate is opened.\n\n'
+                + d1(root, state, [state['candidates'][0]['id']]))
+    return 'The same call came three times. Nothing else is done in this step: call submit_patch.'
+
+
 def _progress(root, state):
     """The first line of every answer (recap: Laban et al. +16 to +17.5 points; Manus todo list): what the patch
     holds, read from git, what is open now and what is left."""
@@ -1025,6 +1048,7 @@ def main(argv):
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     state['calls'] = state.get('calls', 0) + 1
+    key = _journal._key(state, args)          # the call as it is now, before the step changes the state
     skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
     if state['step'] == 'D3' and len(args) == 1 and not skip and state['current'] is not None:
         # opening another listed place is a move, not a repeat
@@ -1036,33 +1060,19 @@ def main(argv):
         out = ('The start was already made: the requirements and candidates are known and the work is in a later '
                'step. Continue from here (nothing was changed).\n\n' + _current_view(root, state))
     elif state['step'] != 'S0' and not skip and _journal.repeated(state, args):
-        now = _journal.next_call(state).replace('NEXT: ', '', 1)
-        out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
-               f'{state.get("repeated_answer") or state.get("answer", "")}).')
+        # a repeated call is answered differently each time and the third time the work moves on (structured
+        # variation; a repeated failure in the context makes the model repeat it: Feedback That Backfires); repeats
+        # never count as failed edits
+        before = str(state.get('repeated_answer') or '')
         pargs = _place_args(state, args) if state['step'] in ('D3', 'D4') and state.get('places') else args
         is_edit = _args.edit(pargs) is not None or _whole_args([x for x in pargs if x and x.strip()]) is not None
-        if state['step'] == 'D3' and state['current'] is not None and not is_edit:
-            # a repeated refused call: the place stays open and nothing counts against it
-            out += '\n\n' + _window(root, state, state['current'])
-        elif is_edit and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
-            # the same edit again after it was applied: nothing to undo or count
-            out = ('This edit was already applied (its answer was: ' + state['repeated_answer'] + '). Nothing was '
-                   'changed.\n\n' + _current_view(root, state))
-        elif state['step'] == 'D3' and state['current'] is not None:
-            # stuck on a place: a repeat counts as a failed edit, so the place is left after MAX_FAILS
-            out = _failed(root, state, state['current'], out, 'repeated call')
-        elif state['step'] == 'D2' and state['places']:
-            # stuck on the plan: the chosen places are planned, so the work moves on to editing
-            chosen = [(p['id'], '') for p in state['places'] if p['reason'] == 'chosen'] or [(state['places'][0]['id'], '')]
-            _journal.set_plan(state, chosen)
-            _tests.save_verified(root)
-            out += (' The chosen places are planned now, so edit them.\n\n'
-                    + _window(root, state, state['current']))
-        elif state['step'] == 'D1' and state['candidates'] and state['repeats'] >= 2:
-            # stuck on choosing: the first candidate is opened, so the work moves on (another can be chosen later)
-            out += ' The first candidate is opened now.\n\n' + d1(root, state, [state['candidates'][0]['id']])
+        if is_edit and before.startswith(('Kept', 'OK', 'APPLIED')):
+            out = 'This edit is already in the patch, so nothing was changed.\n\n' + _current_view(root, state)
+        elif state['repeats'] >= 2:
+            out = _move_on(root, state)
         else:
-            out += f' The call to make now is different: {now}' 
+            out = ('This is the same call as just before, so it was not run again'
+                   + (f'; its answer began: {before[:160].rstrip(".")}' if before else '') + '.\n\n' + _current_view(root, state))
     else:
         try:
             out = STEPS[state['step']](root, state, args)
@@ -1071,7 +1081,7 @@ def main(argv):
             out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Make the call below; '
                    'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
-        _journal.remember(state, args, state['answer'])
+        _journal.remember(state, key, state['answer'])
     _state.save('journal', state)
     out = out.rstrip()
     if state['step'] != 'S0':

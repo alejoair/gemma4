@@ -44,10 +44,17 @@ def next_call(state):
     return f'NEXT: call {CALL}{FORMS[step]}'
 
 
+def _key(state, args):
+    """A call is the same only in the same step and at the same place: C2 sent again after going back is a new call
+    (V10 audit #3)."""
+    cur = state['plan'][state['current']]['place'] if state.get('current') is not None and state.get('plan') else ''
+    return [state['step'], cur] + [a.strip() for a in args]
+
+
 def repeated(state, args):
-    """True when args are the same as one of the last three calls' (a repeat, or a ping-pong A-B-A): the call is not
-    run again."""
-    key = [a.strip() for a in args]
+    """True when the call (step, place, args) is one of the last three (a repeat, or a ping-pong A-B-A): it is not run
+    again. state['repeats'] counts the repeats in a row."""
+    key = _key(state, args)
     recent = state.setdefault('recent', [])
     if key in recent[-3:]:
         state['repeats'] += 1
@@ -55,14 +62,14 @@ def repeated(state, args):
         return True
     recent.append(key)
     del recent[:-3]
-    state['last'], state['repeats'] = [state['step'], key], 0
+    state['last'], state['repeats'] = key, 0
     return False
 
 
-def remember(state, args, answer):
-    """The first line of the answer to args, quoted when the same call is repeated."""
+def remember(state, key, answer):
+    """The first line of the answer to a call (key: _key before the call ran), said again when it is repeated."""
     answers = state.setdefault('answers', {})
-    answers[repr([a.strip() for a in args])] = answer
+    answers[repr(key)] = answer
     for k in list(answers)[:-6]:
         del answers[k]
 

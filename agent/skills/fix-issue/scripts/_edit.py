@@ -53,7 +53,11 @@ def _compiles(lines):
         ast.parse(''.join(lines))
         return None
     except SyntaxError as e:
-        return f'line {e.lineno}: {e.msg}'
+        # the text of the offending line, not its number: the model finds an error once told where it is in its own
+        # words (Tyen et al.: +18 to +44 points), and a file line number means nothing to it
+        text = ''.join(lines).splitlines()
+        bad = text[e.lineno - 1].strip() if e.lineno and 0 < e.lineno <= len(text) else ''
+        return f'{e.msg} in the line `{bad[:120]}`' if bad else e.msg
     except ValueError as e:
         return str(e)
 
