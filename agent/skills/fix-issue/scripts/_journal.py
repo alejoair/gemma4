@@ -10,7 +10,7 @@ if __name__ == '__main__':
 
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
 EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
-CALL = 'run_skill_script with skill_name "swe", file_path "scripts/step.py" and args '
+CALL = 'run_skill_script with skill_name "fix-issue", file_path "scripts/step.py" and args '
 
 FORMS = {
     'S0': '["<the issue statement, copied>", "<search term>", "<search term>", ...]',

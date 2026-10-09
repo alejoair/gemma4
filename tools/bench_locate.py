@@ -14,7 +14,7 @@ import re
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'agent', 'skills', 'swe', 'scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'agent', 'skills', 'fix-issue', 'scripts'))
 import _code  # noqa: E402
 import _impact  # noqa: E402
 import _rank  # noqa: E402
