@@ -8,8 +8,9 @@ that moves us farther on any item needs a stated reason.
 
 Sources: our traces (Kaggle V1–V10 with the 31B; local batches with the 12B), the audit of the V10 traces
 (`docs/audit_v10.md`, cognitive walkthrough + Nielsen's heuristics), and a literature search
-(`docs/llm_strengths.md`). Evidence strength: **C** controlled study or ablation, **B** benchmark, **V** vendor
-guidance, **O** our own traces, **A** anecdote.
+(`docs/llm_strengths.md`), and two prompting searches: how to present information (`docs/prompting_input.md`, items P) and how to give
+feedback (`docs/prompting_feedback.md`, items F). Evidence strength: **C** controlled study or ablation, **B** benchmark, **V** vendor
+guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 
 ## What an LLM does well (use it)
 
@@ -67,3 +68,56 @@ guidance, **O** our own traces, **A** anecdote.
 | B12 | partly | Time-up contradiction; rename vs test rule (the current code excuses tests that use the old name; to confirm) | As B10 and W4; say "N tests use the old name; the hidden tests replace them" |
 | B13 | yes | Ranked, best first, at most 10 | — |
 | B14 | no | Temperature 0.2, no top_k; Gemma's card says 1.0 / 0.95 / 64 | A/B run: vendor settings vs 0.2, measuring loops and malformed calls |
+
+## How to present information (prompting)
+
+| # | The model does well / badly | Evidence | Check question |
+|---|---|---|---|
+| P1 | **Badly: telling quoted data from instructions** when the issue or test text is pasted without a boundary | Anthropic, OpenAI, Gemini delimiter guidance V; formatting alone moves accuracy up to 76 points (Sclar et al., arXiv 2310.11324) C | Is every piece of quoted data (statement, example, test, code) inside a fixed label or tag that the instruction text never uses? |
+| P2 | **Badly: absorbing layout changes**; accuracy moves with layout, more in smaller models | up to 40% on GPT-3.5 (arXiv 2411.10541) C; Sclar C | Does the change alter the layout of an answer the model already handles? Is one layout change measured at a time? |
+| P3 | **Well: positive rules with their reason; badly: open-ended prohibitions** ("only", "never"), which make it overreact or do too little | Anthropic, Gemini 3 guide V; negated prompts C | Is every rule what to do, with the reason in the same sentence? Could a "never / only" rule make the model change too little? |
+| P4 | **Badly: emphasis and pressure words** (capitals, MUST, NOTHING) | OpenAI, Anthropic, Gemini V; "Be THOROUGH" caused repeated searches (Cursor) A | Does any answer use capitals or pressure words where plain words and a reason would do? |
+| P5 | **Badly: spending a small thinking budget on contradictions** | GPT-5 guide V; the later instruction wins (GPT-4.1 guide) V | With 512 thinking tokens, can the model act without reconciling two statements? |
+| P6 | **Well: using a goal stated at both ends** of a long answer | Liu et al. C; GPT-4.1, Anthropic, Gemini V | Is the decision of this step in the first line and again just before NEXT? |
+| P7 | **Badly: ignoring relevant-looking but unneeded context** | Chroma context rot, 18 models B | Does every block of the answer bear on this step's decision? |
+| P8 | **Well: keeping track when progress is recited** | Manus todo list P; instruction drift within 8 rounds (arXiv 2402.10962) C; recap +16 to +17.5 points (Laban et al., arXiv 2505.06120) C | Does each answer say what is done, what is open now and what remains? |
+| P9 | **Well: copying call-form examples; badly: copying content examples** | few-shot degrades reasoning models (DeepSeek-R1) C; few-shot calls 11 → 75% for a small model (LangChain) B; Agent Skills Can Be Harmful C | Is every example a call form or a filled NEXT, never a sample fix? |
+| P10 | **Badly: uniform repeated observations** lead it to repeat its last decision | Manus P; self-conditioning C | Do consecutive windows differ visibly in their place-specific part? |
+
+## How to give feedback
+
+| # | The model does badly / needs | Evidence | Check question |
+|---|---|---|---|
+| F1 | **Finding where its error is**: it corrects well once told where | location given: +18 to +44 points (Tyen et al.) C; SWE-agent linter +3.0 C | Does every negative verdict say where: the offending line's text, the test name, the requirement, never a bare file line number? |
+| F2 | **Repairing from prose or tracebacks**; it repairs best from a failing test with expected vs actual | Self-Debugging: unit test with expected/actual 88.8 vs plain 80.9, traces add little C; FeedbackEval: tests 61.0, prose 50.5 B | Does a test failure lead with the test name and expected vs actual, say the tests passed before and the code is back, without traceback frames? |
+| F3 | **Doubting a verdict**: a false OK is worse than none | Reflexion 16.3% false-positive tests C; Olausson: model feedback wrong in 32 of 80 C | Is "OK" given only when a test ran the changed lines, and "kept, not checked" otherwise? |
+| F4 | **Resisting a challenge**: "are you sure?" questions make it undo correct work | Huang et al.: 75.8 → 38.1 C; FlipFlop: 46% flips, −17% C | Does any answer ask it to reconsider without a new fact? Is every heuristic labelled as one? |
+| F5 | **Knowing what is done** after compaction | recap +16/+17.5 points C; Manus P; Anthropic progress file V | Does every answer start with one line, from `git diff`, of what is kept, current and left? Is success one plain word, in the same place? |
+| F6 | **Profiting from a third retry** of the same thing | 2 rounds give 76–95% of the gain (arXiv 2604.10508) C; Olausson C | After 2 failed edits does the work move on, with fresh code and no trace of the failed text? Do refusals and repeats stay off the failure count? |
+| F7 | **Leaving a loop on its own**, worse with near-greedy decoding | Manus structured variation P; Laban (temperature 0) C | Does a repeated call get a different answer and a different filled NEXT? Does the third repeat move the work on in every step? |
+| F8 | **Recovering from harness errors we cannot change** | missing tool: 39.9% recovery (Loud Failures, Quiet Failures) C; V10: 34 repeats O | Does the prompt say what each harness error means and the exact correct call, without showing the malformed form (B5)? |
+| F9 | **Using advice**: facts help, instructions do not | falsification feedback +15 vs instructions +3 n.s. C; FeedbackEval prose worst B | Is every verdict a fact (test, value, line), with at most one line of instruction? |
+
+## Check of the design at commit 8c95d1d: prompting items
+
+| # | Status | Gap | Fix |
+|---|---|---|---|
+| P1 | no | `swe.md` ends with the raw statement, which can have its own headings and fences | `<issue>…</issue>` around it; fixed labels for quoted text in the windows |
+| P2 | — | process item | Change one layout at a time; keep the old one for comparison |
+| P3 | partly | "Change only what the requirements need; never remove behaviour…" (our main failure is changing too little) | "Make every change the requirements need, at every place they need it; keep the behaviour the statement does not mention, because the hidden tests also run the existing tests" |
+| P4 | no | STOP REPEATING, NOT RUN, NOTHING, TIME IS UP, NOT changed | Plain case with the reason; at most one status word in capitals |
+| P5 | no | "too long to show whole: change it with line numbers" against the prompt's whole definitions; TIME IS UP against NEXT | Remove both contradictions |
+| P6 | partly | The answer forms are last; no goal line at the top | The step's decision in the first line and before NEXT |
+| P7 | unknown | The used/calling code lists may hold distractors (not yet run) | Measure in the next run; keep only definitions sharing names with the place or the requirements |
+| P8 | no | No progress line | As F5 |
+| P9 | yes | Examples are call forms only | — |
+| P10 | unknown | — | Watch in the next run |
+| F1 | partly | A compile error gives a file line number | Show the offending line of the new code |
+| F2 | no | BROKEN ends with traceback lines | Test name, expected vs actual (pytest `E` lines), "passed before, the code is back" |
+| F3 | no | "OK" from tests that may not run the changed lines | "kept, not checked" when no selected test runs them |
+| F4 | no | "NOTHING changed shares its words: is it covered?" from a word match | A labelled fact, or nothing |
+| F5 | no | No progress line | One line from `git diff` at the top of every answer |
+| F6 | partly | MAX_FAILS 2; a repeated edit counts as a failure | Keep 2; fresh code after leaving a place |
+| F7 | no | The same repeat answer every time; only D1 and D2 move on at the third repeat | A different answer and NEXT each time; move on at the third repeat in every step |
+| F8 | no | The prompt says nothing about "skill not found" or "argument required" errors | One sentence: such an error means the call's names were written with extra marks; the exact call to make |
+| F9 | partly | Verdicts mix facts and advice | Facts first, one line of instruction |
