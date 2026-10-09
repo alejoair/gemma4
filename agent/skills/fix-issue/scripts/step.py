@@ -555,7 +555,7 @@ def _candidate(index, doc, matched, note=None, root=None, literals=(), toks=None
     return {'rel': doc.rel, 'name': doc.name, 'start': doc.start, 'end': doc.end, 'line': line, 'evidence': ev}
 
 
-def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES):
+def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only_rel=None):
     index = _rank.Index(root)
     terms = _statement.terms(text)
     mt, mpaths = _statement.model_terms(extra_items)
@@ -584,7 +584,10 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES):
                     seen.add(owner)
                     out.append(_candidate(index, doc, [], note=f'where the new `{new}` would go', root=root,
                                           literals=literals, toks=toks))
-    for _, doc, matched in index.rank(terms, _statement.paths(text) + mpaths, n=n + len(out)):
+    ranked = index.rank(terms, _statement.paths(text) + mpaths, n=len(index.docs) if only_rel else n + len(out))
+    for _, doc, matched in ranked:
+        if only_rel and (doc.rel != only_rel or doc.sym is None):
+            continue
         if (doc.rel, doc.name) not in seen and len(out) < n:
             seen.add((doc.rel, doc.name))
             out.append(_candidate(index, doc, matched, root=root, literals=literals, toks=toks))
@@ -674,7 +677,27 @@ def d1(root, state, args):
     if len(args) == 1 and (_is_done(args[0]) or _is_skip(args[0])):
         return ('In this step code is chosen; nothing is open to skip or finish. ' + _candidates_view(state)
                 + '\n\nChoose the code to change.')
+    single = [_args.clean(a) for a in args if a and a.strip()]
+    path = single[0].strip('/') if len(single) == 1 and re.fullmatch(r'[\w./-]+\.py', single[0].strip('/')) else ''
+    rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(path, r)), None) if path else None
     picked, others = _pick(state['candidates'], args)
+    if rel and len(_repo.read_lines(root, rel)) > 60:
+        # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
+        # stays a pick from a short list of names (W1) instead of opening a whole file (or its top lines) as a place
+        picked, others, paths = [], [rel], [rel]
+    else:
+        paths = []
+    if paths and not picked and len(others) == 1:
+        # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
+        # stays a pick from a short list of names (W1) instead of opening a whole file as one place
+        if rel:
+            st = _state.load('statement', {})
+            cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'],
+                                        only_rel=rel)
+            if cands:
+                state['candidates'] = cands
+                return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related '
+                                         'to the issue):') + '\n\nChoose the code to change.')
     chosen = picked[:3]
     if others and len(chosen) < 3:
         chosen += _resolve(root, others)[:3 - len(chosen)]
