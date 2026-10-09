@@ -4,15 +4,18 @@ step produced, a fixed verdict when something was checked, and the exact next ca
     S0  args [statement, search terms...]   -> requirements and candidates C1..C10
     D1  args ["C2", "C5"]                    -> the related places P1..Pk and the first planned place, numbered, with
                                                 what the change must do
-    D3  args ["P1", first, last, new lines]  -> edit, syntax, existing tests; the next place, or the finish
-        or ["skip"], ["back"], ["P<n>"],     -> nothing else is accepted in this step
-           ["C<n>"] (adds that candidate)
+    D3  args ["P1", whole new def/class]     -> edit (by name), syntax, existing tests; the next place, or the finish
+        or ["P1", first, last, new lines]
+        or ["skip"], ["back"], ["P<n>"]      -> nothing else is accepted in this step (no questions: the window
+                                                holds the code the place uses and its callers)
     D4  submit_patch, or ["R2"]              -> back to D1 for a requirement that is not covered
 """
+import ast
+import difflib
 import os
 import re
-import subprocess
 import sys
+import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,10 +33,11 @@ import _tests  # noqa: E402
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
-EDIT_LINES = 60         # the edit window: the place's head and the part the requirements are about
+EDIT_LINES = 100        # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
+                        # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
-MAX_CHARS = 8000        # a cap on one answer (about 2,300 tokens) against context growth; the end with NEXT is kept
+MAX_CHARS = 10000       # a cap on one answer (about 2,900 tokens) against context growth; the end with NEXT is kept
 
 
 # ---------------------------------------------------------------------------------------------------------- views
@@ -115,20 +119,28 @@ def _window(root, state, i):
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
+        if 'not shown) ...' in body:
+            body += (f'\n{p["id"]} is too long to show whole: change it with line numbers, or rewrite only a member '
+                     'that is shown whole.')
         members = _members(root, p)
         if members:
             body = members + '\n' + body
-    parts = [head, body, _task_view(root, state, p)]
+    parts = [head, body]
+    context = _context_view(root, p)
+    if context:
+        parts.append(context)
+    parts.append(_task_view(root, state, p))
     if p['reason'] != 'chosen':
-        parts.append(f'This place was added because it is related to the chosen code: make the same change here if '
-                     f'it needs it, or send ["skip"] if it needs none.')
-    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation ("DELETE" '
-                 'as the new lines deletes them). To add lines, replace the line before them with that same line followed by the '
-                 'new ones. Also accepted: ["skip"] (this place needs no change), ["done"] (all needed changes are '
-                 'made), ["P<n>"] (open another listed place), ["C<n>"] (add a candidate), ["back"] (choose again), '
-                 f'and up to {MAX_LOOKUPS} questions per place: ["<name>"] (where it is defined and called), '
-                 '["<file>.py"] (its classes and functions), ["P<n>", "<first line>", "<last line>"] (those lines), '
-                 '["search <text>"] (the lines that contain the text), ["python -c <code>"] (runs it and shows the output).')
+        parts.append('This place was added because it is related to the chosen code: make the same change here if '
+                     'it needs it, or send ["skip"] if it needs none.')
+    pid = p['id']
+    parts.append(f'Answer with one of:\n'
+                 f'  ["{pid}", "<the whole new function or class>"]: it replaces the definition of the same name (a new '
+                 f'name is added after {pid}); write it whole, from its def or class line to its last line.\n'
+                 f'  ["{pid}", "<first line number>", "<last line number>", "<new lines>"]: replaces those lines, with '
+                 f'their full indentation ("DELETE" deletes them).\n'
+                 f'  ["skip"] if {pid} needs no change; ["P<n>"] to open another listed place; ["back"] to choose other '
+                 f'code. Questions are not answered in this step.')
     return '\n'.join(parts)
 
 
@@ -144,9 +156,67 @@ def _members(root, p):
         return ''
     members = [x for x in syms if x.name.startswith(p['name'] + '.') and '.' not in x.name[len(p['name']) + 1:]]
     first = next((x for x in members if not x.name.endswith('.__init__')), members[0]) if members else None
-    tail = f'. To see a member, send ["{p["id"]}", "<first line>", "<last line>"] (no new lines), e.g. ["{p["id"]}", ' \
-           f'"{first.start}", "{first.end}"]' if first else ''
+    tail = '. A member is changed by sending its whole new code' if first else ''
     return 'Members: ' + ', '.join(f'{x.name.split(".")[-1]} {x.start}-{x.end}' for x in members) + tail
+
+
+USES = 8        # definitions the place calls, one line each
+CALLERS = 4     # code that calls the place, one line each
+
+
+def _context_view(root, p):
+    """The repository code the place calls (where it is defined, its signature and first doc line) and the code that
+    calls the place (the line of the call), one line each. These are what the model asked about in the edit step of
+    the local runs; showing them makes the questions unnecessary (Agentless: prepared inputs, the model never asks
+    for code; CodePlan: the dependencies of the edited code)."""
+    if p['name'] in (MODULE, '<exports>'):
+        return ''
+    try:
+        lines = _repo.read_lines(root, p['rel'])
+        tree = _code.parse(''.join(lines))
+    except OSError:
+        return ''
+    if tree is None:
+        return ''
+    table = _impact.Table(root, docs=False)
+    own = p['name']
+    called = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and p['start'] <= node.lineno <= p['end']:
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            if name:
+                called.append((node.lineno, name))
+    called = [n for _, n in sorted(called)]
+    uses, seen = [], set()
+    for name in dict.fromkeys(called):
+        defs = [(r, x) for r, x in table.find(name) if x.name.split('.')[-1] == name
+                and not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
+        if not defs or len(defs) > 3:
+            continue                    # not repository code, or a common name (get, __init__)
+        for r, x in defs[:2]:
+            if (r, x.name) not in seen:
+                seen.add((r, x.name))
+                line = _code.skeleton(r, x)
+                uses.append('  ' + (line if len(line) <= 200 else line[:197] + '...'))
+        if len(uses) >= USES:
+            break
+    short = own.split('.')[-1]
+    callers = [] if short.startswith('__') else [
+        (r, c, n) for r, c, n in table.calls.get(short, []) if c and (r, c) != (p['rel'], own)
+        and not _repo.is_doc_path(r)]
+    callers.sort(key=lambda c: (c[0] != p['rel'], c[0], c[2]))
+    calls = []
+    for r, c, n in callers[:CALLERS]:
+        text = _repo.read_lines(root, r)[n - 1].strip()
+        calls.append(f'  {r}:{n} in {c}: {text[:120]}')
+    out = []
+    if uses:
+        out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
+    if calls:
+        more = f' ({len(callers)} calls, first {CALLERS})' if len(callers) > CALLERS else ''
+        out.append(f'Code that calls {short}{more}:\n' + '\n'.join(calls))
+    return '\n'.join(out)
 
 
 def _task_view(root, state, p):
@@ -435,301 +505,120 @@ def _is_done(text):
     return _args.clean(text or '').lower().strip('[]"\' .!') in ('done', 'finish', 'finished', 'submit', 'all done')
 
 
-def _listed_place(root, state, text):
-    """The id of the listed place that text names: a place id, a candidate id or a code name of a listed place."""
-    text = _args.clean(text).strip('[]"\' ')
-    if re.fullmatch(r'(?i)P\d+', text):
-        return text.upper() if _place(state, text.upper()) else None
-    cand = None
-    if re.fullmatch(r'(?i)C\d+', text):
-        cand = next((c for c in state['candidates'] if c['id'] == text.upper()), None)
-    elif re.fullmatch(r'[\w./-]*(::)?[\w.]+(\(\))?', text):
-        rel, _, name = text.rpartition('::')
-        name = name.strip('()')
-        ids = [p['id'] for p in state['places'] if p['name'] != '<exports>'
-               and (p['name'] == name or p['name'].endswith('.' + name)) and (not rel or _rank.names_file(rel, p['rel']))]
-        if ids:                     # a name of several listed places: the open one first, else the first listed
-            cur = state['plan'][state['current']]['place'] if state.get('current') is not None else None
-            return cur if cur in ids else ids[0]
-        found = _resolve(root, [text])
-        cand = found[0] if found else None
-    if cand is None:
+def _listed_place(state, text):
+    """The id of the listed place that text is (["P2"]), or None. Only place ids move between places: candidates and
+    other code are chosen after ["back"]."""
+    text = _args.clean(text or '').strip('[]"\' ').upper()
+    return text if re.fullmatch(r'P\d+', text) and _place(state, text) else None
+
+
+DEF_LINE = re.compile(r'^\s*(@|(async\s+)?def\s|class\s)', re.M)
+
+
+def _whole_args(items):
+    """(place id, code) for ["P1", "<whole function or class>"], else None."""
+    if len(items) != 2 or not re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) or not DEF_LINE.search(items[1]):
         return None
-    p = next((p for p in state['places'] if (p['rel'], p['name']) == (cand['rel'], cand['name'])), None)
-    return p['id'] if p else None
+    return _args.clean(items[0]).upper(), items[1]
 
 
-MAX_LOOKUPS = 5    # questions per place in the edit step (asking never counts as a failed attempt at the place)
+def _target(syms, p, name):
+    """The definition that a new definition called name replaces: the place itself, a member of it, a method of the
+    place's class, or the only definition of that name in the file. None for a new name."""
+    pname = p['name'] if p['name'] not in (MODULE, '<exports>') else ''
+    cls = pname.rsplit('.', 1)[0] if '.' in pname else ''
+    for q in (pname if pname.split('.')[-1] == name else '', f'{pname}.{name}' if pname else '',
+              f'{cls}.{name}' if cls else '', name):
+        hit = next((x for x in syms if q and x.name == q), None)
+        if hit:
+            return hit
+    same = [x for x in syms if x.name.split('.')[-1] == name]
+    return same[0] if len(same) == 1 else None
 
 
-SHOW_LINES = 80
-LIMIT = 'LIMIT'     # returned by a question asked after the MAX_LOOKUPS of the place were used
+def _indent_of(line):
+    return line[:len(line) - len(line.lstrip(' \t'))]
 
 
-EDIT_BY_CALL = 12   # without an edit by this call, questions stop (SHERLOC final-turn prompt; notebooks: edit by call 12)
-
-
-def _no_edit_yet(state):
-    return not state['edited'] and state.get('calls', 0) >= EDIT_BY_CALL
-
-
-def _limit_message(state, cur, asked=''):
-    pid = state['plan'][cur]['place']
-    if _no_edit_yet(state):
-        return (f'NOT RUN: {state.get("calls", 0)} calls and no edit yet. Questions stop here: make your best edit of '
-                f'{pid} now (a wrong edit can be corrected, reading more cannot score), or ["skip"] it if it needs no '
-                f'change. Nothing was opened or changed.')
-    asked = _args.clean(asked or '').strip('"\'\\ ')
-    words = {w for w in re.findall(r'[A-Za-z_]\w+', asked) if w not in ('search', 'py', 'src')}
-    match = [c for c in state['candidates'] if asked and (c['rel'] == asked or c['rel'].endswith('/' + asked)
-                                                          or c['name'].split('.')[-1] in words or c['name'] in words)]
-    hint = (' The code you ask about is a candidate: send ' + ' or '.join(f'["{c["id"]}"]' for c in match[:3])
-            + ' to add it to the plan and see it.') if match else ''
-    return (f'NOT RUN: {MAX_LOOKUPS} questions were already answered for {pid}. Edit it now, or ["skip"] it, or '
-            f'["done"] if all needed changes are made.{hint} Nothing was opened or changed.')
-
-
-def _show_lines(root, state, items):
-    """["P<n>", first, last] (an edit without new lines): the lines first..last of that place, numbered, at most
-    SHOW_LINES, so that the model can see the part of a long place it wants to edit. Counts as a lookup."""
-    pid = _args.clean(items[0]).strip('[]"\' ').upper()
-    p = _place(state, pid)
+def _whole_edit(root, p, text):
+    """A whole function or class sent without line numbers (["P1", "<code>"]): each definition in the code replaces
+    the definition of the same name (see _target), re-indented to it; a name that does not exist yet is added after
+    the place (inside it when the place is a class). Line numbers are the hardest part of an edit for a small model
+    (packed, swapped or stale numbers in the local runs); a definition is found by its name. Returns an _edit.Result;
+    nothing is changed unless every definition applies."""
+    rel = p['rel']
+    code = _args.code(text)
+    src, tree = code, None
+    for cand in (code, code.replace('\\n', '\n').replace('\\"', '"')):
+        src = textwrap.dedent(cand)
+        tree = _code.parse(src)
+        if tree is not None:
+            break
+    if tree is None:
+        err = _edit._compiles([src])
+        return _edit.Result(False, p['start'], p['end'], f'the new code does not compile ({err}); nothing was changed',
+                            [], [])
+    defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    other = [n for n in tree.body if n not in defs]
+    if not defs or other:
+        return _edit.Result(False, p['start'], p['end'],
+                            'the new code must be whole functions or classes only (a def or class line and its body); '
+                            f'to change other lines send their numbers: ["{p["id"]}", "<first line number>", '
+                            '"<last line number>", "<new lines>"]; nothing was changed', [], [])
+    src_lines = src.split('\n')
     try:
-        a, b = int(_args.clean(items[1])), int(_args.clean(items[2]))
-    except ValueError:
-        return None
-    if p is None or p['name'] == '<exports>':
-        return None
-    entry = state['plan'][state['current']]
-    entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
-        return LIMIT
-    if max(a, p['start']) > min(b, p['end']):
-        return f'Lines {a}-{b} are outside {pid}, which has lines {p["start"]}-{p["end"]}. Nothing was changed.'
-    a, b = max(a, p['start']), min(b, p['end'])
-    b = min(b, a + SHOW_LINES - 1)
-    lines = _repo.read_lines(root, p['rel'])
-    return (f'Lines {a}-{b} of {pid} ({p["rel"]} :: {p["name"]}); nothing was changed. To replace lines, send the place '
-            f'id, the first and last line numbers and the new lines.\n'
-            + _code.numbered(lines, a, b, collapse=[]))      # asked for: long texts shown in full
-
-
-RUN_TIMEOUT = 20
-
-
-def _run_snippet(root, code):
-    """`python -c <code>` in the repository with the current code (a reproduction or a check): exit status and the
-    end of its output. The code is run as given; files it writes are its own business (SWE-agent: run python)."""
-    code = code.strip().rstrip(']').strip()
-    if len(code) > 2 and code[0] in '"\'' and code.endswith(code[0]):
-        code = code[1:-1]
-    elif code[:1] in '"\'':
-        code = code[1:]                                  # an unclosed opening quote
-    code = code.replace('\\"', '"').replace("\\'", "'")
-    try:
-        r = subprocess.run([sys.executable, '-c', code], cwd=root, env=_tests._env(root), capture_output=True,
-                           text=True, timeout=RUN_TIMEOUT)
-        out, status = (r.stdout + r.stderr).strip(), f'exit status {r.returncode}'
-    except subprocess.TimeoutExpired:
-        out, status = '', f'stopped after {RUN_TIMEOUT} s'
-    out = out if len(out) <= 1500 else '...\n' + out[-1500:]
-    return f'Ran the code ({status}):\n{out or "(no output)"}'
-
-
-def _unwrap(text):
-    """The text without a pair of brackets around all of it (a list copied as one item)."""
-    text = text.strip()
-    return text[1:-1].strip().strip('"\'') if text.startswith('[') and text.endswith(']') else text
-
-
-def _lookup(root, state, text):
-    """A bare code name (or "def name") that is not a listed place, sent in the edit step: the answer says where code
-    of that name is defined, or that none exists, without opening it, so that the model need not search for it. At
-    most MAX_LOOKUPS per place; later ones are refused like other calls."""
-    run = re.fullmatch(r'(?s)\s*(?:python3?\s+-c\s+|run:?\s+)(.+)', text.strip())
-    if run:
-        entry = state['plan'][state['current']]
-        entry['lookups'] = entry.get('lookups', 0) + 1
-        if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
-            return LIMIT
-        return _run_snippet(root, run.group(1))
-    text = _unwrap(_args.clean(text).strip('"\'\\ '))
-    if re.fullmatch(r'[\w./-]+/[\w.-]+', text) and not text.endswith('.py') \
-            and os.path.isfile(os.path.join(root, text + '.py')):
-        text += '.py'                                   # a module path without .py
-    if re.fullmatch(r'[\w./-]+\.py', text):
-        return _file_outline(root, state, text)
-    ls = re.fullmatch(r'(?:ls|dir)\s+(-\w+\s+)?([\w./-]+)', text)
-    if ls or (re.fullmatch(r'[\w.-]+(/[\w.-]+)*/?', text) and os.path.isdir(os.path.join(root, text))):
-        d = (ls.group(2) if ls else text).strip('/')
-        if not os.path.isdir(os.path.join(root, d)):
-            return f'No directory {d} in the repository (nothing was opened or changed).'
-        names = sorted(n + ('/' if os.path.isdir(os.path.join(root, d, n)) else '') for n in os.listdir(os.path.join(root, d))
-                       if not n.startswith('.') and n != '__pycache__')
-        return f'{d}/ has: {", ".join(names[:80])} (nothing was opened or changed).'
-    m = re.fullmatch(r'(?:(?:async\s+)?def\s+|class\s+)?([A-Za-z_][\w.]*)(?:\(.*\))?:?', text)
-    if m and (re.fullmatch(r'(?i)[PCR]\d+', m.group(1)) or _is_skip(m.group(1)) or m.group(1).lower() == 'back'):
-        return None
-    if not m:
-        search = re.fullmatch(r'(?is)(?:search|grep|find)\s*:?\s+(.+)', text)
-        needle = (search.group(1) if search else text).strip().strip('"\'`')
-        scope = re.fullmatch(r'(?s)(.+?)\s+in\s+([\w./-]+\.py)', needle)      # "search X in path/file.py"
-        only = None
-        if scope:
-            needle, only = scope.group(1).strip().strip('"\'`'), scope.group(2)
-        if '\n' in needle or len(needle) < 3 or len(needle) > 120:
-            return None
-        entry = state['plan'][state['current']]
-        entry['lookups'] = entry.get('lookups', 0) + 1
-        if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
-            return LIMIT
-        return _search_text(root, needle, only)
-    entry = state['plan'][state['current']]
-    entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
-        return LIMIT
-    name = m.group(1)
-    table = _impact.Table(root, docs=False)
-    found = table.find(name.split('.')[-1])
-    if '.' in name:
-        found = [(r, x) for r, x in found if x.name.endswith(name)] or found
-    if not found:
-        return (f'No function or class named `{name}` is defined in the repository. '
-                + (_search_text(root, name) or ''))
-    where = '; '.join(f'{r} :: {x.name} (lines {x.start}-{x.end})' for r, x in found[:6])
-    callers = [(r, c, line) for r, c, line in table.calls.get(name.split('.')[-1], []) if c]
-    if callers:
-        where += '. Called in: ' + '; '.join(f'{r} :: {c} (line {line})' for r, c, line in callers[:6])
-    listed = [p['id'] for p in state['places'] for r, x in found if (p['rel'], p['name']) == (r, x.name)]
-    tail = f' It is listed as {", ".join(listed)}: send ["{listed[0]}"] to open it.' if listed else \
-        ' It is not a listed place: to edit it, send ["back"] and choose it as "<file>::<Name>".'
-    return f'`{name}` is defined in: {where}.{tail} Nothing was opened or changed.'
-
-
-MAX_MATCHES = 50
-
-
-def _search_text(root, text, only=None):
-    """Lines of the repository's code (tests and docs included, hidden and cache files not) that contain text
-    literally, as 'file:line: code', at most MAX_MATCHES; more matches ask for a narrower text (SWE-agent's summarized
-    search)."""
-    needle = text.strip()
-    if len(needle) < 3:
-        return None
-    hits, files = [], set()
-    rels = sorted(_repo.iter_py(root, tests=True, docs=True), key=lambda r: (_repo.is_doc_path(r), _repo.is_test_path(r), r))
-    if only:
-        rels = [r for r in rels if _rank.names_file(only, r)] or rels
-    for rel in rels:                                    # package code first, then tests, then docs and examples
-        for i, line in enumerate(_repo.read_text(root, rel).splitlines(), 1):
-            if needle in line:
-                hits.append(f'  {rel}:{i}: {line.strip()[:120]}')
-                files.add(rel)
-    if not hits:
-        return f'No line of the repository contains `{needle}` (nothing was opened or changed).'
-    if len(hits) > MAX_MATCHES:
-        top = sorted(files, key=lambda r: -sum(h.startswith(f'  {r}:') for h in hits))[:10]
-        return (f'{len(hits)} lines in {len(files)} files contain `{needle}`: too many to list; send a more specific '
-                f'text. Files with most matches: {", ".join(top)} (nothing was opened or changed).')
-    return f'{len(hits)} lines contain `{needle}` (nothing was opened or changed):\n' + '\n'.join(hits)
-
-
-def _file_outline(root, state, path):
-    """A file path sent in the edit step: the file's classes and functions with their lines (no code). Counts as a
-    lookup."""
-    entry = state['plan'][state['current']]
-    entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
-        return LIMIT
-    table = _impact.Table(root, docs=True)
-    rel = next((r for r in table.syms if _rank.names_file(path, r)), None)
-    if rel is None:
-        return f'No file {path} in the repository (nothing was opened or changed).'
-    syms = [x for x in table.syms[rel] if x.name.count('.') <= 1]
-    lines = _repo.read_lines(root, rel)
-    if len(lines) <= 40:                     # a small file is shown whole (an outline would say little)
-        return f'{rel} ({len(lines)} lines; nothing was opened or changed):\n' + _code.numbered(lines, 1, len(lines))
-    listed = {p['name']: p['id'] for p in state['places'] if p['rel'] == rel}
-    out = [f'{rel} has (nothing was opened or changed; listed places can be opened with their id, other code is chosen '
-           f'after ["back"] as "<file>::<Name>"):']
-    for x in syms[:60]:
-        inside = next((p for p in state['places'] if p['rel'] == rel and p['name'] != x.name
-                       and p['start'] <= x.start and x.end <= p['end']), None)
-        note = f' = {listed[x.name]}' if x.name in listed else (
-            f' (inside {inside["id"]}: to see it send ["{inside["id"]}", "{x.start}", "{x.end}"])' if inside else '')
-        out.append(f'  {x.name} ({x.kind}, lines {x.start}-{x.end}){note}')
-    return '\n'.join(out)
-
-
-def _add_named(root, state, items):
-    """Candidate ids and "<file>::<Name>" items sent together in the edit step: each joins the places and the plan
-    (choosing more code is part of the procedure). Returns the place ids, or None."""
-    out, first = [], None
-    for raw in items[:4]:
-        x = _args.clean(raw)
-        if re.fullmatch(r'(?i)C\d+', x):
-            got = _add_candidate(state, x)
-            if got:
-                out.append(got)
-                first = first if first is not None else state['current']
-            continue
-        rel, _, name = x.rpartition('::')
-        table = _impact.Table(root, docs=True)
-        defs = [(r, d) for r, d in table.find(name.strip('()')) if not rel or _rank.names_file(rel, r)]
-        defs.sort(key=lambda t: (_repo.is_doc_path(t[0]), t[0]))
-        if not defs or len(state['places']) >= MAX_PLACES + 4:
-            continue                    # only a real definition opens a place (no text-fragment fallback)
-        r0, d0 = defs[0]
-        c = {'rel': r0, 'name': d0.name, 'start': d0.start, 'end': d0.end}
-        old = next((p for p in state['places'] if (p['rel'], p['name']) == (c['rel'], c['name'])), None)
-        pid = old['id'] if old else f'P{len(state["places"]) + 1}'
-        if not old:
-            state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
-                                    'reason': 'chosen', 'id': pid})
-        i = _journal.target(state, pid)
-        if state['plan'][i]['status'] == 'skipped':
-            state['plan'][i]['status'] = 'todo'
-        out.append(pid)
-        first = first if first is not None else i
-    if not out:
-        return None
-    state['current'] = first
-    return ', '.join(out)
-
-
-def _add_candidate(state, text):
-    """A candidate id that is not a listed place, sent in the edit step: the candidate joins the places and the plan
-    (choosing more of the system's own list is part of the procedure) and is opened. Returns the new place id."""
-    ids = re.findall(r'C\d+', _args.clean(text).upper())
-    if not ids or not re.fullmatch(r'[\sC\d,;"\'\[\]]+', _args.clean(text).upper()):
-        return None
-    added = []
-    for cid in ids[:3]:
-        c = next((c for c in state['candidates'] if c['id'] == cid), None)
-        if c is None or len(state['places']) >= MAX_PLACES + 4:
-            continue
-        old = next((p for p in state['places'] if (p['rel'], p['name']) == (c['rel'], c['name'])), None)
-        pid = old['id'] if old else f'P{len(state["places"]) + 1}'
-        if not old:
-            state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
-                                    'reason': 'chosen', 'id': pid})
-        i = _journal.target(state, pid)
-        if state['plan'][i]['status'] == 'skipped':
-            state['plan'][i]['status'] = 'todo'
-        added.append((pid, i))
-    if not added:
-        return None
-    state['current'] = added[0][1]
-    return ', '.join(pid for pid, _ in added)
+        before = _repo.read_lines(root, rel)
+    except OSError:
+        return _edit.Result(False, p['start'], p['end'], f'{rel} does not exist', [], [])
+    repairs, warnings, names, unchanged = [], [], [], 0
+    for d in defs:
+        first = min([d.lineno] + [x.lineno for x in d.decorator_list])
+        piece = '\n'.join(src_lines[first - 1:d.end_lineno])
+        lines = _repo.read_lines(root, rel)
+        syms = _code.symbols(_code.parse(''.join(lines)))
+        t = _target(syms, p, d.name)
+        if t is not None:
+            pad = _indent_of(lines[t.start - 1])
+            r = _edit.apply(root, rel, t.start, t.end, textwrap.indent(piece, pad))
+            if not r.applied and r.error.startswith('the new lines are the same'):
+                unchanged += 1
+                names.append(d.name)
+                continue
+        else:
+            own = next((x for x in syms if x.name == p['name']), None)
+            if own is not None:
+                anchor = own.end
+                inner = own.kind == 'class' and not isinstance(d, ast.ClassDef)
+                pad = _indent_of(lines[own.def_line - 1]) + ('    ' if inner else '')
+            else:
+                anchor, pad = len(lines), ''
+            r = _edit.apply(root, rel, anchor, anchor,
+                            lines[anchor - 1].rstrip('\r\n') + '\n\n' + textwrap.indent(piece, pad))
+            if r.applied:
+                repairs.append(f'added the new {d.name} after line {anchor}')
+        if not r.applied:
+            _repo.write_lines(root, rel, before)
+            return _edit.Result(False, p['start'], p['end'], f'{d.name}: {r.error}', repairs + r.repairs, [])
+        names.append(d.name)
+        repairs += [x for x in r.repairs if x not in repairs]
+        warnings += [x for x in r.warnings if x not in warnings]
+    if unchanged == len(defs):
+        return _edit.Result(False, p['start'], p['end'], 'the new code is the same as the old one: nothing changes',
+                            [], [])
+    syms = _code.symbols(_code.parse(''.join(_repo.read_lines(root, rel))))
+    spans = [t for t in (_target(syms, p, n) for n in names) if t is not None]
+    start = min([t.start for t in spans] or [p['start']])
+    end = max([t.end for t in spans] or [p['end']])
+    return _edit.Result(True, start, end, None, repairs, warnings)
 
 
 def d3(root, state, args):
-    """The edit step (SOP-Agent: only the valid actions of the step). Accepted: an edit of a listed place, skip, done,
-    back, a listed place, candidates or names to add to the plan, and up to MAX_LOOKUPS questions per place. Anything
-    else is refused and changes nothing. Only failed edits (not applied, tests broken, repeated) count against a
-    place; asking or a refused form never makes the model leave the place it is working on."""
-    word = _args.plan(args)
-    if word == 'back':
+    """The edit step (SOP-Agent: only the valid actions of the step). Accepted: an edit of a listed place (its whole
+    new function or class, or a line range), ["skip"], ["back"] and ["P<n>"] (open another listed place). Questions
+    are not answered: the window already holds the code the place uses and the code that calls it (Agentless: the
+    model never asks for code). Anything else is refused and changes nothing; only failed edits count against a
+    place."""
+    if _args.plan(args) == 'back':
         _journal.back(state)
         return 'The edits made so far stay. ' + _candidates_view(state) + '\n\nChoose the code to change.'
     if _journal.time_is_up(state):
@@ -738,13 +627,9 @@ def d3(root, state, args):
     raw = [x for x in args if x is not None]
     if len(raw) == 4 and not raw[3].strip() and re.fullmatch(r'(?i)\W*P\d+\W*', raw[0] or ''):
         pid = _args.clean(raw[0]).upper()
-        return (f'The new lines are empty, which is unclear. To see lines {raw[1]}-{raw[2]} of {pid} send ["{pid}", '
-                f'"{raw[1]}", "{raw[2]}"]; to delete them send ["{pid}", "{raw[1]}", "{raw[2]}", "DELETE"]. Nothing was '
-                'changed.')
+        return (f'The new lines are empty, which is unclear. To delete lines {raw[1]}-{raw[2]} of {pid} send ["{pid}", '
+                f'"{raw[1]}", "{raw[2]}", "DELETE"]. Nothing was changed.')
     items = [x for x in raw if x.strip()]
-    if len(items) == 2 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) and '\n' not in items[1].strip() \
-            and not re.match(r'\s*\d', items[1]):
-        items = [items[1]]          # ["P2", "search x"]: a question asked about the open place
     single = _args.clean(items[0].replace('\\"', '"').replace("\\'", "'")) if len(items) == 1 else ''
     cur = state['current']
     if _is_skip(single) and cur is not None:
@@ -756,64 +641,39 @@ def d3(root, state, args):
         if move == 'back':
             return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
         return head + '\n\n' + _finish_view(root, state)
-    if _is_done(single):
-        if not state['edited']:
-            return ('Nothing was changed yet, so there is nothing to finish: edit a place, or ["back"] to choose other '
-                    'code.\n\n' + (_window(root, state, cur) if cur is not None else _candidates_view(state)))
-        for e in state['plan']:
-            if e['status'] == 'todo':
-                e['status'] = 'skipped'
-        state['step'], state['current'] = 'D4', None
-        return _finish_view(root, state)
-    listed = _listed_place(root, state, single) if single else None
-    if listed and cur is not None and listed == state['plan'][cur]['place'] and not re.fullmatch(r'(?i)P\d+', single):
-        listed = None               # the open place named again: answer where the name is defined and called
+    listed = _listed_place(state, single) if single else None
     if listed:
-        i = _journal.target(state, listed)               # a listed place, by id, candidate id or name: open it
+        i = _journal.target(state, listed)               # a listed place: open it
         if state['plan'][i]['status'] == 'skipped':
             state['plan'][i]['status'] = 'todo'
         state['current'] = i
         return _window(root, state, i)
-    packed = re.fullmatch(r'\s*(P\d+)\s*[,|\s]\s*(\d+)\s*[,|\s-]\s*(\d+)\s*', _args.clean(single), re.I) if single else None
-    view = list(packed.groups()) if packed else items
-    shown = _show_lines(root, state, view) if len(view) == 3 and cur is not None else None
-    if shown == LIMIT:
-        return _limit_message(state, cur, single) + '\n\n' + _window(root, state, cur)
-    if shown:
-        return shown
-    added = _add_candidate(state, single) if single else None
-    names = [re.sub(r'(?i)^C\d+\s*:\s*(?=[\w./-]+::)', '', _args.clean(x)) for x in items]
-    if not added and len(names) > 1 and all(
-            re.fullmatch(r'(?i)C\d+|([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) and not re.fullmatch(r'(?i)P\d+', x)
-            for x in names):
-        added = _add_named(root, state, names)
-    elif not added and len(names) == 1 and (
-            (names[0] != _args.clean(items[0]) and '::' in names[0])        # "C11:file::Name"
-            or re.fullmatch(r'([\w./-]+::)?[A-Z]\w*(\.[A-Za-z_]\w*)?(\(\))?', names[0])):   # Class or Class.method
-        added = _add_named(root, state, names)
-    if added:
-        return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
-    lookup = _lookup(root, state, single) if single and cur is not None else None
-    if lookup == LIMIT:
-        return _limit_message(state, cur, single) + '\n\n' + _window(root, state, cur)
-    if lookup:
-        return lookup + '\n\n' + _window(root, state, cur)
+    whole = _whole_args(items)
+    if whole:
+        pid, text = whole
+        p = _place(state, pid)
+        if p is None:
+            return (f'{pid} is not a listed place. Nothing was changed.\nPlaces:\n'
+                    + '\n'.join('  ' + _place_line(q) for q in state['places']))
+        i = _journal.target(state, pid)
+        before = _repo.read_lines(root, p['rel'])
+        return _after_edit(root, state, i, p, _whole_edit(root, p, text), before)
     e = _args.edit(args)
     if e is None:
         if len(items) == 4 or (len(items) > 1 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0] or '')):
             why = (f'the second and third items must be line numbers like 79 and 82, not "{items[1][:40]}" and '
                    f'"{items[2][:40]}".' if len(items) >= 4 else
-                   f'it has {len(items)} items; it needs 4: the place id, two line numbers and the new lines.')
+                   f'it has {len(items)} items: send the place id and the whole new function or class, or the place '
+                   'id, two line numbers and the new lines.')
             msg = f'The edit was not read: {why} Nothing was changed.'
-            return msg + ('\n' + _window(root, state, cur) if cur is not None else '')
         else:
-            msg = ('NOT RUN: this step only edits the listed places. Accepted: an edit ["P<n>", "<first line number>", '
-                   '"<last line number>", "<new lines>"], ["P<n>"] to open a listed place, ["C<n>"] to add a candidate, '
-                   '["skip"] if the place needs no change, or ["back"] to choose again. Nothing was opened or changed.'
-                   '\nPlaces:\n'
-                   + '\n'.join('  ' + _place_line(q) for q in state['places']))
+            msg = ('NOT RUN: this step only edits; questions are not answered here (the code the place uses and its '
+                   'callers are listed in the window). Accepted: the whole new function or class ["P<n>", "<code>"], '
+                   'a line edit ["P<n>", "<first line number>", "<last line number>", "<new lines>"], ["skip"] if the '
+                   'place needs no change, ["P<n>"] to open another listed place, or ["back"] to choose other code. '
+                   'Nothing was opened or changed.')
         if cur is None:
-            return msg
+            return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
         return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
     pid, start, end, text = e
     p = _place(state, pid)
@@ -821,7 +681,34 @@ def d3(root, state, args):
         return (f'{pid} is not a listed place. Nothing was changed.\nPlaces:\n'
                 + '\n'.join('  ' + _place_line(q) for q in state['places']))
     i = _journal.target(state, pid)
-    r = _edit.apply(root, p['rel'], start, end, text)
+    before = _repo.read_lines(root, p['rel'])
+    return _after_edit(root, state, i, p, _edit.apply(root, p['rel'], start, end, text), before)
+
+
+SHOW_CHANGED = 40   # numbered lines shown after an edit: the changed lines with 2 around them
+
+
+def _changed_view(before, after):
+    """The lines that an edit changed, numbered as they are now, with 2 lines around each change (a rewritten whole
+    function is not shown again: only what differs)."""
+    keep = set()
+    for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        if tag != 'equal':
+            keep.update(range(max(1, j1 - 1), min(len(after), max(j2, j1 + 1) + 2) + 1))
+    nums = sorted(keep)[:SHOW_CHANGED]
+    out, prev = [], None
+    for n in nums:
+        if prev is not None and n > prev + 1:
+            out.append('      ...')
+        out.append(_code.numbered(after, n, n, collapse=[]))
+        prev = n
+    return '\n'.join(out)
+
+
+def _after_edit(root, state, i, p, r, before):
+    """The verdict of an edit r of plan entry i (place p; before: its file's lines before the edit): not applied,
+    BROKEN (undone), or OK / not verified with the changed lines, then the next place or the finish."""
+    pid = p['id']
     if not r.applied:
         return _failed(root, state, i, f'NOT APPLIED: {r.error}.', r.error)
     _refresh(root, state, p['rel'])
@@ -832,10 +719,10 @@ def d3(root, state, args):
         if e2['status'] == 'done' or e2['place'] == pid:
             changed.setdefault(q['rel'], []).append(q['name'].split('.')[-1])
     changed.setdefault(p['rel'], []).extend(l.strip() for l in new_lines)
-    renamed = sorted({n for r in state['requirements'] for n in r.get('old', [])})
+    renamed = sorted({n for r_ in state['requirements'] for n in r_.get('old', [])})
     verdict, detail, new_failures = _tests.check(root, changed, renamed)
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
-    shown = _code.numbered(_repo.read_lines(root, p['rel']), max(1, r.start - 2), r.end + 2)
+    shown = _changed_view(before, _repo.read_lines(root, p['rel']))
     if verdict == 'BROKEN':
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
@@ -906,31 +793,12 @@ def d4(root, state, args):
         _journal.requirement_back(state, cands)
         return (f'Candidates for {rid} ({req["text"][:120]}). The edits made so far stay.\n'
                 + _candidates_view(state, title='Candidates:') + '\n\nChoose the code to change.')
-    if _args.edit(args) is not None:
+    if _args.edit(args) is not None or _whole_args([x for x in args if x and x.strip()]) is not None:
         state['step'] = 'D3'
         out = d3(root, state, args)
         if state['step'] == 'D3' and state['current'] is None:
             state['step'] = 'D4'
         return out
-    items = [x for x in args if x is not None and x.strip()]
-    if len(items) == 1 and state.get('finish_lookups', 0) < MAX_LOOKUPS:
-        text = _unwrap(_args.clean(items[0]).strip('"\'\\ '))
-        if re.fullmatch(r'[\w./-]+\.py', text):
-            answer = None
-        else:
-            name = re.fullmatch(r'(?:(?:async\s+)?def\s+|class\s+)?([A-Za-z_][\w.]*)(?:\(.*\))?:?', text)
-            search = re.fullmatch(r'(?is)(?:search|grep|find)\s*:?\s+(.+)', text)
-            if name:
-                table = _impact.Table(root, docs=False)
-                found = table.find(name.group(1).split('.')[-1])
-                answer = ('`{}` is defined in: {}.'.format(name.group(1), '; '.join(
-                    f'{r} :: {x.name} (lines {x.start}-{x.end})' for r, x in found[:6])) if found
-                          else _search_text(root, name.group(1)))
-            else:
-                answer = _search_text(root, (search.group(1) if search else text).strip())
-        if answer:
-            state['finish_lookups'] = state.get('finish_lookups', 0) + 1
-            return answer + '\n\n' + _finish_view(root, state)
     return 'Nothing left to do in this step. ' + _finish_view(root, state)
 
 
@@ -968,7 +836,7 @@ def main(argv):
     skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
     if state['step'] == 'D3' and len(args) == 1 and not skip and state['current'] is not None:
         # opening another listed place is a move, not a repeat
-        target = _listed_place(root, state, args[0])
+        target = _listed_place(state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
     resent = state['step'] != 'S0' and _is_statement_again(args)
     if resent:
@@ -979,13 +847,11 @@ def main(argv):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
                f'{state.get("repeated_answer") or state.get("answer", "")}).')
-        if state['step'] == 'D3' and state['current'] is not None and _args.edit(args) is None:
-            # a repeated question (not an edit): its answer again (after compaction it is no longer above); asking
-            # never leaves the place
-            full = state.get('full_answers', {}).get(repr([a.strip() for a in args]))
-            out = ('This was asked before; the same answer again:\n' + full) if full else \
-                out + '\n\n' + _window(root, state, state['current'])
-        elif _args.edit(args) is not None and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
+        is_edit = _args.edit(args) is not None or _whole_args([x for x in args if x and x.strip()]) is not None
+        if state['step'] == 'D3' and state['current'] is not None and not is_edit:
+            # a repeated refused call: the place stays open and nothing counts against it
+            out += '\n\n' + _window(root, state, state['current'])
+        elif is_edit and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
             # the same edit again after it was applied: nothing to undo or count
             out = ('This edit was already applied (its answer was: ' + state['repeated_answer'] + '). Nothing was '
                    'changed.\n\n' + _current_view(root, state))
@@ -1013,11 +879,6 @@ def main(argv):
                    'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
         _journal.remember(state, args, state['answer'])
-        if state['step'] == 'D3' and _args.edit(args) is None and len(out) < 6000:
-            full = state.setdefault('full_answers', {})       # questions' answers, to give again after compaction
-            full[repr([a.strip() for a in args])] = out.strip()
-            for k in list(full)[:-4]:
-                del full[k]
     _state.save('journal', state)
     out = out.rstrip()
     if len(out) > MAX_CHARS:
