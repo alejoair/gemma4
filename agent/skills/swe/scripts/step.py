@@ -788,6 +788,25 @@ def d4(root, state, args):
 STEPS = {'S0': s0, 'D1': d1, 'D2': d2, 'D3': d3, 'D4': d4}
 
 
+def _is_statement_again(args):
+    """The issue statement sent again (its first words match the statement copied at the start)."""
+    first = (args[0] if args else '') or ''
+    if len(first.strip()) < 40:
+        return False
+    norm = lambda t: re.sub(r'\W+', ' ', t).strip().lower()
+    known = norm(_state.load('statement', {}).get('text', ''))
+    head = norm(first)[:60]
+    return bool(known) and len(head) >= 30 and head in known
+
+
+def _current_view(root, state):
+    if state['step'] == 'D3' and state['current'] is not None:
+        return _window(root, state, state['current'])
+    if state['step'] == 'D4':
+        return _finish_view(root, state)
+    return _requirements_view(state) + '\n\n' + _candidates_view(state) + '\n\nChoose the code to change.'
+
+
 def main(argv):
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
@@ -798,7 +817,12 @@ def main(argv):
         # opening another listed place is a move, not a repeat
         target = _listed_place(root, state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
-    if state['step'] != 'S0' and not skip and _journal.repeated(state, args):
+    resent = state['step'] != 'S0' and _is_statement_again(args)
+    if resent:
+        # after the harness compacts the history the model may start again: say where the work is
+        out = ('The start was already made: the requirements and candidates are known and the work is in a later '
+               'step. Continue from here (nothing was changed).\n\n' + _current_view(root, state))
+    elif state['step'] != 'S0' and not skip and _journal.repeated(state, args):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
                f'{state.get("repeated_answer") or state.get("answer", "")}).')
