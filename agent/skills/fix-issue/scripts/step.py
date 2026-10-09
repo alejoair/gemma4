@@ -289,6 +289,8 @@ def _imports_view(root, p):
     a, b = imps[0].lineno, max(n.end_lineno or n.lineno for n in imps)
     if b >= p['start']:
         return ''
+    if b - a + 1 > IMPORT_LINES:          # a long block is noise in every window (P7): where it is is enough
+        return f'The imports of {p["rel"]} are at lines {a}-{b}.'
     shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
     more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
     return f'The imports of {p["rel"]}:\n{shown}{more}'
@@ -350,6 +352,8 @@ def _context_view(root, p, focus=None):
                 used.append((node.lineno, node.attr, 'self'))
             elif id(node) in calls:
                 used.append((node.lineno, node.attr, 'call'))
+            else:
+                used.append((node.lineno, node.attr, 'attr'))      # obj.prop: a property of another class
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             if node.id in here or node.id in imported:
                 used.append((node.lineno, node.id, 'name'))
@@ -370,6 +374,8 @@ def _context_view(root, p, focus=None):
             return [(r, x) for r, x in table.find(orig) if x.name == orig
                     and (not mod or module_of(r).endswith(mod) or module_of(r).endswith(mod + '.__init__'))]
         defs = [(r, x) for r, x in found if x.name.split('.')[-1] == name]
+        if how == 'attr':
+            return defs if len(defs) <= 2 else []      # an attribute read: only a name the repository defines rarely
         return defs if len(defs) <= 3 else []          # a common method name (get, copy of many classes) says little
 
     uses, seen, chars = [], set(), 0
@@ -377,8 +383,8 @@ def _context_view(root, p, focus=None):
 
     def weight(item):
         name, how = item
-        if how == 'self':
-            return 10                       # the place's own class members: always
+        if how in ('self', 'attr'):
+            return 10                       # members and properties the place reads: its direct dependencies
         return sum(focus.get(t, 0) for t in _rank.tokens(name))
 
     # code that shares words with the requirements first; at most 2 that share none (near-miss context costs more than
@@ -386,22 +392,22 @@ def _context_view(root, p, focus=None):
     order = sorted(dict.fromkeys((n, h) for _, n, h in sorted(used)), key=lambda it: -weight(it))
     plain = 0
     for name, how in order:
-        if weight((name, how)) == 0:
+        defs = [(r, x) for r, x in resolve(name, how)
+                if not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
+        mine = how in ('self', 'attr')                  # short definitions are shown as code
+        if not defs:
+            continue
+        if weight((name, how)) == 0:                    # counted only when it would be shown
             plain += 1
             if plain > 2:
                 continue
-        defs = [(r, x) for r, x in resolve(name, how)
-                if not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
-        mine = how == 'self'
-        if not defs:
-            continue
         for r, x in defs[:2]:
             if (r, x.name) in seen:
                 continue
             seen.add((r, x.name))
             if mine and x.end - x.start + 1 <= SHORT_MEMBER:
                 # a short member of the same class (a property, a helper): its code, since its name says little
-                text = _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
+                text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
                 line = _code.skeleton(r, x)
                 text = '  ' + (line if len(line) <= 200 else line[:197] + '...')
