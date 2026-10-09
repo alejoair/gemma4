@@ -54,7 +54,7 @@ def split_escaped(args):
     compacted ('P3\\", \\"378\\", \\"399\\", \\"<code>'): the separate items. Other arguments are returned as they
     are."""
     args = [a for a in args if a is not None]
-    if not args or not re.match(r'\s*\[?\s*\\?"?\s*P\d+\s*\\?"\s*,\s*\\?"', args[0]):
+    if not args or not re.match(r'\s*\[?\s*\\?"?\s*[\w./:<>-]{1,200}?\s*\\?"\s*,\s*\\?"', args[0]):
         return args
     if any(str(a).strip().lower() not in ('false', 'true', '') for a in args[1:]):
         return args             # other real items: not a packed list (the model's leftovers are bare true/false)
