@@ -329,6 +329,9 @@ def _find_text(root, table, text):
 def d1(root, state, args):
     if _args.plan(args) == 'back':
         return _candidates_view(state) + '\n\nChoose the code to change.'
+    if len(args) == 1 and (_is_done(args[0]) or _is_skip(args[0])):
+        return ('In this step code is chosen; nothing is open to skip or finish. ' + _candidates_view(state)
+                + '\n\nChoose the code to change.')
     ids, others = _args.ids(args, 'C')
     known = {c['id']: c for c in state['candidates']}
     chosen = [known[i] for i in ids if i in known][:3]
@@ -579,6 +582,9 @@ def _file_outline(root, state, path):
     if rel is None:
         return f'No file {path} in the repository (nothing was opened or changed).'
     syms = [x for x in table.syms[rel] if x.name.count('.') <= 1]
+    lines = _repo.read_lines(root, rel)
+    if len(lines) <= 40:                     # a small file is shown whole (an outline would say little)
+        return f'{rel} ({len(lines)} lines; nothing was opened or changed):\n' + _code.numbered(lines, 1, len(lines))
     listed = {p['name']: p['id'] for p in state['places'] if p['rel'] == rel}
     out = [f'{rel} has (nothing was opened or changed; listed places can be opened with their id, other code is chosen '
            f'after ["back"] as "<file>::<Name>"):']
