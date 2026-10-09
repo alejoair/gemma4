@@ -628,6 +628,30 @@ def s0(root, state, args):
 BIG_FILE = 60       # a file longer than this is never one place: it is chosen through its functions and classes
 
 
+def _candidates_using(root, name, n=N_CANDIDATES):
+    """The functions and classes whose code uses name (a library's or a builtin's: the repository does not define it),
+    package code first, as candidates with the lines that use it: a question 'where is X used' answered as a choice
+    from a list (W1) instead of a search."""
+    index = _rank.Index(root)
+    pat = re.compile(rf'(?<![\w]){re.escape(name)}(?![\w])')
+    hits = []
+    for doc in index.docs:
+        if doc.sym is None or _repo.is_test_path(doc.rel):
+            continue
+        lines = _repo.read_lines(root, doc.rel)[doc.start - 1:doc.end]
+        if any(pat.search(l) for l in lines):
+            hits.append(doc)
+    inner = [d for d in hits if not any(o is not d and o.rel == d.rel and d.start <= o.start and o.end <= d.end
+                                        and any(pat.search(l) for l in _repo.read_lines(root, o.rel)[o.start - 1:o.end])
+                                        for o in hits)]
+    inner.sort(key=lambda d: (_repo.is_doc_path(d.rel), d.rel, d.start))
+    out = [_candidate(index, d, [], root=root, literals=[name], toks={}) for d in inner[:n]]
+    for i, c in enumerate(out, 1):
+        c['id'] = f'C{i}'
+    _set_handles(out)
+    return out
+
+
 def _resolve(root, names):
     """Candidates for code the model named off the list: 'file::Name', 'Name' or 'pkg/file.py'."""
     table = _impact.Table(root, docs=True)
@@ -708,6 +732,13 @@ def d1(root, state, args):
             state['candidates'] = cands
             return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related to '
                                      'the issue):') + '\n\nChoose the code to change.')
+    if not chosen and len(others) == 1 and re.fullmatch(r'[A-Za-z_][\w.]*', others[0]):
+        name = others[0].split('.')[-1]
+        users = _candidates_using(root, name)
+        if users:
+            state['candidates'] = users
+            return (_candidates_view(state, title=f'No function or class here is named {name}; the code that uses it:')
+                    + '\n\nChoose the code to change.')
     if not chosen:
         msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
                if others else 'No candidate was chosen. ')
@@ -855,6 +886,13 @@ def _open_named(root, state, text):
     if not re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x):
         return None
     found = _resolve(root, [x])
+    if not found and re.fullmatch(r'[A-Za-z_][\w.]*', x):
+        users = _candidates_using(root, x.split('.')[-1])
+        if users:
+            _journal.requirement_back(state, users)
+            return ('The edits made so far stay. ' + _candidates_view(
+                state, title=f'No function or class here is named {x.split(".")[-1]}; the code that uses it:')
+                + '\n\nChoose the code to change.')
     if not found or len(state['places']) >= MAX_PLACES + 4:
         return None
     c = found[0]
