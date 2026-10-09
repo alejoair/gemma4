@@ -92,6 +92,12 @@ def edit(args):
     """(place, start, end, text) from [place, start, end, text...] or [place, 'start-end', text...]; None when the
     numbers are missing or are placeholders."""
     args = [a for a in args if a is not None]
+    if len(args) < 3 and args:
+        # everything packed in one string: "P1,378,399,<new lines>" or "P1 | 378 | 399 | <new lines>"
+        m = re.match(r'\s*["\'`「\[]*\s*(P\d+)\s*["\'`」]*\s*[,|]\s*["\']?(\d+)["\']?\s*[,|]\s*["\']?(\d+)["\']?(?:,|\s*\|\s?)'
+                     r'(.*)$', args[0], re.S | re.I)
+        if m:
+            args = [m.group(1), m.group(2), m.group(3), m.group(4)] + args[1:]
     if len(args) < 3 or is_placeholder(args[0]):
         return None
     place = clean(args[0]).upper()

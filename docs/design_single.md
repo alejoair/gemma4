@@ -577,3 +577,9 @@ step, as in the choose step.
 (`src/httpx/_parsers.py`, `_server.py`, `_parsers.py` again): browsing, with the prompt at 16.9k tokens after 6 calls.
 Fixed: a bare file path is not a place (answered with the edit window); the repeat detector also catches a call equal
 to any of the last three (ping-pong A-B-A, as in OpenHands' stuck detector).
+
+**Local 12B, httpx_3672, third run: resolved by the local re-verification** (fail-to-pass tests pass, no new
+failures; the harness said 0/1 because of this container's environment, as in earlier runs). 13 calls in 5 min (time
+limit): it chose twice, a file path was refused, then it added `HTTPParser.reset` (OK, 32 existing tests pass). Seen:
+the 12B packed an edit into one string (`"P1,378,399,    def complete..."`), refused twice before it sent the four
+items. Fixed: an edit packed as `P1,start,end,text` or `P1 | start | end | text` is read.

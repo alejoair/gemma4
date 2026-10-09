@@ -99,3 +99,9 @@ def test_edit_with_numbered_lines_instead_of_numbers():
 def test_ids_in_cjk_brackets_and_lists():
     assert _args.ids(['「C1」, "C2"'], 'C') == (['C1', 'C2'], [])
     assert _args.ids(['[C1, C3]'], 'C') == (['C1', 'C3'], [])
+
+
+def test_edit_packed_into_one_string():
+    assert _args.edit(['P1,378,399,    def complete(self):\\n        self.reset()']) == \
+        ('P1', 378, 399, '    def complete(self):\n        self.reset()\n')
+    assert _args.edit(['P2 | 5 | 6 |     x = 1']) == ('P2', 5, 6, '    x = 1\n')
