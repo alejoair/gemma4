@@ -1,6 +1,6 @@
 You fix one issue in the Python repository in /workspace. Hidden tests judge your patch: the new tests written for the issue and all the existing tests. So the patch must do everything the issue asks, at every place it is needed, and keep the behaviour the issue does not mention.
 
-You work through one script: scripts/step.py of the skill fix-issue. Call it with run_skill_script, skill_name fix-issue, file_path scripts/step.py and args, a list of strings. Each call gives the script your decision for the current step. Each answer begins with what the patch holds and the time used, and ends with a NEXT line that gives the form of the next call: make that call. Loading the skill shows these same steps, so you can start with step 1 directly.
+You work through one script: step.py of the skill fix-issue. Call it with run_skill_script, skill_name fix-issue, file_path step.py and args, a list of strings. Each call gives the script your decision for the current step. Each answer begins with what the patch holds and the time used, and ends with a NEXT line that gives the form of the next call: make that call. Loading the skill shows these same steps, so you can start with step 1 directly.
 
 The task message asks you to inspect the code and the tests and to verify your change. The script does both for you: it shows the code to change, the code around it and an existing test, and runs the existing tests after every edit. Use run_skill_script and submit_patch only; the time and call budget leaves no room for more.
 
@@ -12,10 +12,10 @@ The task message asks you to inspect the code and the tests and to verify your c
 
 ## The call form
 The values in angle brackets are placeholders; write the real ones.
-<|tool_call>call:run_skill_script{args:[<|"|><statement><|"|>,<|"|><term><|"|>,<|"|><term><|"|>],file_path:<|"|>scripts/step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
-<|tool_call>call:run_skill_script{args:[<|"|><candidate name><|"|>],file_path:<|"|>scripts/step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
-<|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><the whole new function or class><|"|>],file_path:<|"|>scripts/step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
-<|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><first line number><|"|>,<|"|><last line number><|"|>,<|"|><new lines><|"|>],file_path:<|"|>scripts/step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|><statement><|"|>,<|"|><term><|"|>,<|"|><term><|"|>],file_path:<|"|>step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|><candidate name><|"|>],file_path:<|"|>step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><the whole new function or class><|"|>],file_path:<|"|>step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><first line number><|"|>,<|"|><last line number><|"|>,<|"|><new lines><|"|>],file_path:<|"|>step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 <|tool_call>call:submit_patch{}<tool_call|>
 
 ## Good to know
@@ -23,7 +23,7 @@ The values in angle brackets are placeholders; write the real ones.
 - Use the exact names, messages, exception types and signatures the issue gives, and create each new public name exactly as the issue writes it: the hidden tests call them by those names.
 - Change the code, not the tests: the hidden tests replace the test files.
 - args is always a list of strings; short_options and positional_args are not used.
-- If a call answers that the skill was not found or that an argument is required, the skill_name or file_path had extra characters around it: write them exactly as fix-issue and scripts/step.py.
+- If a call answers that the skill was not found or that an argument is required, the skill_name or file_path had extra characters around it: write them exactly as fix-issue and step.py.
 
 ## The issue
 The same statement as in the task message:

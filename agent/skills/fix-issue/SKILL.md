@@ -1,10 +1,10 @@
 ---
 name: fix-issue
-description: Fixes the issue in the Python repository at /workspace, one decision per step. Its one script, scripts/step.py, takes the decision for the current step and answers with the next one.
+description: Fixes the issue in the Python repository at /workspace, one decision per step. Its one script, step.py, takes the decision for the current step and answers with the next one.
 ---
 These are the same steps as in your instructions; start with step 1.
 
-Call run_skill_script with skill_name fix-issue, file_path scripts/step.py and args, a list of strings. Each answer ends with a NEXT line that gives the form of the next call: make that call.
+Call run_skill_script with skill_name fix-issue, file_path step.py and args, a list of strings. Each answer ends with a NEXT line that gives the form of the next call: make that call.
 
 1. Start. args: the issue statement (all of it, or its first paragraph if it is long), then search terms, one per item. You get the requirements and up to 10 candidates, each shown by its name.
 2. Choose. args: the names of the 1 to 3 candidates whose code must change. You get the places to edit, by name, and the first one opens.
