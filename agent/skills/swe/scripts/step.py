@@ -603,6 +603,38 @@ def _file_outline(root, state, path):
     return '\n'.join(out)
 
 
+def _add_named(root, state, items):
+    """Candidate ids and "<file>::<Name>" items sent together in the edit step: each joins the places and the plan
+    (choosing more code is part of the procedure). Returns the place ids, or None."""
+    out, first = [], None
+    for raw in items[:4]:
+        x = _args.clean(raw)
+        if re.fullmatch(r'(?i)C\d+', x):
+            got = _add_candidate(state, x)
+            if got:
+                out.append(got)
+                first = first if first is not None else state['current']
+            continue
+        found = _resolve(root, [x])
+        if not found or len(state['places']) >= MAX_PLACES + 4:
+            continue
+        c = found[0]
+        old = next((p for p in state['places'] if (p['rel'], p['name']) == (c['rel'], c['name'])), None)
+        pid = old['id'] if old else f'P{len(state["places"]) + 1}'
+        if not old:
+            state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
+                                    'reason': 'chosen', 'id': pid})
+        i = _journal.target(state, pid)
+        if state['plan'][i]['status'] == 'skipped':
+            state['plan'][i]['status'] = 'todo'
+        out.append(pid)
+        first = first if first is not None else i
+    if not out:
+        return None
+    state['current'] = first
+    return ', '.join(out)
+
+
 def _add_candidate(state, text):
     """A candidate id that is not a listed place, sent in the edit step: the candidate joins the places and the plan
     (choosing more of the system's own list is part of the procedure) and is opened. Returns the new place id."""
@@ -682,6 +714,9 @@ def d3(root, state, args):
     if shown:
         return shown
     added = _add_candidate(state, single) if single else None
+    if not added and len(items) > 1 and all(re.fullmatch(r'(?i)C\d+|[\w./-]+::[\w.]+(\(\))?', _args.clean(x))
+                                            for x in items):
+        added = _add_named(root, state, items)
     if added:
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
