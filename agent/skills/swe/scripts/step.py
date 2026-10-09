@@ -505,6 +505,9 @@ def _lookup(root, state, text):
     of that name is defined, or that none exists, without opening it, so that the model need not search for it. At
     most MAX_LOOKUPS per place; later ones are refused like other calls."""
     text = _args.clean(text).strip('[]"\'\\ ')
+    if re.fullmatch(r'[\w./-]+/[\w.-]+', text) and not text.endswith('.py') \
+            and os.path.isfile(os.path.join(root, text + '.py')):
+        text += '.py'                                   # a module path without .py
     if re.fullmatch(r'[\w./-]+\.py', text):
         return _file_outline(root, state, text)
     ls = re.fullmatch(r'(?:ls|dir)\s+(-\w+\s+)?([\w./-]+)', text)
