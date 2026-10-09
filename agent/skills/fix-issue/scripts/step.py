@@ -56,6 +56,19 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
     if end - start + 1 <= limit + 30:          # hiding a few lines saves little and hides code
         return _code.numbered(lines, start, end, collapse=collapse)
     head = min(end, start + 14)
+    sig_end = None
+    for node in ast.walk(tree) if tree is not None else ():
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.body and \
+                min([node.lineno] + [d.lineno for d in node.decorator_list]) == start:
+            sig_end = node.body[0].lineno - 1
+            break
+    if sig_end is not None and sig_end - start + 1 > 8:
+        # a long signature (FastAPI's Annotated[..., Doc(...)] parameters): its first line, then the body, so that
+        # the window shows the code that runs (V10 audit #8: windows showed Doc texts and hid the body)
+        out = [_code.numbered(lines, start, start, collapse=collapse),
+               f'      ... (the parameters, lines {start + 1}-{sig_end}, not shown) ...']
+        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2)
+        return '\n'.join(out + [body])
     best, best_score = head + 1, -1
     toks = focus_terms or {}
     width = limit - (head - start + 1)
@@ -203,6 +216,9 @@ def _window(root, state, i):
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
     head = f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])} to edit)'
+    owner = _owner_class(root, p)
+    if owner:
+        head += f'\nIt is a method of {owner}.'
     if p['reason'] != 'chosen':
         head += f' ({p["reason"]})'
     if p['name'] == '<exports>':
@@ -210,14 +226,19 @@ def _window(root, state, i):
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
-        if 'not shown) ...' in body:
+        if re.search(r'\(lines \d+-\d+ not shown\)', body):
             body += (f'\n{p["handle"]} is longer than the window: rewrite one of its members whole, from its def line '
                      'to its last line, or change the lines shown here by their numbers.')
+        elif '(the parameters, lines' in body:
+            body += f'\nThe parameters of {p["handle"]} are not shown: change its body by line numbers.'
         members = _members(root, p)
         if members:
             body = members + '\n' + body
     parts = [head, body]
-    context = _context_view(root, p)
+    imports = _imports_view(root, p)
+    if imports:
+        parts.append(imports)
+    context = _context_view(root, p, _focus(state, entry))
     if context:
         parts.append(context)
     parts.append(_task_view(root, state, p))
@@ -233,6 +254,44 @@ def _window(root, state, i):
                  f"  ['skip'] if {name} needs no change; ['<name of another listed place>'] to open it; ['back'] to "
                  f"choose other code. Questions are not answered in this step.")
     return '\n'.join(parts)
+
+
+def _owner_class(root, p):
+    """'class X(Base) (line n)' for a method place, so that its class and bases are known without asking."""
+    if '.' not in p['name'] or p['name'] in (MODULE, '<exports>'):
+        return ''
+    try:
+        syms = _code.symbols(_code.parse(''.join(_repo.read_lines(root, p['rel']))))
+    except OSError:
+        return ''
+    cls = next((x for x in syms if x.name == p['name'].rsplit('.', 1)[0] and x.kind == 'class'), None)
+    return f'{_code.signature(cls)} (line {cls.def_line})' if cls else ''
+
+
+IMPORT_LINES = 15
+
+
+def _imports_view(root, p):
+    """The file's import block, numbered (at most IMPORT_LINES lines), so that an import the change needs can be
+    added by line numbers (V10: 'Lines 1-40 are outside P1')."""
+    if p['name'] in (MODULE, '<exports>'):
+        return ''
+    try:
+        lines = _repo.read_lines(root, p['rel'])
+        tree = _code.parse(''.join(lines))
+    except OSError:
+        return ''
+    if tree is None:
+        return ''
+    imps = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    if not imps:
+        return ''
+    a, b = imps[0].lineno, max(n.end_lineno or n.lineno for n in imps)
+    if b >= p['start']:
+        return ''
+    shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
+    more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
+    return f'The imports of {p["rel"]}:\n{shown}{more}'
 
 
 def _members(root, p):
@@ -254,10 +313,10 @@ def _members(root, p):
 USES = 8        # definitions the place calls or reads
 USES_CHARS = 2500   # their total size
 SHORT_MEMBER = 15   # a member of the place's own class up to this many lines is shown as code
-CALLERS = 4     # code that calls the place, one line each
+CALLERS = 3     # code that calls the place, one line each
 
 
-def _context_view(root, p):
+def _context_view(root, p, focus=None):
     """The repository code the place calls or reads (where it is defined, its signature and first doc line; a short
     member of the place's own class as its code) and the code that calls the place (the line of the call). These are what the model asked about in the edit step of
     the local runs; showing them makes the questions unnecessary (Agentless: prepared inputs, the model never asks
@@ -314,7 +373,23 @@ def _context_view(root, p):
         return defs if len(defs) <= 3 else []          # a common method name (get, copy of many classes) says little
 
     uses, seen, chars = [], set(), 0
-    for name, how in dict.fromkeys((n, h) for _, n, h in sorted(used)):
+    focus = focus or {}
+
+    def weight(item):
+        name, how = item
+        if how == 'self':
+            return 10                       # the place's own class members: always
+        return sum(focus.get(t, 0) for t in _rank.tokens(name))
+
+    # code that shares words with the requirements first; at most 2 that share none (near-miss context costs more than
+    # it gives: Chroma, P7)
+    order = sorted(dict.fromkeys((n, h) for _, n, h in sorted(used)), key=lambda it: -weight(it))
+    plain = 0
+    for name, how in order:
+        if weight((name, how)) == 0:
+            plain += 1
+            if plain > 2:
+                continue
         defs = [(r, x) for r, x in resolve(name, how)
                 if not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
         mine = how == 'self'
@@ -392,6 +467,7 @@ def _candidates_view(state, title='Candidates (the code most related to the stat
     out = [title]
     for c in state['candidates']:
         out.append(f'  {c["handle"]}  {c["line"]}')
+        out.extend(f'      {e}' for e in c.get('evidence', []))
     if not state['candidates']:
         out.append("  (none found: name the code to change as '<file>::<Name>')")
     return '\n'.join(out)
@@ -424,17 +500,53 @@ def _refresh(root, state, rel):
                 p['start'], p['end'] = found[0].start, found[0].end
 
 
-def _candidate(index, doc, matched, note=None):
+DOC_ARG = re.compile(r"""Doc\((?:'[^']*'|"[^"]*"|[^()])*\)""")
+EVIDENCE_LINES = 2
+
+
+def _short_signature(sym):
+    """The signature without `Doc(...)` texts and `Annotated[...]` wrappers, at most 100 characters."""
+    sig = DOC_ARG.sub('', _code.signature(sym))
+    sig = re.sub(r'Annotated\[(.*?),\s*\]', r'\1', sig)
+    return sig if len(sig) <= 100 else sig[:97] + '...'
+
+
+def _evidence(root, doc, literals, toks):
+    """The 1-2 lines of a candidate that hold the most of the statement's code literals and terms, numbered: what
+    makes the right candidate recognizable (V10: the model skipped the right candidate for want of the line that
+    holds `Parameters.empty`)."""
+    all_lines = _repo.read_lines(root, doc.rel)
+    lines = all_lines[doc.start - 1:doc.end]
+    first = doc.sym.def_line if doc.sym is not None else 0
+    prose = set()                       # lines inside docstrings and other multi-line texts: words, not code
+    tree = _code.parse(''.join(all_lines))
+    for node in ast.walk(tree) if tree is not None else ():
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and (node.end_lineno or 0) > node.lineno:
+            prose.update(range(node.lineno, node.end_lineno + 1))
+    scored = []
+    for i, line in enumerate(lines, doc.start):
+        text = line.strip()
+        if not text or i == first or i in prose or text.startswith(('#', '"""', "'''", '@')):
+            continue
+        score = 3 * sum(lit in line for lit in literals)
+        score += sum(toks.get(t, 0) for w in re.findall(r'[A-Za-z_]\w*', line) for t in _rank.tokens(w))
+        if score > 0:
+            scored.append((score, i, text))
+    best = sorted(scored, key=lambda x: (-x[0], x[1]))[:EVIDENCE_LINES]
+    return [f'{i}: {t[:110]}' for _, i, t in sorted(best, key=lambda x: x[1])]
+
+
+def _candidate(index, doc, matched, note=None, root=None, literals=(), toks=None):
     if doc.sym is None:
         line = f'(lines {doc.start}-{doc.end}: imports and top-level code)'
     else:
         doc_line = _code.first_doc_line(doc.sym)
-        line = f'({doc.rel}, {doc.sym.kind}, lines {doc.sym.start}-{doc.sym.end}) {_code.signature(doc.sym)}' + (
-            f' — {doc_line}' if doc_line else '')
-    if len(line) > 220:
-        line = line[:217] + '...'
-    line += f'  [{note}]' if note else (f'  [matched: {", ".join(matched[:4])}]' if matched else '')
-    return {'rel': doc.rel, 'name': doc.name, 'start': doc.start, 'end': doc.end, 'line': line}
+        line = f'({doc.rel}, {doc.sym.kind}, lines {doc.sym.start}-{doc.sym.end}) {_short_signature(doc.sym)}' + (
+            f' — {doc_line[:80]}' if doc_line else '')
+    words = [m for m in matched if len(m) >= 4 and m not in _statement.STOP]
+    line += f'  [{note}]' if note else (f'  [matches: {", ".join(words[:4])}]' if words else '')
+    ev = _evidence(root, doc, literals, toks or {}) if root else []
+    return {'rel': doc.rel, 'name': doc.name, 'start': doc.start, 'end': doc.end, 'line': line, 'evidence': ev}
 
 
 def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES):
@@ -444,6 +556,14 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES):
     for k, v in mt.items():
         terms[k] = max(v, terms.get(k, 0))
     out, seen = [], set()
+    literals = [x for x in dict.fromkeys(
+        re.findall(r'`([^`\n]{4,60})`', text) + [n.split('.')[-1] for n in _statement.code_names(text)]) if len(x) >= 4]
+    toks = {}
+    for term, w in terms.items():
+        for ident in re.findall(r'[A-Za-z_]\w*', term):
+            for t in _rank.tokens(ident):
+                if len(t) >= 4 and t not in _statement.STOP:
+                    toks[t] = max(toks.get(t, 0), 1 if w < 2 else 2)
     for r in requirements:
         if r['type'] != 'new':
             continue
@@ -456,11 +576,12 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES):
                 doc = next((d for d in index.docs if (d.rel, d.name) == owner), None)
                 if doc:
                     seen.add(owner)
-                    out.append(_candidate(index, doc, [], note=f'where the new `{new}` would go'))
+                    out.append(_candidate(index, doc, [], note=f'where the new `{new}` would go', root=root,
+                                          literals=literals, toks=toks))
     for _, doc, matched in index.rank(terms, _statement.paths(text) + mpaths, n=n + len(out)):
         if (doc.rel, doc.name) not in seen and len(out) < n:
             seen.add((doc.rel, doc.name))
-            out.append(_candidate(index, doc, matched))
+            out.append(_candidate(index, doc, matched, root=root, literals=literals, toks=toks))
     for i, c in enumerate(out, 1):
         c['id'] = f'C{i}'
     _set_handles(out)

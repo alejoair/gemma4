@@ -152,7 +152,7 @@ RENAME_WORDS = re.compile(r'(?i)\b(renamed?|renaming)\b|->|→')     # not 'depr
 # sentences about the pull request or its tests, and ideas left for later, are not requests (V10 audit #6)
 META = re.compile(r"(?i)\b(this (pr|pull request)|the (new )?tests? (created|written|simulate|cover)|extends? the tests|"
                   r"added (the )?[\w\s]{0,30}as a test|thanks|ideally|breaking change|have to wait|we'll have to wait|"
-                  r"in a (future|follow[- ]up)|for now)\b")
+                  r"in a (future|follow[- ]up)|for now|will be deprecated|later removed|once there's)\b")
 
 
 def requirements(text):
@@ -181,11 +181,12 @@ def requirements(text):
         elif line and not line.startswith(('#', '|', '>')):
             body.append(line)
     for line in body:
-        if line.endswith(':') and len(line.split()) >= 2 and not META.search(line):
-            put(line.rstrip(':'))                       # a heading line of the request ('Escape Swagger UI configs:')
+        head = re.match(r'^([^:]{6,80}):(\s|$)', line)
+        if head and 2 <= len(head.group(1).split()) <= 8 and not META.search(head.group(1)):
+            put(head.group(1))                          # a request heading ('Escape Swagger UI configs: ...')
     for sentence in re.split(r'(?<=[.!?])\s+', ' '.join(l for l in body if not l.endswith(':'))):
-        if META.search(sentence):
-            continue
+        if META.search(sentence) or any(sentence.startswith(o + ':') for o in out):
+            continue                                    # meta, or the heading's own explanation
         if re.search(r'`[^`]+`', sentence) or any(_shape(w) >= 4 for w in re.findall(IDENT, sentence)):
             put(sentence)
     return out[:MAX_REQUIREMENTS]
