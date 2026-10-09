@@ -280,6 +280,9 @@ def check(root, changed):
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
     if not new:
+        if r['passed'] == 0:      # nothing passes: the tests say nothing about the change (SWE-ABS: not verified)
+            return 'NOT VERIFIED', (f'no selected test passes, before or after the change ({len(r["failed"])} failed '
+                                    f'already before it){late}'), []
         return 'OK', (f'{r["passed"]} existing tests pass; {len(r["failed"])} failures were already there before '
                       f'the change{late}'), []
     return 'BROKEN', _failure_excerpt(r['output'], new), new

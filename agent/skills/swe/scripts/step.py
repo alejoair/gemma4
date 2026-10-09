@@ -524,13 +524,17 @@ def _lookup(root, state, text):
     if not m:
         search = re.fullmatch(r'(?is)(?:search|grep|find)\s*:?\s+(.+)', text)
         needle = (search.group(1) if search else text).strip().strip('"\'`')
+        scope = re.fullmatch(r'(?s)(.+?)\s+in\s+([\w./-]+\.py)', needle)      # "search X in path/file.py"
+        only = None
+        if scope:
+            needle, only = scope.group(1).strip().strip('"\'`'), scope.group(2)
         if '\n' in needle or len(needle) < 3 or len(needle) > 120:
             return None
         entry = state['plan'][state['current']]
         entry['lookups'] = entry.get('lookups', 0) + 1
         if entry['lookups'] > MAX_LOOKUPS:
             return LIMIT
-        return _search_text(root, needle)
+        return _search_text(root, needle, only)
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
     if entry['lookups'] > MAX_LOOKUPS:
@@ -556,7 +560,7 @@ def _lookup(root, state, text):
 MAX_MATCHES = 50
 
 
-def _search_text(root, text):
+def _search_text(root, text, only=None):
     """Lines of the repository's code (tests and docs included, hidden and cache files not) that contain text
     literally, as 'file:line: code', at most MAX_MATCHES; more matches ask for a narrower text (SWE-agent's summarized
     search)."""
@@ -565,6 +569,8 @@ def _search_text(root, text):
         return None
     hits, files = [], set()
     rels = sorted(_repo.iter_py(root, tests=True, docs=True), key=lambda r: (_repo.is_doc_path(r), _repo.is_test_path(r), r))
+    if only:
+        rels = [r for r in rels if _rank.names_file(only, r)] or rels
     for rel in rels:                                    # package code first, then tests, then docs and examples
         for i, line in enumerate(_repo.read_text(root, rel).splitlines(), 1):
             if needle in line:
