@@ -119,7 +119,7 @@ DEF_LINE = re.compile(r'^\s*(@|(async\s+)?def\s|class\s)', re.M)
 
 def _base_handle(x):
     if x['name'] == MODULE:
-        return x['rel']
+        return f'{x["rel"]} top level'
     if x['name'] == '<exports>':
         return f'{x["rel"]} imports'
     return x['name']
@@ -587,7 +587,7 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only
                                           literals=literals, toks=toks))
     ranked = index.rank(terms, _statement.paths(text) + mpaths, n=len(index.docs) if only_rel else n + len(out))
     for _, doc, matched in ranked:
-        if only_rel and (doc.rel != only_rel or doc.sym is None):
+        if only_rel and doc.rel != only_rel:
             continue
         if (doc.rel, doc.name) not in seen and len(out) < n:
             seen.add((doc.rel, doc.name))
