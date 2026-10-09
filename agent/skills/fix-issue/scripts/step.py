@@ -624,6 +624,9 @@ def s0(root, state, args):
     return f'{_requirements_view(state)}\n\n{_candidates_view(state)}\n\nChoose the code to change.'
 
 
+BIG_FILE = 60       # a file longer than this is never one place: it is chosen through its functions and classes
+
+
 def _resolve(root, names):
     """Candidates for code the model named off the list: 'file::Name', 'Name' or 'pkg/file.py'."""
     table = _impact.Table(root, docs=True)
@@ -641,7 +644,8 @@ def _resolve(root, names):
             match = [r for r in table.syms if _rank.names_file(rel, r)]
             if match:
                 n = len(_repo.read_lines(root, match[0]))
-                out.append({'rel': match[0], 'name': MODULE, 'start': 1, 'end': n, 'line': ''})
+                if n <= BIG_FILE:               # a bigger file is chosen through its functions (d1 lists them)
+                    out.append({'rel': match[0], 'name': MODULE, 'start': 1, 'end': n, 'line': ''})
             continue
         found = table.find(name) if name else []
         if rel:
@@ -649,8 +653,10 @@ def _resolve(root, names):
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
         for r, s in found[:1]:
             out.append({'rel': r, 'name': s.name, 'start': s.start, 'end': s.end, 'line': ''})
-        if not found and len(raw) >= 4 and not rel:
-            hit = _find_text(root, table, raw)        # a code fragment: the function or class that contains it
+        if not found and len(raw) >= 4 and not rel and not re.fullmatch(r'[A-Za-z_][\w.]*', raw):
+            # a code fragment (not a bare name the repository does not define, such as a library's): the function or
+            # class that contains it
+            hit = _find_text(root, table, raw)
             if hit:
                 out.append(hit)
     return out
@@ -666,6 +672,8 @@ def _find_text(root, table, text):
                 syms = table.syms[rel]
                 owner = _code.owner_map(syms, len(lines))[i]
                 if owner is None:
+                    if len(lines) > BIG_FILE:
+                        continue                # top-level code of a big file (an import line): not a place
                     return {'rel': rel, 'name': MODULE, 'start': 1, 'end': len(lines), 'line': ''}
                 return {'rel': rel, 'name': owner.name, 'start': owner.start, 'end': owner.end, 'line': ''}
     return None
@@ -677,30 +685,28 @@ def d1(root, state, args):
     if len(args) == 1 and (_is_done(args[0]) or _is_skip(args[0])):
         return ('In this step code is chosen; nothing is open to skip or finish. ' + _candidates_view(state)
                 + '\n\nChoose the code to change.')
-    single = [_args.clean(a) for a in args if a and a.strip()]
-    path = single[0].strip('/') if len(single) == 1 and re.fullmatch(r'[\w./-]+\.py', single[0].strip('/')) else ''
-    rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(path, r)), None) if path else None
-    picked, others = _pick(state['candidates'], args)
-    if rel and len(_repo.read_lines(root, rel)) > 60:
-        # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
-        # stays a pick from a short list of names (W1) instead of opening a whole file (or its top lines) as a place
-        picked, others, paths = [], [rel], [rel]
-    else:
-        paths = []
-    if paths and not picked and len(others) == 1:
-        # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
-        # stays a pick from a short list of names (W1) instead of opening a whole file as one place
-        if rel:
-            st = _state.load('statement', {})
-            cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'],
-                                        only_rel=rel)
-            if cands:
-                state['candidates'] = cands
-                return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related '
-                                         'to the issue):') + '\n\nChoose the code to change.')
+    items = [a for a in args if a and a.strip()]
+    big = []                            # files over BIG_FILE lines sent at the choose step
+    for a in items:
+        x = _args.clean(a).strip('/')
+        if re.fullmatch(r'[\w./-]+\.py', x):
+            r = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None)
+            if r and len(_repo.read_lines(root, r)) > BIG_FILE:
+                big.append((a, r))
+    picked, others = _pick(state['candidates'], [a for a in items if a not in {b for b, _ in big}])
     chosen = picked[:3]
     if others and len(chosen) < 3:
         chosen += _resolve(root, others)[:3 - len(chosen)]
+    if not chosen and big:
+        # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
+        # stays a pick from a short list of names (W1) instead of opening a whole file (or its top lines) as a place
+        rel = big[0][1]
+        st = _state.load('statement', {})
+        cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'], only_rel=rel)
+        if cands:
+            state['candidates'] = cands
+            return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related to '
+                                     'the issue):') + '\n\nChoose the code to change.')
     if not chosen:
         msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
                if others else 'No candidate was chosen. ')
