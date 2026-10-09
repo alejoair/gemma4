@@ -697,3 +697,47 @@ System faults found and fixed during the batch:
 Model faults: navigating by file names instead of choosing; reasoning at the 3,072-token budget (55–70 s per call);
 copying placeholders (`'<first line number>'`) into a call; once, a repository file path in the tool's `file_path`
 parameter (the ADK's parameter name invites it).
+
+### Why the patches of the near misses stay incomplete (V13b traces, 2026-10-09)
+
+Method: each V13b patch was applied with the task's test patch on the local snapshot and the new tests were run
+(`scratchpad/near_run.py`; the reference patch passes them, except rich's `test_inline_code`, which fails with the
+local Pygments too); then every call of the trace was read with the script's full answer (`scratchpad/trace_step.py`).
+
+| Task | Failing new tests | Model patch vs reference | Cause |
+|---|---|---|---|
+| fastapi_14986 | 4 of 7: root_path tests (2), Swagger escaping (2) | deleted the root_path logic; `json.dumps` on two values | **The statement was lost at step 1**: the model sent only the title, so the requirements and every window's "What the change must do" held only "Refactor logic to handle OpenAPI and Swagger UI escaping data". The two concrete sentences ("do not store `root_path` in servers", "Escape Swagger UI configs", "JSON inside of HTML") never reached a window. It read "do not store" as "do not add" and deleted the behaviour; the deletion was "Kept, not checked" (see the test faults below). Submitted at 3.6 of 7 min |
+| fastapi_14851 | 9 of 9 (`Router.__init__() got an unexpected keyword argument 'on_startup'`) | +2 lines in `APIRouter` vs a 6.8k-character re-implementation | **The window of `FastAPI.__init__` (940 lines) hid the code to change**: lines 964-999, the `routing.APIRouter(..., on_startup=..., on_shutdown=..., lifespan=...)` call. The window spent its 98 lines on `self.x = x` and on Doc texts that mention "FastAPI" (the focus score counts prose, and collapsed text counts as raw lines). The model said "Since I can't see the code of `FastAPI.__init__` …" and sent `DELETE` over line ranges 5 times **to see them**; one (APIRouter.__init__ 691-929) was saved only by the tests |
+| fastapi_14448 | empty patch | — | **No way to read lines**: the model wanted the imports of `fastapi/routing.py` (where `is_async_callable` comes from) and sent `['fastapi/routing.py', 1, 50, 'DELETE']` 4 times; `fastapi/routing.py::fastapi/routing.py top level` was refused. Its one real edit was undone with **an empty failure excerpt** (only test names), so it concluded "I didn't actually apply the change" |
+| rich_3469 | `test_table_with_empty_cells` | edited `rich/align.py`; the fix is one condition in `rich/markdown.py` | **Statement without content**: "fix superfluous space / Fixes <url>". Nothing names Markdown; the description is in the linked issue, which is not available |
+| rich_3521 | 4 of 8 new `test_split_cells_mixed` cases | right function, a different bug | **Statement without content**: "Segment.split_cells fix / Fixes <url>". The model guessed the wide-character branch; the bug is the first position estimate overshooting the cut. The hidden test is the existing `test_split_cells_mixed` with more strings and positions 0..n |
+
+Faults of the procedure (all systematic, not of one task):
+1. **Step 1 keeps only what the model copies.** A one-line copy (the title) leaves the requirements, the windows and the
+   coverage map without the statement's content. The model copied only the title in 14986 and 14851.
+2. **There is no form to read lines**, and "questions are not answered" in the edit step. The model needs the imports,
+   the hidden part of a long function or a library definition, and it uses `DELETE` over line ranges as a viewer
+   (9 calls in 14851 and 14448). A deletion of 240 lines was applied and only the tests undid it.
+3. **A long function's window counts collapsed text as code lines and scores prose.** Doc texts win the focus window;
+   the call that holds the statement's words (`lifespan=lifespan`) stays hidden.
+4. **The test check is blind to removed behaviour.** Test selection uses the new lines and the place's name; a
+   deletion has no new lines, so the root_path tests were never selected. And 290 of fastapi's 468 test files assert
+   `== snapshot(...)` from `inline_snapshot`, which the sandbox lacks: our stub makes every such assertion true, so most
+   fastapi regressions pass as "Kept and checked".
+5. **The failure excerpt is empty for long test ids.** pytest writes `_ <long id> _` with one underscore when the id is
+   wider than the line; the excerpt's pattern needs three.
+
+Also found: the hidden test of fastapi_14583 (`tests/test_compat_params_v1.py`) imports `inline_snapshot`, so it fails
+at collection in the eval sandbox whatever the patch (the earlier note "a module is never created" was wrong).
+
+Proposed fixes (to be checked against `docs/llm_checklist.md` before they are made):
+1. Step 1: ask for the whole statement (first 40 lines if longer); when the copy is one line, the answer says that only
+   the title was read and asks for the rest once, with the exact form.
+2. A read form in every step: `['<file>', '<first line>', '<last line>']` (no new lines) shows those lines, read-only;
+   a library name shows its definition from site-packages. A `DELETE` over more than 30 lines is shown first and applied
+   only when sent again.
+3. Window: count displayed lines (a collapsed text is one line) and give prose lines no score.
+4. Tests: select also by the removed lines' names; the `inline_snapshot` stub returns its argument (`snapshot(x) == x`).
+5. Failure excerpt: match headers with any number of underscores.
+6. Statements with no content (a title and a link): no fix in the procedure; the existing test closest to the place is
+   the only evidence and is already shown.
