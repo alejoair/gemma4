@@ -104,26 +104,33 @@ submission was made that UTC day.
 redesign) and `alejoair7/gemma4-eval-single-b` (V12 = commit bc3f2a3, D3 redesign + `fix-issue`, still with ids).
 Compare them per task when both finish.
 
-## Next (the plan agreed on 2026-10-09)
+## Next (the plan, 2026-10-09)
 
-The checklist now has 7 W, 14 B, 10 P and 9 F items (`docs/llm_checklist.md`); its check of commit 8c95d1d lists the
-gaps. The fixes, grouped, in this order:
+Each item names the checklist items it serves (`docs/llm_checklist.md`); the prompt items are detailed in
+`docs/prompt_audit.md`.
 1. **Truthful status** (B11, F3, F4, F5, P8): a progress line from `git diff` at the top of every answer; the finish
    summary from the diff; "OK" only when a selected test runs the changed lines, else "kept, not checked"; coverage as
-   labelled facts, never "is it covered?".
-2. **Feedback** (F1, F2, F7, F9, B5, P4): test failures as test name + expected vs actual, "passed before, the code is
-   back"; compile errors with the offending line's text; refusals that describe instead of quoting; a repeat answer
-   that differs each time and moves on at the third repeat in every step; no capitals or pressure words.
+   facts (is each new name defined, is each old name gone or aliased, does the statement's literal appear), never "is
+   it covered?".
+2. **Feedback** (F1, F2, F6, F7, F9, B5): test failures as test name + expected vs actual, "these tests passed before;
+   the code is back"; compile errors with the offending line's text; refusals that describe instead of quoting the
+   model's input; a repeat guard keyed on (step, place, args) whose answer differs each time and moves on at the third
+   repeat in every step; fresh code after leaving a place.
 3. **Budget** (B10, W4, P5): time used and the edit deadline in every answer; at time-up only submit_patch.
-4. **Prompt** (P1, P3, P5, P6, F8, B2; the full list is `docs/prompt_audit.md`): the statement inside `<issue>…</issue>`; positive rules with their reason and
-   who judges the patch (the hidden tests); no contradictions; the step's decision at both ends of each answer; what
-   the harness's skill errors mean; any copy of the statement accepted.
-5. **A -/+ diff after an edit** (W5).
-6. **Stub scripts** for invented names (`show.py`, `grep.py`, …) (B6).
-7. **Window content** (W1, W3, W6, P7): evidence lines under each candidate; the right part of long places; cleaner
-   requirement extraction; context lists without distractors.
-Then the 10 local tasks with the 12B, monitored step by step, then a Kaggle eval. Separately, an A/B run of Gemma's
-recommended sampling (temperature 1.0, top_p 0.95, top_k 64) against 0.2.
+4. **Quote hygiene in the script's answers** (B15, P4): lists with single quotes, names bare, no double quotes in our
+   sentences; plain case instead of STOP REPEATING, NOT RUN, NOTHING, TIME IS UP.
+5. **The prompt and the texts around it** (P1, P3, P5, P6, P9, F8, B2, W6, B8): the statement inside `<issue>`; who
+   judges the patch and positive rules with their reason; an answer to each harness instruction (inspect, verify) and
+   to the ADK's load_skill instruction; `SKILL.md` = the same steps; the agent renamed `issue_fixer` with a plain
+   description; what "skill not found" / "argument required" mean, without showing the malformed form; args always a
+   list; "function or class" instead of "place"; the goal again at the end; any copy of the statement accepted.
+6. **A -/+ diff after an edit** (W5) and **stub scripts** for invented names (`show.py`, `grep.py`, …) (B6).
+7. **Window content** (W1, W3, W6, P7): evidence lines under each candidate; the right part of long places, `Doc(...)`
+   parameters collapsed, the import block and class line reachable; cleaner requirement extraction (no fragments, no PR
+   or test remarks, no "ideally … later", no rename tag for deprecation); context lists without distractors.
+Then: the 10 local tasks with the 12B, monitored step by step (with `--reasoning-budget 512` if the peer session can
+set it), and a Kaggle eval (V13). Measured separately on Kaggle, one at a time: (a) the prompt's raw call examples
+against a plain description, (b) Gemma's sampling (temperature 1.0, top_p 0.95, top_k 64) against 0.2.
 
 ## Repository map
 
