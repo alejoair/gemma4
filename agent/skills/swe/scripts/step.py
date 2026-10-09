@@ -782,6 +782,25 @@ def d4(root, state, args):
         if state['step'] == 'D3' and state['current'] is None:
             state['step'] = 'D4'
         return out
+    items = [x for x in args if x is not None and x.strip()]
+    if len(items) == 1 and state.get('finish_lookups', 0) < MAX_LOOKUPS:
+        text = _args.clean(items[0]).strip('[]"\'\\ ')
+        if re.fullmatch(r'[\w./-]+\.py', text):
+            answer = None
+        else:
+            name = re.fullmatch(r'(?:(?:async\s+)?def\s+|class\s+)?([A-Za-z_][\w.]*)(?:\(.*\))?:?', text)
+            search = re.fullmatch(r'(?is)(?:search|grep|find)\s*:?\s+(.+)', text)
+            if name:
+                table = _impact.Table(root, docs=False)
+                found = table.find(name.group(1).split('.')[-1])
+                answer = ('`{}` is defined in: {}.'.format(name.group(1), '; '.join(
+                    f'{r} :: {x.name} (lines {x.start}-{x.end})' for r, x in found[:6])) if found
+                          else _search_text(root, name.group(1)))
+            else:
+                answer = _search_text(root, (search.group(1) if search else text).strip())
+        if answer:
+            state['finish_lookups'] = state.get('finish_lookups', 0) + 1
+            return answer + '\n\n' + _finish_view(root, state)
     return 'Nothing left to do in this step. ' + _finish_view(root, state)
 
 
@@ -829,6 +848,10 @@ def main(argv):
         if state['step'] == 'D3' and state['current'] is not None and _args.edit(args) is None and state['repeats'] < 2:
             # a repeated question (not an edit): answered again with the window; a third time counts as a failure
             out += ' The answer is above in the conversation.\n\n' + _window(root, state, state['current'])
+        elif _args.edit(args) is not None and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
+            # the same edit again after it was applied: nothing to undo or count
+            out = ('This edit was already applied (its answer was: ' + state['repeated_answer'] + '). Nothing was '
+                   'changed.\n\n' + _current_view(root, state))
         elif state['step'] == 'D3' and state['current'] is not None:
             # stuck on a place: a repeat counts as a failed edit, so the place is left after MAX_FAILS
             out = _failed(root, state, state['current'], out, 'repeated call')
