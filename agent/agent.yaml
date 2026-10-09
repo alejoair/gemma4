@@ -1,7 +1,7 @@
-name: swe_step_agent
-description: One agent that fixes the issue by making one bounded decision per step of the deterministic fix-issue/scripts/step.py procedure.
+name: issue_fixer
+description: Fixes the issue by calling the fix-issue script once per step and making the decision that step asks for.
 model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include prompts/swe.md
+instruction: !include prompts/fix_issue.md
 tools:
   # Since swegemma 0.2.11 the task message advertises only the declared tools, and a call to an undeclared tool is
   # answered with an error instead of ending the task, so the code-graph tools (never needed) are not declared.

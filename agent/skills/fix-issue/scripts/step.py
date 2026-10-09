@@ -1,4 +1,6 @@
-"""The only script the model calls. Each call is the model's decision for the current step; the answer is what that
+"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)
+
+The only script the model calls. Each call is the model's decision for the current step; the answer is what that
 step produced, a fixed verdict when something was checked, and the exact next call (docs/design_single.md, v1).
 
     S0  args [statement, search terms...]     -> requirements and candidates, each candidate shown by its name
@@ -472,12 +474,11 @@ def s0(root, state, args):
     if not items or len(items[0].strip()) < 10:
         return 'The first call copies the issue statement. Nothing was searched yet.'
     statement = items[0]
-    if '\n' not in statement.strip() and len(statement.strip()) < 160 and not state.get('asked_whole'):
-        # the local model copied only the title in 3 of 6 runs, so the edit windows had nothing about the behaviour
-        state['asked_whole'] = True
-        return ('Only one line was copied. Copy the whole issue statement, every paragraph of the section "The issue '
-                'statement" of your instructions, as the first item, then the search terms. If the statement really is '
-                'one line, send the same call again. Nothing was searched yet.')
+    if '\n' not in statement.strip() and '\\n' in statement:
+        # written with escaped line breaks (V10: the requirements then held 'nThis', 'nShould')
+        statement = statement.replace('\\r\\n', '\n').replace('\\n', '\n')
+    # any copy is accepted, even one line: copying long text exactly is what models do worst (B2), refusing it cost a
+    # call in 5 of 10 V10 runs, and the whole statement is in the system instruction anyway
     extra = [t.strip() for a in items[1:] for t in re.split(r'[\n,;]', a) if t.strip()]
     text = _statement.clean(statement) or statement
     _state.save('statement', {'text': text, 'terms': extra})

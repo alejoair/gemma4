@@ -50,9 +50,9 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 
 ## The agent now (2026-10-09)
 
-`agent/` is the submission: one `LlmAgent` (`swe_step_agent`) with the tool `submit_patch` and the skill `fix-issue`
+`agent/` is the submission: one `LlmAgent` (`issue_fixer`, named `swe_step_agent` until 2026-10-09) with the tool `submit_patch` and the skill `fix-issue`
 (named `swe` until 2026-10-09), whose only entry point is `skills/fix-issue/scripts/step.py`; `_*.py` are its modules.
-`prompts/swe.md` is the system instruction (it ends with the statement, `{problem_description}`). `tools/build.py`
+`prompts/fix_issue.md` is the system instruction (it ends with the statement, `{problem_description}`). `tools/build.py`
 builds and validates the zip.
 
 **The procedure** (a state machine in `_journal.py`; each call is the model's decision for the current step, and every
