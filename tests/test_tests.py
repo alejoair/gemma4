@@ -71,7 +71,7 @@ def test_a_failure_already_there_before_the_change_does_not_count(repo):
 
 def test_no_related_test_is_not_verified(repo):
     setup(repo)
-    verdict, _, _ = _tests.check(str(repo), {'pkg/other.py': ['zzz_unused']})
+    verdict, _, _ = _tests.check(str(repo), {'pkg/unrelated.py': ['zzz_unused']})
     assert verdict == 'NOT VERIFIED'
 
 
@@ -105,3 +105,12 @@ def test_a_test_file_that_runs_out_of_time_is_not_counted_and_left_out_later(rep
     assert _state.load('slow_tests') == ['tests/test_slow.py']
     verdict, detail, _ = _tests.check(str(repo), {'pkg/calc.py': ['scale']})
     assert verdict == 'OK' and 'out of time' not in detail
+
+
+def test_the_module_own_test_file_comes_first(repo):
+    setup(repo, {'pkg/repr.py': 'def auto(cls):\n    return cls\n',
+                 'tests/test_repr.py': 'import pkg.repr\n\n\ndef test_auto():\n    assert pkg.repr.auto(1) == 1\n',
+                 'tests/test_inspect.py': 'def test_param_default_empty():\n    param = default = empty = 1\n'
+                                          '    assert param == default == empty\n'})
+    targets = _tests.select(str(repo), {'pkg/repr.py': ['auto_rich_repr', 'if param.default is param.empty:']})
+    assert targets[0] == ['tests/test_repr.py']

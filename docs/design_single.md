@@ -452,3 +452,44 @@ Outside the skill (our tools, not shipped): `tools/build.py` (builds the submiss
 validates it), `tools/bench_locate.py` (the 129-task localization benchmark, the test of `_rank.py`), `tests/` (the
 unit tests). Agent config: `agent.yaml` (`submit_patch`, the skill and the three graph tools), the short prompt,
 `configs/` and `eval_config.yaml`.
+
+## Implementation of v1 and its verification (2026-10-09)
+
+All the scripts of the table above exist in `agent/skills/swe/scripts/`; `agent/` is the submission (`tools/build.py`
+builds and validates it: VALID). Unit tests: `tests/`, 85 passing (`venv/bin/python -m pytest -q tests`).
+
+**Localization benchmark** (`tools/bench_locate.py`, the test of `_rank.py`; 129 dev tasks, 128 with a gold place in
+an existing file; a hit is any gold function, class or module level in the top k). The model's search terms were
+simulated with the local 12B (one call per statement, thinking off, the S0 instruction), `scratchpad/terms_12b.json`.
+
+| Query | hit@1 | hit@3 | hit@5 | hit@10 |
+|---|---|---|---|---|
+| Statement only | 40 | 69 | 78 | 85 (66%) |
+| Statement + 12B terms | 48 | 76 | 83 | 92 (72%) |
+| Statement + 12B terms, module level at full weight | 49 | 79 | 88 | **97 (76%)** |
+
+- Kept: module level at full weight (0.3 lost 4 module-level hits and gained none; function-level hits 91 vs 90).
+- Field weights, b and k1 variations moved hit@10 by at most ±2 tasks: the old values stay.
+- The target of 80% is not met with the 12B's terms. Most misses have statements that name nothing locatable
+  ("empty live", "fix superfluous space", a checklist only); the test tasks are curated so that a frontier model
+  solves them, so their statements should be more informative. The 31B's terms are still to be measured.
+- Impact analysis (`--impact`): from the best gold place, the other gold places it relates are 57 of 403 (54 tasks
+  with several places). Most multi-place reference patches change places with no call or copy relation (new
+  features touching many files); impact analysis covers copies, twins and overrides (httpx_3672) but not those.
+
+**Dry runs.** S0 → D4 by hand on requests_7328 (37 s for the tests, of which 35 s a test file that hangs; such files
+are now left out after their first timeout). S0 + D1 on the 14 local repositories: gold place among the candidates in
+10 of 14; answers of 2–6k characters.
+
+**Local 12B, first run (rich_3006).** S0, D1 and D2 worked in 3 calls (about 10 s). The edit failed 6 times: the 12B
+read the placeholder `"<first line>"` as the text of the line and sent `"79|    if ..."`; the repeat answer did not
+say what was wrong. Fixed: the placeholders say "line number", a numbered-line text is read as its number, and a
+malformed edit or a repeat says exactly what was wrong (an instance of "skill-induced failures": an example value
+taken literally).
+
+**Local 12B, second run (rich_3006).** 6 calls, 22 s: S0, C1, plan, one edit, submit. The plan and the edit were
+wrong (`is not param.empty` instead of `is param.empty`), and the check said OK: the test selection had picked
+`test_inspect.py`, `test_columns.py` and `test_color.py` by shared words (`param`, `default`, `empty`) and not
+`tests/test_repr.py`. Fixed: the changed module's own test file (`test_<module>.py`) comes first, then the files that
+import the changed module, then the rare shared names. With that, the same edit is BROKEN (2 tests of
+`tests/test_repr.py`) and undone.

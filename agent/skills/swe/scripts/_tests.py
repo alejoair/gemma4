@@ -51,9 +51,10 @@ def _test_functions(tree):
 
 
 def select(root, changed):
-    """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. Test files score by
-    the rare names they share with the changed code (inverse document frequency) and by importing a changed module;
-    in a big file only the tests that use those names are kept."""
+    """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. Test files score
+    first by being the changed module's own test file (test_<module>.py), then by importing a changed module, then by
+    the rare names they share with the changed code (inverse document frequency); in a big file only the tests that
+    use those names are kept."""
     tests = [r for r in _repo.iter_py(root, tests=True) if _repo.is_test_path(r) and os.path.basename(r) != 'conftest.py']
     if not tests:
         return []
@@ -66,11 +67,15 @@ def select(root, changed):
     modules = [m for rel in changed for m in _module_names(rel)]
     n = len(tests)
     idf = {w: math.log(1 + n / (1 + sum(w in ws for ws in words.values()))) for w in names}
+    stems = {os.path.basename(rel)[:-3].lstrip('_') for rel in changed if rel.endswith('.py')} - {'__init__'}
     scores = []
     for r in tests:
         s = sum(idf[w] for w in names if w in words[r])
+        base = os.path.basename(r)[:-3]
+        if base in {f'test_{x}' for x in stems} | {f'{x}_test' for x in stems}:
+            s += 20.0                      # the module's own test file (rich/repr.py -> tests/test_repr.py)
         if any(re.search(rf'\b{re.escape(m)}\b', texts[r]) for m in modules):
-            s += 2.0
+            s += 6.0                       # imports the changed module
         if s > 0:
             scores.append((s, r))
     scores.sort(key=lambda x: (-x[0], x[1]))
