@@ -515,3 +515,10 @@ response is put in its own history). It started with `Session.send`, sent an edi
 repeated the same plan line despite "STOP REPEATING". Fixed (stuck detector): in the edit step a repeated call counts
 as a failed edit of the current place, so after two failures the place keeps its last verified code and the next
 planned place comes. Prompt tokens reached 11.8k after 7 calls (two chosen functions shown in full).
+
+**Local runs and thinking.** The local runs so far had thinking off (`no_think.flag` in the stream proxy, meant to
+approximate the 512-token budget). The harness sends `enable_thinking: true` and `thinking_token_budget: 512` for our
+`thinking_config`, so on Kaggle the 31B thinks. Without thinking the 12B reasoned inside the tool-call argument and
+ran into the 4,096-token limit twice (rich_3006 and requests_7328, both in a plan line): an artifact of the local
+setup. From now on local runs keep thinking on (llama-server's global budget is 3,072 tokens). The prompt also says
+that the reasoning goes before the call and the args hold only the decision.

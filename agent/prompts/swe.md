@@ -18,6 +18,7 @@ The values in angle brackets are placeholders; write the real ones.
 <|tool_call>call:submit_patch{}<tool_call|>
 
 ## Rules
+- Think before the call. The args hold only the decision: a plan line is one sentence, an edit holds only code.
 - Keep the exact names, messages, exception types and signatures the statement mentions; create each new public name exactly as the statement writes it.
 - Change only what the requirements need; never remove behaviour the statement does not ask to remove.
 - Never change tests: the hidden tests replace them.
