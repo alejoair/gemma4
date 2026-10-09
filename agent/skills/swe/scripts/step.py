@@ -941,8 +941,11 @@ def main(argv):
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
                f'{state.get("repeated_answer") or state.get("answer", "")}).')
         if state['step'] == 'D3' and state['current'] is not None and _args.edit(args) is None:
-            # a repeated question (not an edit): pointed to its answer; asking never leaves the place
-            out += ' The answer is above in the conversation.\n\n' + _window(root, state, state['current'])
+            # a repeated question (not an edit): its answer again (after compaction it is no longer above); asking
+            # never leaves the place
+            full = state.get('full_answers', {}).get(repr([a.strip() for a in args]))
+            out = ('This was asked before; the same answer again:\n' + full) if full else \
+                out + '\n\n' + _window(root, state, state['current'])
         elif _args.edit(args) is not None and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
             # the same edit again after it was applied: nothing to undo or count
             out = ('This edit was already applied (its answer was: ' + state['repeated_answer'] + '). Nothing was '
@@ -971,6 +974,11 @@ def main(argv):
                    'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
         _journal.remember(state, args, state['answer'])
+        if state['step'] == 'D3' and _args.edit(args) is None and len(out) < 6000:
+            full = state.setdefault('full_answers', {})       # questions' answers, to give again after compaction
+            full[repr([a.strip() for a in args])] = out.strip()
+            for k in list(full)[:-4]:
+                del full[k]
     _state.save('journal', state)
     out = out.rstrip()
     if len(out) > MAX_CHARS:
