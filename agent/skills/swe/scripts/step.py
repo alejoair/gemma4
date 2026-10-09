@@ -288,14 +288,18 @@ def d1(root, state, args):
     out = []
     focus = _focus(state)
     limit = CODE_LINES if len(chosen) == 1 else CODE_LINES // 2
+    cut = set()
     for p in places:
         if p['reason'] != 'chosen':
             continue
         sym = table.get(p['rel'], p['name']) if p['name'] != MODULE else None
         if sym is not None and sym.kind == 'class' and sym.end - sym.start + 1 > CLASS_OUTLINE_AT:
             body = _outline(root, p['rel'], sym)
+            cut.add(p['id'])
         else:
             body = _code_view(root, p['rel'], p['start'], p['end'], focus, limit=limit)
+            if 'not shown) ...' in body:
+                cut.add(p['id'])
         out.append(f'{p["id"]} {p["rel"]} :: {p["name"]}\n{body}')
     new = [(r, n) for r in state['requirements'] if r['type'] == 'new' for n in r['names']]
     for r, name in new[:1]:
@@ -308,9 +312,15 @@ def d1(root, state, args):
             out.append(f'An existing method of {owner["name"]} to model the new `{name.split(".")[-1]}` on:\n'
                        + _code_view(root, owner['rel'], sib.start, sib.end, focus, limit=60))
     places_view = '\n'.join('  ' + _place_line(p) for p in places)
+    # No separate plan step: the chosen places are the plan and this answer is the first edit window (a free-text
+    # plan was the step where the local model looped or ran away in 4 of 5 runs). Related places are edited by id.
+    _journal.set_plan(state, [(p['id'], '') for p in places if p['reason'] == 'chosen'])
+    _tests.save_verified(root)
+    first = state['plan'][state['current']]['place']
+    window = ('\n\n' + _window(root, state, state['current'])) if first in cut else ''
     return ('\n\n'.join(out) + f'\n\nPlaces (the chosen code and the code related to it):\n{places_view}\n\n'
-            'Plan the change: for each place that must change, say what changes there. Places that need no change '
-            'are left out.')
+            f'Edit the chosen code now, starting with {first}. A related place needs an edit only when the change '
+            f'must be made there too: edit it with its id. To choose other candidates, send ["back"].' + window)
 
 
 def d2(root, state, args):
@@ -360,7 +370,7 @@ def d3(root, state, args):
     e = _args.edit(args)
     colon = any(re.match(r'\s*[\["\'`「]*\s*P\d+\s*[:=]', a or '') for a in args)
     replan = _args.plan(args) if e is None and colon else []
-    if replan and replan != 'back' and all(_place(state, p) for p, _ in replan):
+    if replan and replan != 'back' and all(_place(state, p) and not _args.is_placeholder(i) for p, i in replan):
         for pid, intent in replan:                  # a corrected plan line: the edit follows it
             state['plan'][_journal.target(state, pid)].update(intent=intent, status='todo')
         state['current'] = _journal.target(state, replan[0][0])

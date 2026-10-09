@@ -67,9 +67,7 @@ def test_whole_flow(repo):
     out = call(repo, '「C1」')
     assert '  11|            resp.history = hist[1:]' in out
     assert 'P2 pkg/sessions.py :: Session.send' in out and 'calls resolve_redirects' in out
-
-    out = call(repo, '["P1: the history must not hold the response itself"]')
-    assert out.startswith('EDIT P1 (1 of 1 planned)') and '["P1", "<first line number>"' in out
+    assert 'Edit the chosen code now, starting with P1' in out and '["P1", "<first line number>"' in out
 
     out = call(repo, 'P1', '11', '11', '            resp.history = hist[:-1]')
     assert out.startswith('OK: P1 lines 11-11 changed; 1 existing tests pass')
@@ -85,10 +83,10 @@ def test_wrong_forms_and_repeats_are_answered_with_the_expected_call(repo):
     out = call(repo, 'C99')
     assert 'C99 is not a candidate id' in out and 'Nothing was opened' in out
     call(repo, 'C1')
-    out = call(repo, 'P9: something')
+    out = call(repo, 'P9', '1', '1', 'x = 1')
     assert 'P9 is not a listed place' in out
-    out = call(repo, 'P9: something')
-    assert out.startswith('STOP REPEATING') and 'P9 is not a listed place' in out
+    out = call(repo, 'P9', '1', '1', 'x = 1')
+    assert out.startswith('STOP REPEATING')
     out = call(repo, 'back')
     assert 'Choose the code to change' in out and '"C<n>"' in out.splitlines()[-1]
 
@@ -147,12 +145,12 @@ def test_repeats_in_the_edit_step_count_as_failures_and_the_place_is_left(repo):
     assert 'P1 failed 2 times' in out and 'EDIT P2' in out
 
 
-def test_a_placeholder_plan_is_refused(repo):
+def test_a_placeholder_plan_line_is_ignored(repo):
     setup(repo)
     call(repo, STATEMENT)
     call(repo, '「C1」, "C2"')
     out = call(repo, 'P1: <what changes there>')
-    assert out.startswith('The plan still has the placeholder')
+    assert not out.startswith('Plan updated')
 
 
 def test_repeats_that_exhaust_the_only_place_go_back_to_choosing(repo):
@@ -165,14 +163,10 @@ def test_repeats_that_exhaust_the_only_place_go_back_to_choosing(repo):
     assert out.startswith('STOP REPEATING') and 'choose again' in out and '"C<n>"' in out.splitlines()[-1]
 
 
-def test_a_copied_place_line_plans_that_place_and_repeats_in_the_plan_step_plan_the_chosen(repo):
+def test_choosing_opens_the_first_place_for_editing(repo):
     setup(repo)
     call(repo, STATEMENT)
-    call(repo, 'C1')
-    out = call(repo, 'P1 pkg/sessions.py :: SessionRedirectMixin.resolve_redirects (lines 5-13) — chosen')
-    assert out.startswith('EDIT P1 (1 of 1 planned)') and 'no plan line' in out
-    call(repo, 'back')
-    call(repo, 'C1')
-    call(repo, 'something without ids')
-    out = call(repo, 'something without ids')
-    assert out.startswith('STOP REPEATING') and 'The chosen places are planned now' in out and 'EDIT P1' in out
+    out = call(repo, 'C1')
+    assert 'Edit the chosen code now, starting with P1' in out
+    out = call(repo, 'P1', '11', '11', '            resp.history = hist[:-1]')
+    assert out.startswith('OK: P1 lines 11-11 changed')

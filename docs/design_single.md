@@ -552,3 +552,11 @@ to choose, harmless) and then copied a place line (`"P2 rich/segment.py :: Segme
 chosen"`) three times. Fixed: a place id without the colon plans that place (no plan line), and a repeat in the plan
 step plans the chosen places and opens the first one for editing (the stuck detector moves the work on instead of
 waiting for a decision the model does not produce).
+
+**Design change (2026-10-09): no separate plan step.** In the local 12B runs the free-text plan (D2) was where 4 of 5
+problem runs failed: two runaways that copied code or reasoning into the plan argument (task lost), a copied place line
+repeated three times, a vague plan on the wrong place repeated. Under the only principle (make the task easier for the
+model), the plan decision is removed: after choosing, the chosen places are the plan, the same answer is the first edit
+window, and related places (copies, callers, overrides) stay listed and are edited by id when needed. One call and one
+free-text decision fewer; the impact list (CodePlan-light) is kept. A plan line sent in the edit step is still
+accepted. Steps are now S0 start → D1 choose (= open for editing) → D3 edit per place → D4 finish.
