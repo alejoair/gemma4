@@ -604,3 +604,42 @@ call). The new tolerances worked as designed: code names opened their functions 
 `FastAPI.openapi`, `get_swagger_ui_html`), a file path was refused, repeats were stopped. The 12B used them to look
 around and made one edit late (`url: {json.dumps(openapi_url)}` in `get_swagger_ui_html`, a part of the reference fix);
 5 of 7 fail-to-pass tests still fail. The remaining gap is the model's decision, not the protocol.
+
+### Local 12B batch of the 10 local tasks (2026-10-09, commits c32d90b → b43892c)
+
+Run with the local 12B (reasoning budget 3072, the server's global value; Kaggle uses 512) and the 7-minute budget,
+monitored call by call through the gateway. The scripts were fixed during the batch; each task loads the scripts at
+its start, so the later tasks ran later fixes.
+
+| Task | Result | Calls | What happened |
+|---|---|---|---|
+| fastapi_14448 | not resolved (hidden tests error) | 14 | Chose `Dependant`, edited three of its methods. Its packed edit `["P1,78,85", code]` was not read at first (fixed). Time ran out |
+| fastapi_14583 | no patch | 14 | Asked for `pydantic.v1` six times in a row (reasoning at the budget each time). No text search existed then (added) |
+| fastapi_14851 | lost (harness exception) | 10 | A reply ran away (`false,false,…`) and was cut at 4,096 tokens; the invalid JSON made the harness raise and lose the task. Before that, the model sent the statement again after compaction and was refused (now answered with the current step) |
+| fastapi_14986 | not resolved (2 tests fail) | 15 | Good flow: removed the `root_path` insertion, escaped two Swagger UI values, submitted. The changes were incomplete |
+| fastapi_15800 | no patch | 12 | A large new feature (`frontend`); read the classes in parts and ran out of time |
+| httpx_3672 | no patch | 15 | `"C6,C7"` read as a text search (fixed). After compaction it sent whole argument lists as one string with escaped quotes (fixed) |
+| requests_7328 | no patch | 12 | **Had the right fix** (`resp.history = hist[:-1]`) and sent it 8 times as one string with plain quotes, which was not read (fixed) |
+| rich_3006 | **resolved** | 10 | 149 s |
+| rich_3469 | no patch | 15 | Sent `["C2", "rich/text.py::pad_left", …]` in the edit step, refused (now they join the plan) |
+| rich_3521 | no patch | 10 | Asked for lines and the test file; reasoning at the budget on most calls |
+
+System faults found and fixed during the batch:
+- packed edits with the code apart;
+- no text search;
+- a question after the place id;
+- the statement sent again after compaction;
+- a repeated applied edit counted as a failure;
+- questions in the finish step;
+- small files not shown;
+- several candidate ids at once;
+- the question-limit answer without the candidate to add;
+- argument lists sent as one string, with escaped or plain quotes;
+- trailing bare booleans.
+
+Model faults:
+- most calls hit the 3,072-token reasoning budget (60–70 s each), so a task got only 10–15 calls;
+- the same call repeated;
+- one runaway reply.
+
+The local budget is not Kaggle's (512); a faithful local loop needs `--reasoning-budget 512` on the server.
