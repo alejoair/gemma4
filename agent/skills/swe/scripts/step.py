@@ -495,7 +495,7 @@ def _lookup(root, state, text):
     """A bare code name (or "def name") that is not a listed place, sent in the edit step: the answer says where code
     of that name is defined, or that none exists, without opening it, so that the model need not search for it. At
     most MAX_LOOKUPS per place; later ones are refused like other calls."""
-    text = _args.clean(text).strip('[]"\' ')
+    text = _args.clean(text).strip('[]"\'\\ ')
     if re.fullmatch(r'[\w./-]+\.py', text):
         return _file_outline(root, state, text)
     ls = re.fullmatch(r'(?:ls|dir)\s+(-\w+\s+)?([\w./-]+)', text)
@@ -622,7 +622,10 @@ def d3(root, state, args):
         state['step'] = 'D4'
         return 'TIME IS UP: no more edits are accepted. ' + _finish_view(root, state)
     items = [x for x in args if x is not None and x.strip()]
-    single = _args.clean(items[0]) if len(items) == 1 else ''
+    if len(items) == 2 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) and '\n' not in items[1].strip() \
+            and not re.match(r'\s*\d', items[1]):
+        items = [items[1]]          # ["P2", "search x"]: a question asked about the open place
+    single = _args.clean(items[0].replace('\\"', '"').replace("\\'", "'")) if len(items) == 1 else ''
     cur = state['current']
     if _is_skip(single) and cur is not None:
         pid = state['plan'][cur]['place']
