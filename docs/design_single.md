@@ -567,3 +567,8 @@ accepted. Steps are now S0 start → D1 choose (= open for editing) → D3 edit 
 solved it in V6, the 12B has nothing to infer it from. Fix: candidate ids in the edit step choose again. Idea for
 later: show the existing test of the chosen function next to its code (the expected behaviour), for statements that
 say nothing.
+
+**Local 12B, httpx_3672 (no plan step).** S0 and C1,C2,C3 fine; in the edit step the 12B sent `HTTPParser.complete`
+(a code name: it wanted to open that code), then called `get_code_neighbors` twice and chose C6,C7. Same pattern as
+rich_3521 (`Segment.split_cells`). Fixed: a single code name that exists in the repository opens that code in the edit
+step, as in the choose step.

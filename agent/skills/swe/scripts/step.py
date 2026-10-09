@@ -379,6 +379,11 @@ def d3(root, state, args):
             state['plan'][_journal.target(state, pid)].update(intent=intent, status='todo')
         state['current'] = _journal.target(state, replan[0][0])
         return 'Plan updated. Nothing was changed in the code.\n\n' + _window(root, state, state['current'])
+    if e is None and len([x for x in args if x and x.strip()]) == 1:
+        name = _args.clean(next(x for x in args if x and x.strip()))
+        if re.fullmatch(r'[\w./-]*(::)?[\w.]+(\(\))?', name) and _resolve(root, [name]):
+            _journal.back(state)                # a code name: open that code (the edits made so far stay)
+            return d1(root, state, [name])
     if e is None:
         cur = state['current']
         again = _window(root, state, cur) if cur is not None else ''

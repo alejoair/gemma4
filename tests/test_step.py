@@ -178,3 +178,11 @@ def test_candidate_ids_in_the_edit_step_choose_again(repo):
     call(repo, 'C1')
     out = call(repo, 'C1,C2')
     assert 'Edit the chosen code now' in out
+
+
+def test_a_code_name_in_the_edit_step_opens_that_code(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    out = call(repo, 'Session.send')
+    assert 'P1 pkg/sessions.py :: Session.send' in out and 'Edit the chosen code now' in out
