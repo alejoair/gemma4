@@ -624,10 +624,14 @@ def _add_named(root, state, items):
                 out.append(got)
                 first = first if first is not None else state['current']
             continue
-        found = _resolve(root, [x])
-        if not found or len(state['places']) >= MAX_PLACES + 4:
-            continue
-        c = found[0]
+        rel, _, name = x.rpartition('::')
+        table = _impact.Table(root, docs=True)
+        defs = [(r, d) for r, d in table.find(name.strip('()')) if not rel or _rank.names_file(rel, r)]
+        defs.sort(key=lambda t: (_repo.is_doc_path(t[0]), t[0]))
+        if not defs or len(state['places']) >= MAX_PLACES + 4:
+            continue                    # only a real definition opens a place (no text-fragment fallback)
+        r0, d0 = defs[0]
+        c = {'rel': r0, 'name': d0.name, 'start': d0.start, 'end': d0.end}
         old = next((p for p in state['places'] if (p['rel'], p['name']) == (c['rel'], c['name'])), None)
         pid = old['id'] if old else f'P{len(state["places"]) + 1}'
         if not old:
