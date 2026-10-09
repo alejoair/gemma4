@@ -60,7 +60,7 @@ guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 | B3 | yes | Names instead of ids (8c95d1d) | — |
 | B4 | partly | Skill renamed to `fix-issue`; the ADK's own "Skill not found" answer cannot be changed | Measure in the next run |
 | B5 | no | STOP REPEATING quotes the earlier answer; refusals quote the model's text ("X is not a listed candidate", `not "<item>"`); the repeat guard ignores the state (audit #3) | Describe, never quote; key repeats on (step, place, args); give the full earlier answer only for a repeated look at the same view |
-| B6 | no | No answer for `show.py`, `grep.py`, `edit.py` … | Small stub scripts that answer with the right `step.py` call |
+| B6 | yes | The invented names of V1–V6 (`show.py`, `grep.py`, …) were the old scripts, which existed then; with one script the risk is the skill name itself (B4). Stub scripts were added and removed on 2026-10-09 at the user's request | — |
 | B7 | partly | The window ends with the answer forms and NEXT, but what the change must do is in the middle; long answers are cut in the middle | Repeat a one-line "what to do" just before NEXT |
 | B8 | yes | Edit step down to edit / skip / back / a place name | — |
 | B9 | partly | No questions in the edit step; the choose step has no evidence lines, so the model wants to search (audit #2) | Evidence lines in the candidate list instead of a search |

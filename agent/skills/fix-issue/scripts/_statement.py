@@ -36,8 +36,14 @@ def clean(text):
     text = re.sub(r'(?im)^\s*(discussion|ref|refs|related|see also)\s*:.*$', '', text)
     text = re.sub(r'(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?|ref(s)?|addresses|see)\s*:?\s*'
                   r'(https?://\S+|#\d+|[\w.-]+/[\w.-]+#\d+)', '', text)
+    text = re.sub(r'\[([^\]]*)\]\(\s*https?://[^)]*\)', r'\1', text)      # markdown links keep their text
     text = re.sub(r'https?://\S+', '', text)
-    text = re.sub(r'(?<![\w.])#\d+\b', '', text)
+    # an issue number that is part of a sentence becomes words, so that the sentence stays whole (V10:
+    # 'This PR should address , avoiding')
+    text = re.sub(r'(?<![\w.])#\d+\b', 'the linked issue', text)
+    text = re.sub(r'(?im)^\s*(should fix|fixes|closes|related to|related|see also|follow[- ]up to)\b[\s/:,a-z]*$', '',
+                  text)
+    text = re.sub(r'\(\s*\)', '', text)                                         # parentheses left empty
     text = re.sub(r'(?<![\w.])@[\w-]+', '', text)
     text = re.sub(r'(?<![\w`]):[a-z_+-]+:(?![\w`])', '', text)                  # emoji shortcodes
     paras, seen = [], set()
@@ -142,7 +148,11 @@ def paths(text):
 MAX_REQUIREMENTS = 6
 BUILTIN_NAMES = set(dir(builtins)) | set(keyword.kwlist) | {'self', 'cls'}
 NEW_WORDS = re.compile(r'(?i)\b(add|adds|added|adding|new|introduce[sd]?|support for|implement[sd]?|allow[s]?)\b')
-RENAME_WORDS = re.compile(r'(?i)\b(renamed?|renaming|deprecat\w*)|->|→')
+RENAME_WORDS = re.compile(r'(?i)\b(renamed?|renaming)\b|->|→')     # not 'deprecate': a deprecation keeps the name
+# sentences about the pull request or its tests, and ideas left for later, are not requests (V10 audit #6)
+META = re.compile(r"(?i)\b(this (pr|pull request)|the (new )?tests? (created|written|simulate|cover)|extends? the tests|"
+                  r"added (the )?[\w\s]{0,30}as a test|thanks|ideally|breaking change|have to wait|we'll have to wait|"
+                  r"in a (future|follow[- ]up)|for now)\b")
 
 
 def requirements(text):
@@ -170,7 +180,12 @@ def requirements(text):
             put(re.sub(r'^([-*•]|\d+[.)])\s+', '', line))
         elif line and not line.startswith(('#', '|', '>')):
             body.append(line)
-    for sentence in re.split(r'(?<=[.!?])\s+', ' '.join(body)):
+    for line in body:
+        if line.endswith(':') and len(line.split()) >= 2 and not META.search(line):
+            put(line.rstrip(':'))                       # a heading line of the request ('Escape Swagger UI configs:')
+    for sentence in re.split(r'(?<=[.!?])\s+', ' '.join(l for l in body if not l.endswith(':'))):
+        if META.search(sentence):
+            continue
         if re.search(r'`[^`]+`', sentence) or any(_shape(w) >= 4 for w in re.findall(IDENT, sentence)):
             put(sentence)
     return out[:MAX_REQUIREMENTS]
