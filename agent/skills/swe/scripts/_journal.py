@@ -9,7 +9,7 @@ if __name__ == '__main__':
     raise SystemExit(0)
 
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
-EDIT_STOP = 220      # seconds after the start: no edit is accepted later (the run has 300 s, a check up to 60)
+EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
 CALL = 'run_skill_script with skill_name "swe", file_path "scripts/step.py" and args '
 
 FORMS = {
@@ -47,11 +47,20 @@ def repeated(state, args):
     recent = state.setdefault('recent', [])
     if key in recent[-3:]:
         state['repeats'] += 1
+        state['repeated_answer'] = state.setdefault('answers', {}).get(repr(key), '')
         return True
     recent.append(key)
     del recent[:-3]
     state['last'], state['repeats'] = [state['step'], key], 0
     return False
+
+
+def remember(state, args, answer):
+    """The first line of the answer to args, quoted when the same call is repeated."""
+    answers = state.setdefault('answers', {})
+    answers[repr([a.strip() for a in args])] = answer
+    for k in list(answers)[:-6]:
+        del answers[k]
 
 
 def time_is_up(state, now=None):
@@ -115,7 +124,8 @@ def edit_failed(state, i, error):
     e['fails'] += 1
     e['errors'].append(error)
     if e['fails'] >= MAX_FAILS or e['errors'][-3:].count(error) >= 3:
-        e['status'] = 'skipped'
+        if e['status'] != 'done':                     # a done place keeps its verified edit
+            e['status'] = 'skipped'
         advance(state)
         return 'skipped'
     state['current'] = i
@@ -124,7 +134,8 @@ def edit_failed(state, i, error):
 
 def skip(state, i):
     """The model says plan entry i needs no change: it keeps its code and the next place comes."""
-    state['plan'][i]['status'] = 'skipped'
+    if state['plan'][i]['status'] != 'done':          # a done place opened again keeps its edit
+        state['plan'][i]['status'] = 'skipped'
     return advance(state)
 
 

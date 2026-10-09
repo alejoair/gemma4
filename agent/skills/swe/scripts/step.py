@@ -236,6 +236,12 @@ def s0(root, state, args):
     if not items or len(items[0].strip()) < 10:
         return 'The first call copies the issue statement. Nothing was searched yet.'
     statement = items[0]
+    if '\n' not in statement.strip() and len(statement.strip()) < 160 and not state.get('asked_whole'):
+        # the local model copied only the title in 3 of 6 runs, so the edit windows had nothing about the behaviour
+        state['asked_whole'] = True
+        return ('Only one line was copied. Copy the whole issue statement, every paragraph of the section "The issue '
+                'statement" of your instructions, as the first item, then the search terms. If the statement really is '
+                'one line, send the same call again. Nothing was searched yet.')
     extra = [t.strip() for a in items[1:] for t in re.split(r'[\n,;]', a) if t.strip()]
     text = _statement.clean(statement) or statement
     _state.save('statement', {'text': text, 'terms': extra})
@@ -391,6 +397,23 @@ def _is_skip(text):
     return _args.clean(text or '').lower().strip('[]"\' .') in ('skip', 'no change', 'none', 'no edit')
 
 
+def _listed_place(root, state, text):
+    """The id of the listed place that text names: a place id, a candidate id or a code name of a listed place."""
+    text = _args.clean(text).strip('[]"\' ')
+    if re.fullmatch(r'(?i)P\d+', text):
+        return text.upper() if _place(state, text.upper()) else None
+    cand = None
+    if re.fullmatch(r'(?i)C\d+', text):
+        cand = next((c for c in state['candidates'] if c['id'] == text.upper()), None)
+    elif re.fullmatch(r'[\w./-]*(::)?[\w.]+(\(\))?', text):
+        found = _resolve(root, [text])
+        cand = found[0] if found else None
+    if cand is None:
+        return None
+    p = next((p for p in state['places'] if (p['rel'], p['name']) == (cand['rel'], cand['name'])), None)
+    return p['id'] if p else None
+
+
 def d3(root, state, args):
     """Only an edit of a listed place, ["skip"] (the open place needs no change), ["back"] (choose other code) or a
     listed place id alone (open that place) is accepted; anything else is refused, changes nothing and counts as a
@@ -415,9 +438,11 @@ def d3(root, state, args):
         if move == 'back':
             return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
         return head + '\n\n' + _finish_view(root, state)
-    if re.fullmatch(r'(?i)P\d+', single) and _place(state, single.upper()):
-        i = _journal.target(state, single.upper())       # a place id alone: open that place for editing
-        state['plan'][i]['status'] = 'todo'
+    listed = _listed_place(root, state, single) if single else None
+    if listed:
+        i = _journal.target(state, listed)               # a listed place, by id, candidate id or name: open it
+        if state['plan'][i]['status'] == 'skipped':
+            state['plan'][i]['status'] = 'todo'
         state['current'] = i
         return _window(root, state, i)
     e = _args.edit(args)
@@ -429,9 +454,10 @@ def d3(root, state, args):
             msg = f'The edit was not read: {why} Nothing was changed.'
             return msg + ('\n' + _window(root, state, cur) if cur is not None else '')
         else:
-            msg = ('NOT RUN: this step only edits the open place. Accepted: an edit ["P<n>", "<first line number>", '
-                   '"<last line number>", "<new lines>"], ["skip"] if the place needs no change, or ["back"] to choose '
-                   'other code. Nothing was opened or changed.')
+            msg = ('NOT RUN: this step only edits the listed places. Accepted: an edit ["P<n>", "<first line number>", '
+                   '"<last line number>", "<new lines>"], ["P<n>"] to open a listed place, ["skip"] if the place needs '
+                   'no change, or ["back"] to choose other code. Nothing was opened or changed.\nPlaces:\n'
+                   + '\n'.join('  ' + _place_line(q) for q in state['places']))
         if cur is None:
             return msg
         return _failed(root, state, cur, msg, 'not an edit')
@@ -543,10 +569,14 @@ def main(argv):
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else list(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
+    if state['step'] == 'D3' and len(args) == 1 and not skip and state['current'] is not None:
+        # opening another listed place is a move, not a repeat
+        target = _listed_place(root, state, args[0])
+        skip = target is not None and target != state['plan'][state['current']]['place']
     if state['step'] != 'S0' and not skip and _journal.repeated(state, args):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
-        out = (f'STOP REPEATING: this call was already made and was not run again (its answer: '
-               f'{state.get("answer", "")}).')
+        out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
+               f'{state.get("repeated_answer") or state.get("answer", "")}).')
         if state['step'] == 'D3' and state['current'] is not None:
             # stuck on a place: a repeat counts as a failed edit, so the place is left after MAX_FAILS
             out = _failed(root, state, state['current'], out, 'repeated call')
@@ -570,6 +600,7 @@ def main(argv):
             out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Make the call below; '
                    'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
+        _journal.remember(state, args, state['answer'])
     _state.save('journal', state)
     out = out.rstrip()
     if len(out) > MAX_CHARS:

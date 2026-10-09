@@ -39,6 +39,9 @@ The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …)
 
 v1 of the new single agent (`docs/design_single.md`, "Design v1") is implemented: `agent/` is the submission (one `LlmAgent`, skill `swe` whose only entry point is `scripts/step.py`; internal modules `_*.py`), `tools/build.py` builds and validates it, `tools/bench_locate.py` is the 129-task localization benchmark (snapshots' Python files via `tools/fetch_snapshots.sh`). Measurements and the local 12B runs are at the end of `docs/design_single.md`. Decision 2026-10-09: the free-text plan step was removed (the local model failed there in 4 of 5 problem runs); choosing opens the chosen places for editing. Decision 2026-10-09 (later): every edit window repeats what the change must do (requirements, the statement's sentences about the behaviour, its example, an existing test that uses the code), the statement is also in the system instruction (`{problem_description}`, never compacted), the edit step accepts only an edit, `skip`, `back` or a place id (anything else is refused and counts as a failed attempt), copies in a file of the same name and async/sync twins join the plan, and one answer is capped at 8,000 characters. The user removed the `tests/` folder (unit tests) on 2026-10-09. Local runs need thinking on (the harness sends `enable_thinking: true` with our `thinking_budget`); a faithful local loop needs llama-server with `--reasoning-budget 512`.
 
+### Public notebooks (2026-10-09)
+The public notebooks that score 0.17–0.18 are one plain `LlmAgent` with the native tools, a prompt with three rules (exact strings from the issue; edit by call 12, best guess allowed; 1–2 targeted checks then submit), thinking 4096, 8192 output tokens, and eval 240 s / 28 calls / 8 min / 80 turns. `timeout_seconds` is also the hidden-test timeout (checked in our local harness). Details in `docs/public_notebooks.md`.
+
 ### What the 31B does badly, and what the literature does about it (2026-10-08)
 
 Measured in the Kaggle traces of V1–V6 (31B only; nothing from the local 12B, nothing assumed). "Applicable" is about
@@ -96,6 +99,8 @@ Use established methods, not an ad-hoc list: Hierarchical Task Analysis (Stanton
 **Acceptance before Kaggle:** (unit tests: the `tests/` folder was removed by the user on 2026-10-09) the replay of real calls shows no problems, and the local model passes the iterative loop below on the 10 local tasks; then a Kaggle run with 10 tasks. If a launch is requested before that, say plainly which criterion is not met.
 
 ### Iterative test loop (how every change to the scripts or prompts is tested)
+The user's rule (2026-10-09): the only valid way to test a change is a run against the model, monitored and analysed step by step through the gateway API (`/_monitor/*`). Dry runs and unit tests are not evidence.
+
 1. **Fix.** Change the scripts or prompts.
 2. **Dry test.** Run the affected scripts by hand on a repo in `scratchpad/repos/` with `PWD=<repo>`.
    - Run them through `scratchpad/harness_like.py <skill dir> <script> args…` too. It runs a script the way ADK's `run_skill_script` does: the skill's files are in a temporary directory that is deleted when the script ends, before the exit handlers run. Anything a script does at exit can no longer read its own files or start threads.
