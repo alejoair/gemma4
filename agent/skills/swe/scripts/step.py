@@ -463,10 +463,16 @@ SHOW_LINES = 80
 LIMIT = 'LIMIT'     # returned by a question asked after the MAX_LOOKUPS of the place were used
 
 
-def _limit_message(state, cur):
+def _limit_message(state, cur, asked=''):
     pid = state['plan'][cur]['place']
+    asked = _args.clean(asked or '').strip('[]"\'\\ ')
+    words = {w for w in re.findall(r'[A-Za-z_]\w+', asked) if w not in ('search', 'py', 'src')}
+    match = [c for c in state['candidates'] if asked and (c['rel'] == asked or c['rel'].endswith('/' + asked)
+                                                          or c['name'].split('.')[-1] in words or c['name'] in words)]
+    hint = (' The code you ask about is a candidate: send ' + ' or '.join(f'["{c["id"]}"]' for c in match[:3])
+            + ' to add it to the plan and see it.') if match else ''
     return (f'NOT RUN: {MAX_LOOKUPS} questions were already answered for {pid}. Edit it now, or ["skip"] it, or '
-            f'["done"] if all needed changes are made. Nothing was opened or changed.')
+            f'["done"] if all needed changes are made.{hint} Nothing was opened or changed.')
 
 
 def _show_lines(root, state, items):
@@ -672,7 +678,7 @@ def d3(root, state, args):
     view = list(packed.groups()) if packed else items
     shown = _show_lines(root, state, view) if len(view) == 3 and cur is not None else None
     if shown == LIMIT:
-        return _failed(root, state, cur, _limit_message(state, cur), 'questions')
+        return _failed(root, state, cur, _limit_message(state, cur, single), 'questions')
     if shown:
         return shown
     added = _add_candidate(state, single) if single else None
@@ -680,7 +686,7 @@ def d3(root, state, args):
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
     if lookup == LIMIT:
-        return _failed(root, state, cur, _limit_message(state, cur), 'questions')
+        return _failed(root, state, cur, _limit_message(state, cur, single), 'questions')
     if lookup:
         return lookup + '\n\n' + _window(root, state, cur)
     e = _args.edit(args)
