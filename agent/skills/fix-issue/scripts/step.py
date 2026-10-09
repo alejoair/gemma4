@@ -160,13 +160,15 @@ def _members(root, p):
     return 'Members: ' + ', '.join(f'{x.name.split(".")[-1]} {x.start}-{x.end}' for x in members) + tail
 
 
-USES = 8        # definitions the place calls, one line each
+USES = 8        # definitions the place calls or reads
+USES_CHARS = 2500   # their total size
+SHORT_MEMBER = 15   # a member of the place's own class up to this many lines is shown as code
 CALLERS = 4     # code that calls the place, one line each
 
 
 def _context_view(root, p):
-    """The repository code the place calls (where it is defined, its signature and first doc line) and the code that
-    calls the place (the line of the call), one line each. These are what the model asked about in the edit step of
+    """The repository code the place calls or reads (where it is defined, its signature and first doc line; a short
+    member of the place's own class as its code) and the code that calls the place (the line of the call). These are what the model asked about in the edit step of
     the local runs; showing them makes the questions unnecessary (Agentless: prepared inputs, the model never asks
     for code; CodePlan: the dependencies of the edited code)."""
     if p['name'] in (MODULE, '<exports>'):
@@ -180,25 +182,67 @@ def _context_view(root, p):
         return ''
     table = _impact.Table(root, docs=False)
     own = p['name']
-    called = []
+    cls = own.rsplit('.', 1)[0] if '.' in own else (own if any(
+        x.name == own and x.kind == 'class' for x in table.syms.get(p['rel'], [])) else '')
+    calls = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    imported = {}               # name -> module it is imported from in this file ('' for a relative import's level)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            for al in n.names:
+                imported[al.asname or al.name] = (n.module or '', al.name)
+    here = {x.name for x in table.syms.get(p['rel'], [])}
+    used = []                   # (line, name, how): f() / obj.f(), self.attr, a Name of this file or imported
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and p['start'] <= node.lineno <= p['end']:
-            f = node.func
-            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
-            if name:
-                called.append((node.lineno, name))
-    called = [n for _, n in sorted(called)]
-    uses, seen = [], set()
-    for name in dict.fromkeys(called):
-        defs = [(r, x) for r, x in table.find(name) if x.name.split('.')[-1] == name
-                and not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
-        if not defs or len(defs) > 3:
-            continue                    # not repository code, or a common name (get, __init__)
+        if not (p['start'] <= getattr(node, 'lineno', 0) <= p['end']):
+            continue
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in ('self', 'cls'):
+                used.append((node.lineno, node.attr, 'self'))
+            elif id(node) in calls:
+                used.append((node.lineno, node.attr, 'call'))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in here or node.id in imported:
+                used.append((node.lineno, node.id, 'name'))
+
+    def module_of(rel):
+        mod = rel[:-3].replace('/', '.')
+        return mod[4:] if mod.startswith('src.') else mod
+
+    def resolve(name, how):
+        found = table.find(name)
+        if how == 'self':
+            return [(r, x) for r, x in found if r == p['rel'] and cls and x.name == f'{cls}.{name}']
+        if how == 'name':
+            if name in here:
+                return [(r, x) for r, x in found if r == p['rel'] and x.name == name]
+            mod, orig = imported[name]
+            mod = mod.lstrip('.')
+            return [(r, x) for r, x in table.find(orig) if x.name == orig
+                    and (not mod or module_of(r).endswith(mod) or module_of(r).endswith(mod + '.__init__'))]
+        defs = [(r, x) for r, x in found if x.name.split('.')[-1] == name]
+        return defs if len(defs) <= 3 else []          # a common method name (get, copy of many classes) says little
+
+    uses, seen, chars = [], set(), 0
+    for name, how in dict.fromkeys((n, h) for _, n, h in sorted(used)):
+        defs = [(r, x) for r, x in resolve(name, how)
+                if not (r == p['rel'] and (x.name == own or x.name.startswith(own + '.')))]
+        mine = how == 'self'
+        if not defs:
+            continue
         for r, x in defs[:2]:
-            if (r, x.name) not in seen:
-                seen.add((r, x.name))
+            if (r, x.name) in seen:
+                continue
+            seen.add((r, x.name))
+            if mine and x.end - x.start + 1 <= SHORT_MEMBER:
+                # a short member of the same class (a property, a helper): its code, since its name says little
+                text = _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
+            else:
                 line = _code.skeleton(r, x)
-                uses.append('  ' + (line if len(line) <= 200 else line[:197] + '...'))
+                text = '  ' + (line if len(line) <= 200 else line[:197] + '...')
+            if chars + len(text) > USES_CHARS:
+                break
+            uses.append(text)
+            chars += len(text)
         if len(uses) >= USES:
             break
     short = own.split('.')[-1]
