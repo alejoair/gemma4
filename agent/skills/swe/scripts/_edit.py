@@ -153,7 +153,11 @@ def apply(root, rel, start, end, text):
         tries += [(v, r + [f'replaced only {len(v)} lines, as many as the new text has'], start + len(v) - 1)
                   for v, r in variants]
     first_error = None
+    same_as_old = False
     for cand, extra, stop in tries:
+        if [l.rstrip('\r\n') for l in cand] == [l.rstrip('\r\n') for l in lines[start - 1:stop]]:
+            same_as_old = True          # a repair turned the text into the lines already there: not a change
+            continue
         result = lines[:start - 1] + cand + lines[stop:]
         err = _compiles(result)
         if err is None:
@@ -168,4 +172,10 @@ def apply(root, rel, start, end, text):
                 warnings.append('the edit removed the definition of: ' + ', '.join(removed))
             return Result(True, start, new_end, None, repairs + extra, warnings)
         first_error = first_error or err
+    if same_as_old and first_error is None:
+        return Result(False, start, end, 'the new lines are the same as the old ones once indented: nothing changes',
+                      repairs, [])
+    if same_as_old:
+        return Result(False, start, end, f'the new lines are the old ones once indented, or the file would not compile '
+                                         f'({first_error}); nothing was changed', repairs, [])
     return Result(False, start, end, f'the file would not compile ({first_error}); nothing was changed', repairs, [])
