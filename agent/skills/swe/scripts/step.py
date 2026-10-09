@@ -720,9 +720,13 @@ def d3(root, state, args):
     if shown:
         return shown
     added = _add_candidate(state, single) if single else None
-    if not added and len(items) > 1 and all(re.fullmatch(r'(?i)C\d+|[\w./-]+::[\w.]+(\(\))?', _args.clean(x))
-                                            for x in items):
-        added = _add_named(root, state, items)
+    names = [re.sub(r'(?i)^C\d+\s*:\s*(?=[\w./-]+::)', '', _args.clean(x)) for x in items]
+    if not added and len(names) > 1 and all(
+            re.fullmatch(r'(?i)C\d+|([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) and not re.fullmatch(r'(?i)P\d+', x)
+            for x in names):
+        added = _add_named(root, state, names)
+    elif not added and len(names) == 1 and names[0] != _args.clean(items[0]) and '::' in names[0]:
+        added = _add_named(root, state, names)         # "C11:file::Name"
     if added:
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
