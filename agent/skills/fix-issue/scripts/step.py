@@ -251,8 +251,9 @@ def _window(root, state, i):
                  f"name is added after {name}); write it whole, from its def or class line to its last line.\n"
                  f"  ['{name}', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with "
                  f"their full indentation ('DELETE' deletes them).\n"
-                 f"  ['skip'] if {name} needs no change; ['<name of another listed place>'] to open it; ['back'] to "
-                 f"choose other code. Questions are not answered in this step.")
+                 f"  ['skip'] if {name} needs no change; ['<name of a function or class>'] to open it (it joins the "
+                 f"places), or a file name to choose among its functions; ['back'] to choose again. Questions are not "
+                 f"answered in this step.")
     return '\n'.join(parts)
 
 
@@ -834,6 +835,42 @@ def _place_args(state, args):
 
 
 
+def _open_named(root, state, text):
+    """In the edit step, code named off the list of places: a function or class of the repository joins the places
+    and opens (the model names the code the window shows it, such as Dependant from 'Code that ... uses'); a big file
+    goes back to choosing among its functions and classes (the edits made stay). None when text names neither."""
+    x = _args.clean(text).strip('/')
+    if re.fullmatch(r'[\w./-]+\.py', x):
+        rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None)
+        if rel and len(_repo.read_lines(root, rel)) > BIG_FILE:
+            st = _state.load('statement', {})
+            cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'],
+                                        only_rel=rel)
+            if cands:
+                _journal.requirement_back(state, cands)
+                return ('The edits made so far stay. ' + _candidates_view(
+                    state, title=f'Candidates in {rel} (its functions and classes most related to the issue):')
+                    + '\n\nChoose the code to change.')
+            return None
+    if not re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x):
+        return None
+    found = _resolve(root, [x])
+    if not found or len(state['places']) >= MAX_PLACES + 4:
+        return None
+    c = found[0]
+    old = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name'])), None)
+    if old is None:
+        old = {'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'], 'reason': 'chosen',
+               'id': f'P{len(state["places"]) + 1}'}
+        state['places'].append(old)
+        _set_handles(state['places'])
+    i = _journal.target(state, old['id'])
+    if state['plan'][i]['status'] == 'skipped':
+        state['plan'][i]['status'] = 'todo'
+    state['current'] = i
+    return f'{old["handle"]} is added to the places and open now.\n\n' + _window(root, state, i)
+
+
 def _whole_args(items):
     """(place id, code) for ["P1", "<whole function or class>"], else None."""
     if len(items) != 2 or not re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) or not DEF_LINE.search(items[1]):
@@ -965,6 +1002,10 @@ def d3(root, state, args):
             state['plan'][i]['status'] = 'todo'
         state['current'] = i
         return _window(root, state, i)
+    if single and '\n' not in single and len(single) <= 200:
+        opened = _open_named(root, state, single)
+        if opened:
+            return opened
     whole = _whole_args(items)
     if whole:
         pid, text = whole
@@ -986,7 +1027,7 @@ def d3(root, state, args):
             msg = ("Not run: this step only edits; questions are not answered here (the code the place uses and its "
                    "callers are listed in the window). Accepted: the whole new function or class ['<place name>', "
                    "'<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
-                   "lines>'], ['skip'] if the place needs no change, ['<name of another listed place>'] to open it, "
+                   "lines>'], ['skip'] if the place needs no change, ['<name of a function or class>'] to open it, "
                    "or ['back'] to choose other code. Nothing was opened or changed.")
         if cur is None:
             return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
