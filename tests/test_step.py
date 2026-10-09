@@ -210,3 +210,11 @@ def test_repeats_in_the_choose_step_open_the_first_candidate(repo):
     call(repo, 'no_such_thing_here')
     out = call(repo, 'no_such_thing_here')
     assert 'The first candidate is opened now' in out and 'Edit the chosen code now' in out
+
+
+def test_a_place_id_alone_opens_that_place(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    out = call(repo, 'P2')
+    assert out.startswith('EDIT P2') and 'Session.send' in out and '["P2", "<first line number>"' in out

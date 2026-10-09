@@ -400,6 +400,11 @@ def d3(root, state, args):
         return 'Plan updated. Nothing was changed in the code.\n\n' + _window(root, state, state['current'])
     if e is None and len([x for x in args if x and x.strip()]) == 1:
         name = _args.clean(next(x for x in args if x and x.strip()))
+        if re.fullmatch(r'(?i)P\d+', name) and _place(state, name.upper()):
+            i = _journal.target(state, name.upper())       # a place id alone: open that place for editing
+            state['plan'][i]['status'] = 'todo'
+            state['current'] = i
+            return _window(root, state, i)
         if name.endswith('.py') or ('/' in name and '::' not in name):
             cur = state['current']
             return ('A file is not a place to edit: name a function or class ("<file>::<Name>") or a candidate id '

@@ -594,3 +594,7 @@ locates the code (the reference function is not among the candidates).
 Tally of the local 12B loop with thinking on (2026-10-09): rich_3006 resolved earlier; httpx_3672 resolved by the
 local re-verification; rich_3521, rich_3469 (statements without information), requests_7328, fastapi_14986 not
 resolved. Every run found a protocol problem, each fixed with a unit test (102 tests).
+
+**Local 12B, fastapi_14986, second run (testing the fixes).** S0 and C2 fine; the 12B then sent `"P2"` alone in the
+edit step (it wanted the related place `FastAPI.openapi`), answered as a malformed edit. Fixed: a place id alone opens
+that place for editing.
