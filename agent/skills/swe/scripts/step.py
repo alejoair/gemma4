@@ -106,8 +106,7 @@ def _window(root, state, i):
     p = _place(state, entry['place'])
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
-    done = sum(1 for e in state['plan'] if e['status'] != 'todo')
-    head = f'EDIT {p["id"]} ({done + 1} of {len(state["plan"])}): {p["rel"]} :: {p["name"]}'
+    head = f'EDIT {p["id"]} (place {i + 1} of {len(state["plan"])} to edit): {p["rel"]} :: {p["name"]}'
     if p['reason'] != 'chosen':
         head += f' ({p["reason"]})'
     if p['name'] == '<exports>':
@@ -122,10 +121,12 @@ def _window(root, state, i):
     if p['reason'] != 'chosen':
         parts.append(f'This place was added because it is related to the chosen code: make the same change here if '
                      f'it needs it, or send ["skip"] if it needs none.')
-    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation. To '
-                 'add lines, replace the line before them with that same line followed by the new ones. In this step '
-                 'only an edit, ["skip"], ["P<n>"] (another listed place), ["C<n>"] (add a candidate) or ["back"] is '
-                 'accepted.')
+    parts.append('Send the line numbers of the lines to replace and the new lines with their full indentation ("" '
+                 'deletes the lines). To add lines, replace the line before them with that same line followed by the '
+                 'new ones. Also accepted: ["skip"] (this place needs no change), ["done"] (all needed changes are '
+                 'made), ["P<n>"] (open another listed place), ["C<n>"] (add a candidate), ["back"] (choose again), '
+                 f'and up to {MAX_LOOKUPS} questions per place: ["<name>"] (where it is defined and called), '
+                 '["<file>.py"] (its classes and functions), ["P<n>", "<first line>", "<last line>"] (those lines).')
     return '\n'.join(parts)
 
 
@@ -370,6 +371,10 @@ def d1(root, state, args):
     planned = [p['id'] for p in places if p['reason'] == 'chosen'
                or p['reason'].startswith('async/sync twin')
                or (p['reason'].startswith('same definition') and p['rel'].split('/')[-1] in bases)]
+    if not planned:
+        _journal.back(state)
+        return ('The chosen code was not found in the parsed files (nothing was opened). Choose other candidates.\n\n'
+                + _candidates_view(state))
     _journal.set_plan(state, [(pid, '') for pid in planned])
     _tests.save_verified(root)
     out.append(f'Places (the chosen code and the code related to it):\n{places_view}\n'
@@ -419,6 +424,10 @@ def _is_skip(text):
     return _args.clean(text or '').lower().strip('[]"\' .') in ('skip', 'no change', 'none', 'no edit')
 
 
+def _is_done(text):
+    return _args.clean(text or '').lower().strip('[]"\' .!') in ('done', 'finish', 'finished', 'submit', 'all done')
+
+
 def _listed_place(root, state, text):
     """The id of the listed place that text names: a place id, a candidate id or a code name of a listed place."""
     text = _args.clean(text).strip('[]"\' ')
@@ -447,6 +456,13 @@ MAX_LOOKUPS = 3    # name lookups per place in the edit step that are answered w
 
 
 SHOW_LINES = 80
+LIMIT = 'LIMIT'     # returned by a question asked after the MAX_LOOKUPS of the place were used
+
+
+def _limit_message(state, cur):
+    pid = state['plan'][cur]['place']
+    return (f'NOT RUN: {MAX_LOOKUPS} questions were already answered for {pid}. Edit it now, or ["skip"] it, or '
+            f'["done"] if all needed changes are made. Nothing was opened or changed.')
 
 
 def _show_lines(root, state, items):
@@ -463,7 +479,7 @@ def _show_lines(root, state, items):
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
     if entry['lookups'] > MAX_LOOKUPS:
-        return None
+        return LIMIT
     if max(a, p['start']) > min(b, p['end']):
         return f'Lines {a}-{b} are outside {pid}, which has lines {p["start"]}-{p["end"]}. Nothing was changed.'
     a, b = max(a, p['start']), min(b, p['end'])
@@ -471,7 +487,7 @@ def _show_lines(root, state, items):
     lines = _repo.read_lines(root, p['rel'])
     return (f'Lines {a}-{b} of {pid} ({p["rel"]} :: {p["name"]}); nothing was changed. To replace lines, send the place '
             f'id, the first and last line numbers and the new lines.\n'
-            + _code.numbered(lines, a, b, collapse=_code.long_strings(_code.parse(''.join(lines)))))
+            + _code.numbered(lines, a, b, collapse=[]))      # asked for: long texts shown in full
 
 
 def _lookup(root, state, text):
@@ -495,7 +511,7 @@ def _lookup(root, state, text):
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
     if entry['lookups'] > MAX_LOOKUPS:
-        return None
+        return LIMIT
     name = m.group(1)
     table = _impact.Table(root, docs=False)
     found = table.find(name.split('.')[-1])
@@ -519,7 +535,7 @@ def _file_outline(root, state, path):
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
     if entry['lookups'] > MAX_LOOKUPS:
-        return None
+        return LIMIT
     table = _impact.Table(root, docs=True)
     rel = next((r for r in table.syms if _rank.names_file(path, r)), None)
     if rel is None:
@@ -579,6 +595,15 @@ def d3(root, state, args):
         if move == 'back':
             return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
         return head + '\n\n' + _finish_view(root, state)
+    if _is_done(single):
+        if not state['edited']:
+            return ('Nothing was changed yet, so there is nothing to finish: edit a place, or ["back"] to choose other '
+                    'code.\n\n' + (_window(root, state, cur) if cur is not None else _candidates_view(state)))
+        for e in state['plan']:
+            if e['status'] == 'todo':
+                e['status'] = 'skipped'
+        state['step'], state['current'] = 'D4', None
+        return _finish_view(root, state)
     listed = _listed_place(root, state, single) if single else None
     if listed and cur is not None and listed == state['plan'][cur]['place'] and not re.fullmatch(r'(?i)P\d+', single):
         listed = None               # the open place named again: answer where the name is defined and called
@@ -591,9 +616,13 @@ def d3(root, state, args):
     packed = re.fullmatch(r'\s*(P\d+)\s*[,|\s]\s*(\d+)\s*[,|\s-]\s*(\d+)\s*', _args.clean(single), re.I) if single else None
     view = list(packed.groups()) if packed else items
     shown = _show_lines(root, state, view) if len(view) == 3 and cur is not None else None
+    if shown == LIMIT:
+        return _failed(root, state, cur, _limit_message(state, cur), 'questions')
     if shown:
         return shown
     lookup = _lookup(root, state, single) if single and cur is not None else None
+    if lookup == LIMIT:
+        return _failed(root, state, cur, _limit_message(state, cur), 'questions')
     if lookup:
         return lookup + '\n\n' + _window(root, state, cur)
     added = _add_candidate(state, single) if single else None
@@ -666,7 +695,7 @@ def _failed(root, state, i, message, error):
 
 def _coverage(state, root):
     """Which requirement shares names or words with an edited place (its name, its plan line, its changed lines)."""
-    diff = _repo.worktree_diff(root)
+    diff = _repo.worktree_diff(root) or ''
     added = ' '.join(l[1:] for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++'))
     edited_text = ' '.join(f'{e["intent"]} {_place(state, e["place"])["name"]}' for e in state['plan']
                            if e['status'] == 'done') + ' ' + added
@@ -684,8 +713,8 @@ def _finish_view(root, state):
     out = ['The planned places are done. The patch now holds:']
     for e in state['plan']:
         p = _place(state, e['place'])
-        status = {'done': 'changed', 'skipped': 'NOT changed (its edits failed)', 'todo': 'not edited'}[e['status']]
-        out.append(f'  {p["id"]} {p["rel"]} :: {p["name"]} — {status}. Plan: {e["intent"]}')
+        status = {'done': 'changed', 'skipped': 'NOT changed', 'todo': 'not edited'}[e['status']]
+        out.append(f'  {p["id"]} {p["rel"]} :: {p["name"]} — {status}')
     out.append('Requirements:')
     for r, hits in _coverage(state, root):
         mark = f'the changes share its words {", ".join(hits[:4])}' if hits else \

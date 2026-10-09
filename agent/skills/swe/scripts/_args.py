@@ -67,14 +67,13 @@ def ids(args, prefix):
 
 
 def code(text):
-    """Code text as the file must receive it: escaped line breaks unescaped when they are the only line breaks,
-    leaked call syntax and markdown fences removed, line-number prefixes removed when every line has one. Ends with
+    """Code text as the file must receive it: leaked call syntax and markdown fences removed (escaped line breaks are
+    left as they are: _edit tries them as line breaks only when the text does not compile as given, since a literal
+    b"\\r\\n" in the code is common), line-number prefixes removed when every line has one. Ends with
     a line break."""
     m = LEAK.search(text)
     if m:
         text = text[:m.start()]
-    if '\\n' in text and text.count('\n') <= text.count('\\n') // 4:
-        text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t')
     lines = text.split('\n')
     if lines and lines[0].strip().startswith('```'):
         lines = lines[1:]

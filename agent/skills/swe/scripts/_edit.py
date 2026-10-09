@@ -132,16 +132,22 @@ def apply(root, rel, start, end, text):
     if [l.rstrip('\r\n') for l in new] == [l.rstrip('\r\n') for l in old]:
         return Result(False, start, end, 'the new lines are the same as the old ones: nothing changes', repairs, [])
 
-    variants = [(new, [])]
-    reind = _reindent(new, old[0])
-    if reind != new:
-        variants.append((reind, ['re-indented to the replaced line']))
-    unesc = _unescape(new)
-    if unesc != new:
-        variants.append((unesc, ['turned escaped quotes into quotes']))
-        both = _reindent(unesc, old[0])
-        if both != unesc:
-            variants.append((both, ['turned escaped quotes into quotes', 're-indented to the replaced line']))
+    bases = [(new, [])]
+    if any('\\n' in l for l in new):
+        split = [x + nl for l in new for x in l.rstrip('\r\n').replace('\\r\\n', '\\n').split('\\n')]
+        bases.append((split, ['turned the escaped line breaks \\n into line breaks']))
+    variants = []
+    for base, why in bases:
+        variants.append((base, why))
+        reind = _reindent(base, old[0])
+        if reind != base:
+            variants.append((reind, why + ['re-indented to the replaced line']))
+        unesc = _unescape(base)
+        if unesc != base:
+            variants.append((unesc, why + ['turned escaped quotes into quotes']))
+            both = _reindent(unesc, old[0])
+            if both != unesc:
+                variants.append((both, why + ['turned escaped quotes into quotes', 're-indented to the replaced line']))
     tries = [(v, r, end) for v, r in variants]
     if 0 < len(new) < end - start + 1:
         tries += [(v, r + [f'replaced only {len(v)} lines, as many as the new text has'], start + len(v) - 1)
