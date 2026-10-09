@@ -50,6 +50,45 @@ local run received 7,017-character answers whole); it only misleads the model ab
 | `scripts/step.py` | file path in every call | acceptable: one script, said to take "the decision for the current step". A more descriptive name (`scripts/next_step.py`) is possible but changes a string the model has to write in every call; measure before changing (P2) |
 | `prompts/swe.md`, `swe_state_*` | not read by the model | rename for consistency only (`prompts/fix_issue.md`) |
 
+## Control tokens and escaping (checked 2026-10-09 with the Gemma 4 tokenizer and chat template)
+
+Checked with `google/gemma-4-31B-it`'s `tokenizer.json`, `tokenizer_config.json` and `chat_template.jinja`
+(transformers 5.18), rendering the real first request of 2026-10-09 the way vLLM does (`apply_chat_template`, then
+`encode` without added special tokens; `scratchpad/tok_check.py`).
+
+1. **The examples in our prompt become real control tokens.** `<|tool_call>` (id 48), `<tool_call|>` (49) and `<|"|>`
+   (52) are registered special tokens, and the tokenizer matches them in plain text. The system turn holds 5
+   `<|tool_call>`, 5 `<tool_call|>` and 62 `<|"|>`: about 36 of these come from our five examples, the rest from the
+   tool declarations the template adds. So the system turn contains five real-looking tool calls whose string values
+   are placeholders (`<statement>`, `<candidate name>`). They match exactly the form in which the template renders the
+   model's own calls in the history (`<|tool_call>call:run_skill_script{args:[<|"|>Session.send<|"|>],file_path:<|"|>
+   scripts/step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>`).
+2. **Every answer of our script reaches the model as escaped JSON.** The ADK's LiteLLM adapter serializes the tool's
+   result dict with `json.dumps` (`google/adk/models/lite_llm.py`, `_safe_json_serialize`); the template wraps the
+   string as `<|tool_response>response:run_skill_script{value:<|"|>{"skill_name": …, "stdout": "…"}<|"|>}`. So the
+   model reads our code windows with `\n` for every line break and `\"` for every double quote, all on one line. A V10
+   edit window (requests_7328) had 98 escaped line breaks and 62 escaped quotes, and its NEXT line read
+   `skill_name \"swe\", file_path \"scripts/step.py\" and args [\"P1\", …]`. Code in JSON is edited worse than
+   code in plain text (Aider, `docs/llm_strengths.md` 1.7).
+3. **The model sees four quote forms around the same names**: `"fix-issue"` in our system prose, `\"fix-issue\"` in
+   every NEXT line, backticks in the ADK's text, and `<|"|>fix-issue<|"|>` in its own calls. Its malformed calls
+   replace the `<|"|>` token with another quote-like character (`「swe」`, a backtick, `\"`), and a malformed call
+   in the history is rendered back as `skill_name:<|"|>「swe」<|"|>`, which the model then copies. That the quote
+   variety causes the mangling is a hypothesis; `「swe」` existed in V1, before the examples were added (V2), and the
+   rate fell after V2 (31% → 21%), then rose to 44% in V10.
+4. **The literal `\n` and `\"` in the model's edits**, which `_args.py` and `_edit.py` repair, are what it reads: it
+   copies the escaped form of the code in the window.
+
+What follows (each one measured, one at a time where possible, P2):
+- **Quote hygiene in the script's answers** (cannot remove the JSON escaping, can remove our own quotes): write lists
+  with single quotes (`['skip']`, `['Session.send', '<the whole new function or class>']`; json.dumps does not escape
+  them), write constant names bare (`skill_name fix-issue, file_path scripts/step.py`), and use no double quotes in our
+  own sentences. Code lines keep theirs. In our system prose, also write the names bare.
+- **The prompt's raw call examples**: keep them (they are the exact format and V2 lowered the malformed rate) or replace
+  them with a plain description; decide by an A/B run on Kaggle, measuring the malformed-call rate (the 12B does not
+  show `「swe」`, so only the 31B can measure it).
+- The edits' unescaping repairs stay: the escaping cannot be removed.
+
 ## Order of the changes
 
 The prompt changes go into plan item 4 (`CLAUDE.md`, "Next"): #1, #2, #3, #4, #5–#6, #7, #9, #11, #12, #13, #15

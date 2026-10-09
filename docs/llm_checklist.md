@@ -42,6 +42,7 @@ guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 | B12 | **Resolving contradictions** between the prompt, the window text and the NEXT line | V10: "TIME IS UP" while NEXT offered edits; a rename requirement against "an edit that breaks tests is undone"; the same input meaning different things in different steps O | Do the prompt, the answer and the NEXT line say the same thing? Does each input form mean one thing in every step? |
 | B13 | **Order sensitivity in lists**, worse for smaller models | Permutation self-consistency +157% for 7B, +12% for 70B (Tang et al., NAACL 2024) C | Is the best item first, and is the list short? |
 | B14 | **Decoding far from the vendor's settings** (repetition with near-greedy decoding) | Gemma 4 card: temperature 1.0, top_p 0.95, top_k 64 "across all use cases" V; Qwen3 card: greedy decoding in thinking mode causes endless repetitions A | Do the generation settings follow the vendor's, or is a difference measured? |
+| B15 | **Reading and writing text that is escaped**: every tool answer reaches the model as JSON, so line breaks read as `\n` and quotes as `\"`; the model then writes escaped code and mangles the quotes of its calls | ADK serializes tool results with json.dumps; a V10 window had 98 `\n` and 62 `\"` O; code in JSON is edited worse (Aider) C; V10: 44% mangled `skill_name` O | Does the answer add double quotes of its own (lists, names, NEXT)? Is a name written in one quote form everywhere? |
 
 ## Check of the design at commit 8c95d1d
 
@@ -68,6 +69,7 @@ guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 | B12 | partly | Time-up contradiction; rename vs test rule (the current code excuses tests that use the old name; to confirm) | As B10 and W4; say "N tests use the old name; the hidden tests replace them" |
 | B13 | yes | Ranked, best first, at most 10 | — |
 | B14 | no | Temperature 0.2, no top_k; Gemma's card says 1.0 / 0.95 / 64 | A/B run: vendor settings vs 0.2, measuring loops and malformed calls |
+| B15 | no | NEXT lines and answer forms use double quotes (escaped to `\"` for the model); names appear in four quote forms (`docs/prompt_audit.md`) | Single quotes in lists, names written bare; A/B of the prompt's raw call examples |
 
 ## How to present information (prompting)
 
