@@ -473,7 +473,12 @@ def main(argv):
     if state['step'] != 'S0' and _journal.repeated(state, args):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer: '
-               f'{state.get("answer", "")}). The call to make now is different: {now}')
+               f'{state.get("answer", "")}).')
+        if state['step'] == 'D3' and state['current'] is not None:
+            # stuck on a place: a repeat counts as a failed edit, so the place is left after MAX_FAILS
+            out = _failed(root, state, state['current'], out, 'repeated call')
+        else:
+            out += f' The call to make now is different: {now}' 
     else:
         out = STEPS[state['step']](root, state, args)
         state['answer'] = out.strip().split('\n')[0][:300]

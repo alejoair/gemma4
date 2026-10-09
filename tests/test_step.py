@@ -133,3 +133,15 @@ def test_the_window_points_to_code_the_plan_names(repo):
     call(repo, 'C1')
     out = call(repo, 'P1: change `resp.history = hist[1:]` to `resp.history = hist[:-1]`')
     assert 'The plan names code on line 11 (`resp.history = hist[1:]`).' in out
+
+
+def test_repeats_in_the_edit_step_count_as_failures_and_the_place_is_left(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    call(repo, 'P1: a', 'P2: b')
+    call(repo, 'P1: a better plan')
+    out = call(repo, 'P1: a better plan')
+    assert out.startswith('STOP REPEATING') and 'EDIT P1' in out
+    out = call(repo, 'P1: a better plan')
+    assert 'P1 failed 2 times' in out and 'EDIT P2' in out

@@ -508,3 +508,10 @@ param.empty)`), so the next call is concrete.
 **Local 12B, fifth run (rich_3006): RESOLVED** (harness and local re-verification). 6 calls (S0, C1, plan, one
 edit, submit, final text), about 20 s of model time; the patch is the reference patch. The plan said `is` this time
 (sampling at temperature 0.2), so the BROKEN path was not exercised in this run.
+
+**Local 12B, requests_7328, first run.** The 12B copied only the title as the statement, chose C1 and C2
+(`Session.send`, `resolve_redirects`) and planned both: the plan for `resolve_redirects` named the right cause (the
+response is put in its own history). It started with `Session.send`, sent an edit identical to the old lines, then
+repeated the same plan line despite "STOP REPEATING". Fixed (stuck detector): in the edit step a repeated call counts
+as a failed edit of the current place, so after two failures the place keeps its last verified code and the next
+planned place comes. Prompt tokens reached 11.8k after 7 calls (two chosen functions shown in full).
