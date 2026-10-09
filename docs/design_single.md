@@ -493,3 +493,9 @@ wrong (`is not param.empty` instead of `is param.empty`), and the check said OK:
 `tests/test_repr.py`. Fixed: the changed module's own test file (`test_<module>.py`) comes first, then the files that
 import the changed module, then the rare shared names. With that, the same edit is BROKEN (2 tests of
 `tests/test_repr.py`) and undone.
+
+**Local 12B, third run (rich_3006).** The wrong edit was now BROKEN and undone (5 calls, 14 s). The 12B then wanted
+to correct its plan line (`is not` → `is`), had no form for it in the edit step, reasoned inside the tool-call
+argument and ran into the 4,096-token limit (80 s): the cut call ends the task in the harness. Fixed: in the edit
+step a corrected plan line `["P1: <what changes there>"]` updates the plan and shows the place again, and the BROKEN
+answer says so. The runaway itself is the known 12B escape loop; watch for it with the 31B.

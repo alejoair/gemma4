@@ -327,6 +327,13 @@ def d3(root, state, args):
         state['step'] = 'D4'
         return 'TIME IS UP: no more edits are accepted. ' + _finish_view(root, state)
     e = _args.edit(args)
+    colon = any(re.match(r'\s*[\["\'`「]*\s*P\d+\s*[:=]', a or '') for a in args)
+    replan = _args.plan(args) if e is None and colon else []
+    if replan and replan != 'back' and all(_place(state, p) for p, _ in replan):
+        for pid, intent in replan:                  # a corrected plan line: the edit follows it
+            state['plan'][_journal.target(state, pid)].update(intent=intent, status='todo')
+        state['current'] = _journal.target(state, replan[0][0])
+        return 'Plan updated. Nothing was changed in the code.\n\n' + _window(root, state, state['current'])
     if e is None:
         cur = state['current']
         again = _window(root, state, cur) if cur is not None else ''
@@ -360,8 +367,9 @@ def d3(root, state, args):
     if verdict == 'BROKEN':
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
-        return _failed(root, state, i, f'BROKEN: the edit made existing tests fail, so it was undone.\n{detail}',
-                       'BROKEN ' + ' '.join(new_failures[:3]))
+        return _failed(root, state, i, f'BROKEN: the edit made existing tests fail, so it was undone.\n{detail}\n'
+                       f'If the plan line was wrong, send the corrected edit, or first the corrected plan line '
+                       f'["{pid}: <what changes there>"].', 'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
     what = 'OK' if verdict == 'OK' else 'APPLIED, NOT VERIFIED'
     head = f'{what}: {pid} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'

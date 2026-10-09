@@ -115,3 +115,13 @@ def test_a_malformed_edit_changes_nothing(repo):
     out = call(repo, 'P1', '11', '11', '            resp.history = hist[1:')
     assert out.startswith('NOT APPLIED: the file would not compile')
     assert (repo / 'pkg/sessions.py').read_text() == SESSIONS
+
+
+def test_a_corrected_plan_line_in_the_edit_step_updates_the_plan(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    call(repo, 'P1: change the history')
+    out = call(repo, 'P1: keep the history without the response itself')
+    assert out.startswith('Plan updated') and 'Plan: keep the history without the response itself' in out
+    assert (repo / 'pkg/sessions.py').read_text() == SESSIONS
