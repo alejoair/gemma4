@@ -54,16 +54,24 @@ def test_an_edit_of_a_listed_place_outside_the_plan_joins_the_plan():
     assert _journal.target(s, 'P1') == 0
 
 
-def test_the_same_args_twice_in_a_step_are_a_repeat():
+def test_the_same_args_twice_are_a_repeat():
     s = _journal.new(now=1000)
     assert not _journal.repeated(s, ['C1'])
     assert _journal.repeated(s, [' C1 '])
     assert not _journal.repeated(s, ['C2'])
     s['step'] = 'D2'
-    assert not _journal.repeated(s, ['C2'])
+    assert _journal.repeated(s, ['C2'])
 
 
 def test_time_limit_for_edits():
     s = _journal.new(now=1000)
     assert not _journal.time_is_up(s, now=1000 + _journal.EDIT_STOP - 1)
     assert _journal.time_is_up(s, now=1000 + _journal.EDIT_STOP + 1)
+
+
+def test_ping_pong_is_a_repeat():
+    s = _journal.new(now=1000)
+    s['step'] = 'D3'
+    assert not _journal.repeated(s, ['a.py'])
+    assert not _journal.repeated(s, ['b.py'])
+    assert _journal.repeated(s, ['a.py'])

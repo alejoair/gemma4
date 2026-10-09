@@ -381,6 +381,11 @@ def d3(root, state, args):
         return 'Plan updated. Nothing was changed in the code.\n\n' + _window(root, state, state['current'])
     if e is None and len([x for x in args if x and x.strip()]) == 1:
         name = _args.clean(next(x for x in args if x and x.strip()))
+        if name.endswith('.py') or ('/' in name and '::' not in name):
+            cur = state['current']
+            return ('A file is not a place to edit: name a function or class ("<file>::<Name>") or a candidate id '
+                    '("C<n>"), or edit the place below. Nothing was changed.\n'
+                    + (_window(root, state, cur) if cur is not None else ''))
         if re.fullmatch(r'[\w./-]*(::)?[\w.]+(\(\))?', name) and _resolve(root, [name]):
             _journal.back(state)                # a code name: open that code (the edits made so far stay)
             return d1(root, state, [name])

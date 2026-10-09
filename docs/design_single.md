@@ -572,3 +572,8 @@ say nothing.
 (a code name: it wanted to open that code), then called `get_code_neighbors` twice and chose C6,C7. Same pattern as
 rich_3521 (`Segment.split_cells`). Fixed: a single code name that exists in the repository opens that code in the edit
 step, as in the choose step.
+
+**Local 12B, httpx_3672, second run.** With code names accepted in the edit step, the 12B opened whole files
+(`src/httpx/_parsers.py`, `_server.py`, `_parsers.py` again): browsing, with the prompt at 16.9k tokens after 6 calls.
+Fixed: a bare file path is not a place (answered with the edit window); the repeat detector also catches a call equal
+to any of the last three (ping-pong A-B-A, as in OpenHands' stuck detector).

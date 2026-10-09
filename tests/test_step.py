@@ -186,3 +186,11 @@ def test_a_code_name_in_the_edit_step_opens_that_code(repo):
     call(repo, 'C1')
     out = call(repo, 'Session.send')
     assert 'P1 pkg/sessions.py :: Session.send' in out and 'Edit the chosen code now' in out
+
+
+def test_a_bare_file_path_in_the_edit_step_does_not_open_the_file(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    out = call(repo, 'pkg/sessions.py')
+    assert out.startswith('A file is not a place to edit') and 'EDIT P1' in out

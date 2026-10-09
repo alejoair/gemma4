@@ -39,12 +39,16 @@ def next_call(state):
 
 
 def repeated(state, args):
-    """True when args are the same as the previous call's in the same step: the call is not run again."""
-    key = [state['step'], [a.strip() for a in args]]
-    if state['last'] == key:
+    """True when args are the same as one of the last three calls' (a repeat, or a ping-pong A-B-A): the call is not
+    run again."""
+    key = [a.strip() for a in args]
+    recent = state.setdefault('recent', [])
+    if key in recent[-3:]:
         state['repeats'] += 1
         return True
-    state['last'], state['repeats'] = key, 0
+    recent.append(key)
+    del recent[:-3]
+    state['last'], state['repeats'] = [state['step'], key], 0
     return False
 
 
