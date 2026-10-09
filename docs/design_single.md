@@ -546,3 +546,9 @@ fixed:
 - Any internal error is answered in one line with the next call, never with a traceback.
 - `eval_config` back to 5 min (5.5 min plus sandbox setup risks the 12 h limit over about 120 tasks); edits stop at
   220 s.
+
+**Local 12B, rich_3521 (thinking on), first run.** S0 and C1,C2 fine; in the plan step the 12B re-sent `C1,C2` (back
+to choose, harmless) and then copied a place line (`"P2 rich/segment.py :: Segment._split_cells (lines 109-159) —
+chosen"`) three times. Fixed: a place id without the colon plans that place (no plan line), and a repeat in the plan
+step plans the chosen places and opens the first one for editing (the stuck detector moves the work on instead of
+waiting for a decision the model does not produce).

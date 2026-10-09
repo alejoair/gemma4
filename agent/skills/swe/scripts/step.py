@@ -103,7 +103,7 @@ def _window(root, state, i):
     p = _place(state, entry['place'])
     done = sum(1 for e in state['plan'] if e['status'] != 'todo')
     head = f'EDIT {p["id"]} ({done + 1} of {len(state["plan"])} planned): {p["rel"]} :: {p["name"]}. Plan: ' \
-           f'{entry["intent"]}'
+           f'{entry["intent"] or "(no plan line: change what the requirements need here)"}'
     if p['name'] == '<exports>':
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
@@ -327,6 +327,15 @@ def d2(root, state, args):
     if plan and all(_args.is_placeholder(i) for _, i in plan):
         return ('The plan still has the placeholder "<what changes there>": write what must change at each place. '
                 'Nothing was planned.\nPlaces:\n' + '\n'.join('  ' + _place_line(p) for p in state['places']))
+    if not plan:
+        # a place id without the colon ("P2 rich/x.py :: f ..." copied from the list) plans that place
+        for a in args:
+            for line in (a or '').split('\n'):
+                m = re.match(r'\W*(P\d+)\b\W*(.*)$', line.strip())
+                if m:
+                    rest = m.group(2).strip()
+                    plan.append((m.group(1).upper(), '' if '::' in rest or not rest else _args.clean(rest)))
+        bad = [p for p, _ in plan if p not in known]
     if not plan or bad:
         msg = (f'{", ".join(bad)} is not a listed place. ' if bad else
                'No plan was read: each item must start with a place id, like "P1: <what changes>". ')
@@ -480,6 +489,13 @@ def main(argv):
         if state['step'] == 'D3' and state['current'] is not None:
             # stuck on a place: a repeat counts as a failed edit, so the place is left after MAX_FAILS
             out = _failed(root, state, state['current'], out, 'repeated call')
+        elif state['step'] == 'D2' and state['places']:
+            # stuck on the plan: the chosen places are planned, so the work moves on to editing
+            chosen = [(p['id'], '') for p in state['places'] if p['reason'] == 'chosen'] or [(state['places'][0]['id'], '')]
+            _journal.set_plan(state, chosen)
+            _tests.save_verified(root)
+            out += (' The chosen places are planned now, so edit them.\n\n'
+                    + _window(root, state, state['current']))
         else:
             out += f' The call to make now is different: {now}' 
     else:
