@@ -94,3 +94,8 @@ def test_a_one_item_list_in_a_string_is_unpacked():
 def test_edit_with_numbered_lines_instead_of_numbers():
     args = ['P1', '79|        if a == b:', '82|            yield a', '        if a is b:\\n            yield b']
     assert _args.edit(args) == ('P1', 79, 82, '        if a is b:\n            yield b\n')
+
+
+def test_ids_in_cjk_brackets_and_lists():
+    assert _args.ids(['「C1」, "C2"'], 'C') == (['C1', 'C2'], [])
+    assert _args.ids(['[C1, C3]'], 'C') == (['C1', 'C3'], [])

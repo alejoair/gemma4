@@ -114,3 +114,25 @@ def test_the_module_own_test_file_comes_first(repo):
                                           '    assert param == default == empty\n'})
     targets = _tests.select(str(repo), {'pkg/repr.py': ['auto_rich_repr', 'if param.default is param.empty:']})
     assert targets[0] == ['tests/test_repr.py']
+
+
+def test_parallel_runs_share_one_deadline(repo, monkeypatch):
+    import time
+    slow = 'import time\nfrom pkg.calc import scale\n\n\ndef test_slow():\n    time.sleep(30)\n'
+    setup(repo, {'tests/test_slow1.py': slow, 'tests/test_slow2.py': slow})
+    monkeypatch.setattr(_tests, 'FILE_TIMEOUT', 3)
+    t = time.time()
+    r = _tests.run(str(repo), [['tests/test_slow1.py'], ['tests/test_slow2.py']])
+    assert time.time() - t < 6 and sorted(r['timeouts']) == ['tests/test_slow1.py', 'tests/test_slow2.py']
+
+
+def test_a_masked_pytest_is_not_verified(repo, monkeypatch):
+    setup(repo)
+    shim = repo / 'shim'
+    shim.mkdir()
+    (shim / 'pytest.py').write_text('import sys\nsys.stderr.write("pytest is disabled in this environment\\n")\n'
+                                    'sys.exit(1)\n')
+    (shim / '__main__.py').write_text('')
+    monkeypatch.setenv('PYTHONPATH', str(shim))
+    verdict, detail, _ = _tests.check(str(repo), {'pkg/calc.py': ['scale']})
+    assert verdict == 'NOT VERIFIED' and 'could not run' in detail

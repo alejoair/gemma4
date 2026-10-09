@@ -145,3 +145,21 @@ def test_repeats_in_the_edit_step_count_as_failures_and_the_place_is_left(repo):
     assert out.startswith('STOP REPEATING') and 'EDIT P1' in out
     out = call(repo, 'P1: a better plan')
     assert 'P1 failed 2 times' in out and 'EDIT P2' in out
+
+
+def test_a_placeholder_plan_is_refused(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, '「C1」, "C2"')
+    out = call(repo, 'P1: <what changes there>')
+    assert out.startswith('The plan still has the placeholder')
+
+
+def test_repeats_that_exhaust_the_only_place_go_back_to_choosing(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    call(repo, 'P1: a')
+    call(repo, 'P1', '11', '11', '            resp.history = hist[1:')     # does not compile: failure 1
+    out = call(repo, 'P1', '11', '11', '            resp.history = hist[1:')
+    assert out.startswith('STOP REPEATING') and 'choose again' in out and '"C<n>"' in out.splitlines()[-1]

@@ -532,3 +532,17 @@ time nor the growth is representative; a faithful local loop needs llama-server 
 
 Local 12B tally of v1 so far: rich_3006 resolved (6 calls); requests_7328 not resolved (wrong place first; the right
 cause was in its plan for `resolve_redirects` in the first attempt).
+
+**Pre-submit review (2026-10-09).** Stress run on the 14 local repositories (full flow plus malformed calls in every
+step: empty args, unknown ids, placeholders, repeats, back, requirement ids, a harmless edit with tests). Found and
+fixed:
+- `「C1」, "C2"` (the 31B's known malformation) was not read as ids: the model would have stayed in the choose step.
+- A plan with the literal placeholder `<what changes there>` was accepted; now refused.
+- A repeat that used up the only planned place raised an exception (the plan was read after being emptied).
+- Parallel test files waited one after another, each with its own limit (57 s seen); now one shared deadline. Limits
+  30 s per check and 25 s on the original code, whose results are kept per test id; `--timeout=15` per test when
+  pytest-timeout is installed.
+- A masked pytest ("pytest is disabled", a harness option) counts as not verified.
+- Any internal error is answered in one line with the next call, never with a traceback.
+- `eval_config` back to 5 min (5.5 min plus sandbox setup risks the 12 h limit over about 120 tasks); edits stop at
+  220 s.

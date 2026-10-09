@@ -324,6 +324,9 @@ def d2(root, state, args):
         return d1(root, state, args)
     known = {p['id'] for p in state['places']}
     bad = [p for p, _ in plan if p not in known]
+    if plan and all(_args.is_placeholder(i) for _, i in plan):
+        return ('The plan still has the placeholder "<what changes there>": write what must change at each place. '
+                'Nothing was planned.\nPlaces:\n' + '\n'.join('  ' + _place_line(p) for p in state['places']))
     if not plan or bad:
         msg = (f'{", ".join(bad)} is not a listed place. ' if bad else
                'No plan was read: each item must start with a place id, like "P1: <what changes>". ')
@@ -399,11 +402,11 @@ def d3(root, state, args):
 
 
 def _failed(root, state, i, message, error):
-    move = _journal.edit_failed(state, i, error)
+    pid = state['plan'][i]['place']
+    move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
-    pid = state['plan'][i]['place']
-    left = f'{pid} failed {state["plan"][i]["fails"]} times and keeps its last verified code.'
+    left = f'{pid} failed {_journal.MAX_FAILS} times and keeps its last verified code.'
     if state['step'] == 'D3':
         return f'{message}\n{left}\n\n' + _window(root, state, state['current'])
     if state['step'] == 'D1':
@@ -480,7 +483,12 @@ def main(argv):
         else:
             out += f' The call to make now is different: {now}' 
     else:
-        out = STEPS[state['step']](root, state, args)
+        try:
+            out = STEPS[state['step']](root, state, args)
+        except Exception as e:      # never a traceback for the model: say what happened and the call to make
+            _state.record({'error': f'{type(e).__name__}: {e}'})
+            out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Make the call below; '
+                   'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
     _state.save('journal', state)
     out = out.rstrip()

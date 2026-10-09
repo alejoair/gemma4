@@ -54,7 +54,7 @@ def ids(args, prefix):
     else (a name or a path off the list) is returned in others."""
     found, others = [], []
     for a in unpack(args):
-        for part in re.split(r'[,\s]+', a.strip()) if re.fullmatch(r'[\w\s,"\'`]+', a.strip()) else [a]:
+        for part in re.split(r'[,\s]+', a.strip()) if re.fullmatch(r'[\w\s,"\'`「」『』\[\]]+', a.strip()) else [a]:
             p = clean(part)
             if not p:
                 continue

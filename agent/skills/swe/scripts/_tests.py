@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 import _repo
 import _state
@@ -17,8 +18,9 @@ if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
     raise SystemExit(0)
 
-FILE_TIMEOUT = 35      # seconds per test file; files run in parallel
-BASE_TIMEOUT = 40      # seconds for the failing ids on the original code
+FILE_TIMEOUT = 30      # seconds per test file; files run in parallel
+BASE_TIMEOUT = 25      # seconds for the failing ids on the original code
+TEST_TIMEOUT = 15      # seconds per test, when pytest-timeout is installed (a hanging test then costs 15 s, not 30)
 MAX_FILES = 3
 MAX_BASE_IDS = 10
 BIG_FILE = 40          # a test file with more tests than this runs only the tests that use the changed names
@@ -136,16 +138,18 @@ def run(root, targets, timeout=None, cwd=None, stubs=()):
     'timeouts', 'missing'}: ran is False when pytest itself could not run."""
     timeout = timeout or FILE_TIMEOUT
     extra = [_stub_dir(stubs)] if stubs else []
+    flags = PYTEST + ([f'--timeout={TEST_TIMEOUT}'] if _has_pytest_timeout() else [])
     procs = []
     for group in targets:
         out = tempfile.TemporaryFile('w+')
-        p = subprocess.Popen([sys.executable] + PYTEST + group, cwd=cwd or root, env=_env(cwd or root, extra),
+        p = subprocess.Popen([sys.executable] + flags + group, cwd=cwd or root, env=_env(cwd or root, extra),
                              stdout=out, stderr=subprocess.STDOUT, text=True)
         procs.append((group, p, out))
     result = {'ran': False, 'failed': set(), 'passed': 0, 'output': '', 'timeouts': [], 'missing': set()}
+    deadline = time.time() + timeout          # one deadline for the parallel runs, not one per run
     for group, p, out in procs:
         try:
-            p.wait(timeout=timeout)
+            p.wait(timeout=max(0.1, deadline - time.time()))
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
@@ -153,7 +157,7 @@ def run(root, targets, timeout=None, cwd=None, stubs=()):
         out.seek(0)
         text = out.read()
         out.close()
-        if 'No module named pytest' in text:
+        if 'No module named pytest' in text or 'pytest is disabled' in text:
             continue
         result['ran'] = True
         for m in re.findall(r"ModuleNotFoundError: No module named '([\w.]+)'", text):
@@ -167,6 +171,14 @@ def run(root, targets, timeout=None, cwd=None, stubs=()):
     return result
 
 
+def _has_pytest_timeout():
+    try:
+        import importlib.util
+        return importlib.util.find_spec('pytest_timeout') is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _base_worktree(root):
     """A git worktree of the original commit, made once per task, outside the repository."""
     path = os.path.join(_state.directory(), 'original')
@@ -176,13 +188,19 @@ def _base_worktree(root):
 
 
 def failing_before(root, ids, stubs=()):
-    """The ids (first MAX_BASE_IDS) that also fail on the original code."""
+    """The ids (first MAX_BASE_IDS) that also fail on the original code. Results are kept, so each id runs on the
+    original once per task."""
+    known = _state.load('original_results', {})
     ids = sorted(ids)[:MAX_BASE_IDS]
-    base = _base_worktree(root) if ids else None
-    if not base:
-        return set()
-    r = run(base, [ids], timeout=BASE_TIMEOUT, cwd=base, stubs=stubs)
-    return {i for i in ids if i in r['failed'] or any(f.startswith(i) for f in r['failed'])} if r['ran'] else set()
+    todo = [i for i in ids if i not in known]
+    base = _base_worktree(root) if todo else None
+    if base:
+        r = run(base, [todo], timeout=BASE_TIMEOUT, cwd=base, stubs=stubs)
+        if r['ran']:
+            for i in todo:
+                known[i] = i in r['failed'] or any(f.startswith(i) for f in r['failed'])
+            _state.save('original_results', known)
+    return {i for i in ids if known.get(i)}
 
 
 def check(root, changed):

@@ -8,7 +8,7 @@ if __name__ == '__main__':
     raise SystemExit(0)
 
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
-EDIT_STOP = 250      # seconds after the start: no edit is accepted later (the run has about 330 s, a check up to 40)
+EDIT_STOP = 220      # seconds after the start: no edit is accepted later (the run has 300 s, a check up to 60)
 CALL = 'run_skill_script with skill_name "swe", file_path "scripts/step.py" and args '
 
 FORMS = {
