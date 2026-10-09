@@ -727,7 +727,7 @@ def d3(root, state, args):
         added = _add_named(root, state, names)
     elif not added and len(names) == 1 and (
             (names[0] != _args.clean(items[0]) and '::' in names[0])        # "C11:file::Name"
-            or re.fullmatch(r'([\w./-]+::)?[A-Z_]\w*\.[A-Za-z_]\w*(\(\))?', names[0])):   # a qualified Class.method
+            or re.fullmatch(r'([\w./-]+::)?[A-Z]\w*(\.[A-Za-z_]\w*)?(\(\))?', names[0])):   # Class or Class.method
         added = _add_named(root, state, names)
     if added:
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
