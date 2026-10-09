@@ -106,3 +106,16 @@ def test_sibling_prefers_matching_keyword_parameters_then_the_name(repo):
     assert _impact.sibling(table, 'pkg/app.py', 'App', 'frontend', keywords=['directory']).name == 'App.static_files'
     assert _impact.sibling(table, 'pkg/app.py', 'App', 'frontend').name == 'App.front'
     assert _impact.sibling(table, 'pkg/app.py', 'Missing', 'frontend') is None
+
+
+def test_generic_names_docs_callers_and_dunder_calls_are_not_related(repo):
+    files = {f'docs_src/t{i}.py': 'def main():\n    pass\n' for i in range(5)}
+    files.update({'scripts/release.py': 'def main():\n    pass\n',
+                  'pkg/body.py': 'def Body(x):\n    return x\n\n\nclass E(Exception):\n    def __init__(self):\n'
+                                 '        super().__init__()\n',
+                  'docs_src/use.py': 'from pkg.body import Body\n\n\ndef item():\n    return Body(1)\n'})
+    write(repo, files)
+    table = _impact.Table(str(repo), docs=True)
+    assert list(places(table, [('scripts/release.py', 'main')])) == [('scripts/release.py', 'main')]
+    assert list(places(table, [('pkg/body.py', 'Body')])) == [('pkg/body.py', 'Body')]
+    assert list(places(table, [('pkg/body.py', 'E.__init__')])) == [('pkg/body.py', 'E.__init__')]

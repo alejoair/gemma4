@@ -1,0 +1,13 @@
+name: swe_step_agent
+description: One agent that fixes the issue by making one bounded decision per step of the deterministic swe/step.py procedure.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include prompts/swe.md
+tools:
+  # The harness task message advertises the three code-graph tools; a call to a tool the agent lacks ends the task,
+  # so they stay listed although the procedure does not need them.
+  - submit_patch
+  - search_similar_code
+  - get_code_neighbors
+  - get_code_subgraph
+skills: [skills/swe]
+generate_content_config: !include configs/sampling.yaml

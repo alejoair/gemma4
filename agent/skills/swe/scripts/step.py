@@ -30,6 +30,7 @@ CODE_LINES = 120        # numbered lines shown for one place; a longer place sho
 EDIT_LINES = 50         # the edit window: the place's head and the part its plan line is about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
+MAX_CHARS = 12000       # a safety cap on one answer (about 3,500 tokens); the end with NEXT is always kept
 
 
 # ---------------------------------------------------------------------------------------------------------- views
@@ -267,6 +268,7 @@ def d1(root, state, args):
     _journal.choose(state, places)
     out = []
     focus = _focus(state)
+    limit = CODE_LINES if len(chosen) == 1 else CODE_LINES // 2
     for p in places:
         if p['reason'] != 'chosen':
             continue
@@ -274,7 +276,7 @@ def d1(root, state, args):
         if sym is not None and sym.kind == 'class' and sym.end - sym.start + 1 > CLASS_OUTLINE_AT:
             body = _outline(root, p['rel'], sym)
         else:
-            body = _code_view(root, p['rel'], p['start'], p['end'], focus)
+            body = _code_view(root, p['rel'], p['start'], p['end'], focus, limit=limit)
         out.append(f'{p["id"]} {p["rel"]} :: {p["name"]}\n{body}')
     new = [(r, n) for r in state['requirements'] if r['type'] == 'new' for n in r['names']]
     for r, name in new[:1]:
@@ -441,7 +443,10 @@ def main(argv):
     else:
         out = STEPS[state['step']](root, state, args)
     _state.save('journal', state)
-    print(out.rstrip() + '\n\n' + _journal.next_call(state))
+    out = out.rstrip()
+    if len(out) > MAX_CHARS:
+        out = out[:MAX_CHARS - 2500] + '\n      ... (output cut) ...\n' + out[-2400:]
+    print(out + '\n\n' + _journal.next_call(state))
 
 
 if __name__ == '__main__':

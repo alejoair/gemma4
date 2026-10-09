@@ -90,10 +90,14 @@ def related(table, chosen):
             continue
         short = name.split('.')[-1]
         same = [(r, s) for r, s in table.find(short) if (r, s.name) != (rel, name) and s.kind == sym.kind]
-        for r, s in same:
-            if s.name == name:
+        base = rel.split('/')[-1]
+        copies = [(r, s) for r, s in same if s.name == name]
+        for r, s in copies:
+            # a copy: the same qualified name in a file of the same name (src/httpx and src/ahttpx), or a rare name
+            if r.split('/')[-1] == base or len(copies) <= MAX_SAME_NAME:
                 put(r, s, f'same definition in {r}')
-            elif _twin_key(s.name) == _twin_key(name):
+        for r, s in same:
+            if s.name != name and _twin_key(s.name) == _twin_key(name):
                 put(r, s, f'async/sync twin of {name}')
         if '.' in name:
             cls, method = name.rsplit('.', 1)
@@ -106,7 +110,11 @@ def related(table, chosen):
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:
                 put(r, s, f'also named {short}')
-        callers = [c for c in table.calls.get(short, []) if c[1] and (c[0], c[1]) != (rel, name)]
+        # calls of a dunder method are not calls of this one (super().__init__ of other classes); examples in docs
+        # are callers only of documentation code
+        callers = [] if short.startswith('__') else [
+            c for c in table.calls.get(short, []) if c[1] and (c[0], c[1]) != (rel, name)
+            and (_repo.is_doc_path(rel) or not _repo.is_doc_path(c[0]))]
         callers.sort(key=lambda c: (c[0] != rel, c[0].split('/')[:-1] != rel.split('/')[:-1], c[0], c[2]))
         n = 0
         for r, caller, line in callers:
