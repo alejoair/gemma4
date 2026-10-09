@@ -783,9 +783,6 @@ def d3(root, state, args):
     if _args.plan(args) == 'back':
         _journal.back(state)
         return 'The edits made so far stay. ' + _candidates_view(state) + '\n\nChoose the code to change.'
-    if _journal.time_is_up(state):
-        state['step'] = 'D4'
-        return 'TIME IS UP: no more edits are accepted. ' + _finish_view(root, state)
     args = _place_args(state, args)                    # a place's name in front: its internal id
     raw = [x for x in args if x is not None]
     if len(raw) == 4 and not raw[3].strip() and re.fullmatch(r'(?i)\W*P\d+\W*', raw[0] or ''):
@@ -1025,7 +1022,7 @@ def _progress(root, state):
     elif state['step'] == 'D4':
         now = 'finishing'
     try:
-        return _status.progress_line(root, now, left)
+        return _status.progress_line(root, now, left) + '\n' + _journal.budget_line(state)
     except Exception as e:      # the recap must never cost the answer
         _state.record({'error': f'progress: {type(e).__name__}: {e}'})
         return ''
@@ -1055,7 +1052,14 @@ def main(argv):
         target = _listed_place(state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
     resent = state['step'] != 'S0' and _is_statement_again(args)
-    if resent:
+    if state['step'] in ('D1', 'D2', 'D3', 'D4') and _journal.time_is_up(state):
+        # time for edits is over: the call is not run, and the only next call is submit_patch (V10: "TIME IS UP"
+        # while NEXT still offered edits, and the model lost its last turns)
+        first = not state.get('time_up')
+        state['time_up'], state['step'], state['current'] = True, 'D4', None
+        out = (('Time for edits is over, so this call was not run. ' if first else
+                'Edits are closed, so this call was not run. ') + _finish_view(root, state))
+    elif resent:
         # after the harness compacts the history the model may start again: say where the work is
         out = ('The start was already made: the requirements and candidates are known and the work is in a later '
                'step. Continue from here (nothing was changed).\n\n' + _current_view(root, state))

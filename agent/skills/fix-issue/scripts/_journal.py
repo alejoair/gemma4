@@ -10,6 +10,8 @@ if __name__ == '__main__':
 
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
 EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
+TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
+CALL_LIMIT = 30      # eval_config.yaml max_tool_calls
 CALL = 'run_skill_script with skill_name "fix-issue", file_path "scripts/step.py" and args '
 
 FORMS = {
@@ -31,9 +33,20 @@ def new(now=None):
             'current': None, 'last': None, 'repeats': 0, 'edited': []}
 
 
+def budget_line(state, now=None):
+    """Time and calls used, and when edits close (models cannot see their budget: V10, 6 of 10 runs ended on it). The
+    calls are those the script received: malformed ones never reach it, so the real count is higher."""
+    used = (now or time.time()) - state['t0']
+    line = (f'Time used: {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min; edits close at {EDIT_STOP / 60:.1f} min, then '
+            f'only submit_patch is left. Calls used: at least {state.get("calls", 0)} of {CALL_LIMIT}.')
+    return line
+
+
 def next_call(state):
     """The exact next call, the last line of every answer."""
     step = state['step']
+    if state.get('time_up'):
+        return 'NEXT: call submit_patch now, with no arguments. Edits are closed.'
     if step == 'D4':
         return 'NEXT: ' + FORMS['D4']
     if step == 'D3' and state['current'] is not None:
