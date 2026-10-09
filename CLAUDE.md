@@ -143,7 +143,7 @@ Most numbers come from abstracts and summaries; check them in the PDFs before ci
 
 ## ADK config and harness behaviour (checked in the installed adk_submission 0.2.12, swegemma 0.2.7, google-adk 1.39.1)
 
-**Harness update on 2026-10-09 (Kaggle wheelhouse: swegemma 0.2.11, adk_submission 0.2.13).** It changes some of the points below:
+**Harness update on 2026-10-09 (Kaggle wheelhouse: swegemma 0.2.11, adk_submission 0.2.13).** The local venv (`scratchpad/venv`) was updated to the same wheels on 2026-10-09: swegemma 0.2.11, adk_submission 0.2.13, google-adk 1.36.1, google-genai 2.11.0, adk-eval-core 0.1.0 (installed with `--no-deps`; pip reports google-adk 1.36.1 wants starlette<1, which only matters for `adk web`). It changes some of the points below:
 - A `ToolErrorPlugin` turns calls to undeclared tools, and tool exceptions, into error responses; they no longer end the task.
 - The task message lists only the declared tools. Our agent therefore declares only `submit_patch`; the skill tools come with `skills:`.
 - An exception during the agent run keeps the unsubmitted `git diff`.
