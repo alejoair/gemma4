@@ -126,7 +126,8 @@ def _window(root, state, i):
                  'new ones. Also accepted: ["skip"] (this place needs no change), ["done"] (all needed changes are '
                  'made), ["P<n>"] (open another listed place), ["C<n>"] (add a candidate), ["back"] (choose again), '
                  f'and up to {MAX_LOOKUPS} questions per place: ["<name>"] (where it is defined and called), '
-                 '["<file>.py"] (its classes and functions), ["P<n>", "<first line>", "<last line>"] (those lines).')
+                 '["<file>.py"] (its classes and functions), ["P<n>", "<first line>", "<last line>"] (those lines), '
+                 '["search <text>"] (the lines that contain the text).')
     return '\n'.join(parts)
 
 
@@ -506,8 +507,18 @@ def _lookup(root, state, text):
                        if not n.startswith('.') and n != '__pycache__')
         return f'{d}/ has: {", ".join(names[:80])} (nothing was opened or changed).'
     m = re.fullmatch(r'(?:(?:async\s+)?def\s+|class\s+)?([A-Za-z_][\w.]*)(?:\(.*\))?:?', text)
-    if not m or re.fullmatch(r'(?i)[PCR]\d+', m.group(1)) or _is_skip(m.group(1)) or m.group(1).lower() == 'back':
+    if m and (re.fullmatch(r'(?i)[PCR]\d+', m.group(1)) or _is_skip(m.group(1)) or m.group(1).lower() == 'back'):
         return None
+    if not m:
+        search = re.fullmatch(r'(?is)(?:search|grep|find)\s*:?\s+(.+)', text)
+        needle = (search.group(1) if search else text).strip().strip('"\'`')
+        if '\n' in needle or len(needle) < 3 or len(needle) > 120:
+            return None
+        entry = state['plan'][state['current']]
+        entry['lookups'] = entry.get('lookups', 0) + 1
+        if entry['lookups'] > MAX_LOOKUPS:
+            return LIMIT
+        return _search_text(root, needle)
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
     if entry['lookups'] > MAX_LOOKUPS:
@@ -518,7 +529,8 @@ def _lookup(root, state, text):
     if '.' in name:
         found = [(r, x) for r, x in found if x.name.endswith(name)] or found
     if not found:
-        return f'No code named `{name}` exists in the repository (nothing was opened or changed).'
+        return (f'No function or class named `{name}` is defined in the repository. '
+                + (_search_text(root, name) or ''))
     where = '; '.join(f'{r} :: {x.name} (lines {x.start}-{x.end})' for r, x in found[:6])
     callers = [(r, c, line) for r, c, line in table.calls.get(name.split('.')[-1], []) if c]
     if callers:
@@ -527,6 +539,32 @@ def _lookup(root, state, text):
     tail = f' It is listed as {", ".join(listed)}: send ["{listed[0]}"] to open it.' if listed else \
         ' It is not a listed place: to edit it, send ["back"] and choose it as "<file>::<Name>".'
     return f'`{name}` is defined in: {where}.{tail} Nothing was opened or changed.'
+
+
+MAX_MATCHES = 50
+
+
+def _search_text(root, text):
+    """Lines of the repository's code (tests and docs included, hidden and cache files not) that contain text
+    literally, as 'file:line: code', at most MAX_MATCHES; more matches ask for a narrower text (SWE-agent's summarized
+    search)."""
+    needle = text.strip()
+    if len(needle) < 3:
+        return None
+    hits, files = [], set()
+    rels = sorted(_repo.iter_py(root, tests=True, docs=True), key=lambda r: (_repo.is_doc_path(r), _repo.is_test_path(r), r))
+    for rel in rels:                                    # package code first, then tests, then docs and examples
+        for i, line in enumerate(_repo.read_text(root, rel).splitlines(), 1):
+            if needle in line:
+                hits.append(f'  {rel}:{i}: {line.strip()[:120]}')
+                files.add(rel)
+    if not hits:
+        return f'No line of the repository contains `{needle}` (nothing was opened or changed).'
+    if len(hits) > MAX_MATCHES:
+        top = sorted(files, key=lambda r: -sum(h.startswith(f'  {r}:') for h in hits))[:10]
+        return (f'{len(hits)} lines in {len(files)} files contain `{needle}`: too many to list; send a more specific '
+                f'text. Files with most matches: {", ".join(top)} (nothing was opened or changed).')
+    return f'{len(hits)} lines contain `{needle}` (nothing was opened or changed):\n' + '\n'.join(hits)
 
 
 def _file_outline(root, state, path):

@@ -97,6 +97,11 @@ def edit(args):
                      r'(.*)$', args[0], re.S | re.I)
         if m:
             args = [m.group(1), m.group(2), m.group(3), m.group(4)] + args[1:]
+    if len(args) == 2:
+        # place and lines packed in the first item, the new lines in the second: ["P1,78,85", "<new lines>"]
+        m = re.fullmatch(r'\s*["\'`「\[]*\s*(P\d+)\s*["\'`」]*\s*[,|:\s]\s*(\d+)\s*[,|:\s-]\s*(\d+)\s*', args[0], re.I)
+        if m:
+            args = [m.group(1), m.group(2), m.group(3), args[1]]
     if len(args) < 3 or is_placeholder(args[0]):
         return None
     place = clean(args[0]).upper()
