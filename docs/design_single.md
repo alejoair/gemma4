@@ -643,3 +643,30 @@ Model faults:
 - one runaway reply.
 
 The local budget is not Kaggle's (512); a faithful local loop needs `--reasoning-budget 512` on the server.
+
+### Local 12B batch 2 of the 10 local tasks (2026-10-09, v9 = b792504, fixed during the run up to ce369b5)
+
+Result: 1/10 (rich_3006, 124 s), as in batch 1. Patches were produced in fastapi_14448, fastapi_14583 and httpx_3672,
+besides rich_3006; batch 1 produced fewer.
+
+**System faults found and fixed during the batch:**
+- empty new lines were ambiguous (view or delete); they are now answered with both options, and `DELETE` deletes;
+- names, class names and `C11:file::Name` labels did not join the plan;
+- a module path without `.py` got no outline;
+- "OK" was given with 0 passing tests; it is now NOT VERIFIED;
+- no file-scoped search;
+- `Router` opened a function that only contains the word;
+- an edit that a repair turned back into the original lines was reported as OK, and the task ended with an empty patch;
+- asking questions made the model leave the right place;
+- no rule against reading without editing: questions now stop at call 12 without an edit;
+- repeated questions after compaction pointed to an answer no longer in the history;
+- search text lost its brackets;
+- **a required rename (`complete` → `reset`) was undone as BROKEN** because existing tests use the old name; such failures no longer count;
+- no way to run code: `python -c` was added.
+
+**Model faults:**
+- most calls hit the 3,072-token local reasoning budget;
+- the same question repeated;
+- `async def` written into the sync class.
+
+The harness on Kaggle was updated the same day (swegemma 0.2.11). The local runs still use 0.2.7.
