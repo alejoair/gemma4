@@ -476,7 +476,7 @@ def _limit_message(state, cur, asked=''):
         return (f'NOT RUN: {state.get("calls", 0)} calls and no edit yet. Questions stop here: make your best edit of '
                 f'{pid} now (a wrong edit can be corrected, reading more cannot score), or ["skip"] it if it needs no '
                 f'change. Nothing was opened or changed.')
-    asked = _args.clean(asked or '').strip('[]"\'\\ ')
+    asked = _args.clean(asked or '').strip('"\'\\ ')
     words = {w for w in re.findall(r'[A-Za-z_]\w+', asked) if w not in ('search', 'py', 'src')}
     match = [c for c in state['candidates'] if asked and (c['rel'] == asked or c['rel'].endswith('/' + asked)
                                                           or c['name'].split('.')[-1] in words or c['name'] in words)]
@@ -511,11 +511,17 @@ def _show_lines(root, state, items):
             + _code.numbered(lines, a, b, collapse=[]))      # asked for: long texts shown in full
 
 
+def _unwrap(text):
+    """The text without a pair of brackets around all of it (a list copied as one item)."""
+    text = text.strip()
+    return text[1:-1].strip().strip('"\'') if text.startswith('[') and text.endswith(']') else text
+
+
 def _lookup(root, state, text):
     """A bare code name (or "def name") that is not a listed place, sent in the edit step: the answer says where code
     of that name is defined, or that none exists, without opening it, so that the model need not search for it. At
     most MAX_LOOKUPS per place; later ones are refused like other calls."""
-    text = _args.clean(text).strip('[]"\'\\ ')
+    text = _unwrap(_args.clean(text).strip('"\'\\ '))
     if re.fullmatch(r'[\w./-]+/[\w.-]+', text) and not text.endswith('.py') \
             and os.path.isfile(os.path.join(root, text + '.py')):
         text += '.py'                                   # a module path without .py
@@ -875,7 +881,7 @@ def d4(root, state, args):
         return out
     items = [x for x in args if x is not None and x.strip()]
     if len(items) == 1 and state.get('finish_lookups', 0) < MAX_LOOKUPS:
-        text = _args.clean(items[0]).strip('[]"\'\\ ')
+        text = _unwrap(_args.clean(items[0]).strip('"\'\\ '))
         if re.fullmatch(r'[\w./-]+\.py', text):
             answer = None
         else:
