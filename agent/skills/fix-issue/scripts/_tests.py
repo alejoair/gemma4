@@ -3,6 +3,7 @@ changed names, run with time limits; a failing test counts against the edit only
 (run in a separate git worktree). Also the last verified state: the content of the changed files when the tests last
 passed, to go back to when an edit breaks them."""
 import ast
+import json
 import math
 import os
 import re
@@ -159,6 +160,45 @@ def _env(root, extra=()):
     return env
 
 
+COVER_PLUGIN = '''"""Records which of the wanted lines run (sys.monitoring, Python 3.12+): one callback per code location, then that
+location is switched off, so the cost is small."""
+import atexit, json, os, sys
+_want = {os.path.realpath(k): set(v) for k, v in json.loads(os.environ.get("SWE_COVER_FILES", "{}")).items()}
+_out = os.environ.get("SWE_COVER_OUT")
+_hits = []
+_mon = getattr(sys, "monitoring", None)
+if _mon is not None and _want and _out:
+    _tool = next((i for i in (3, 4, 1) if _mon.get_tool(i) is None), None)
+    if _tool is not None:
+        _mon.use_tool_id(_tool, "swe-cover")
+        _real = {}
+        def _line(code, n):
+            f = _real.get(code.co_filename)
+            if f is None:
+                f = _real[code.co_filename] = os.path.realpath(code.co_filename)
+            if n in _want.get(f, ()):
+                _hits.append([f, n])
+            return _mon.DISABLE
+        _mon.register_callback(_tool, _mon.events.LINE, _line)
+        _mon.set_events(_tool, _mon.events.LINE)
+        def _save():
+            with open(_out, "w") as fh:
+                json.dump(_hits, fh)
+        atexit.register(_save)
+'''
+
+
+def _cover_dir():
+    """A directory holding the coverage plugin, outside the skill's files (they are deleted when the script ends)."""
+    d = os.path.join(_state.directory(), 'cover')
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, 'swe_cover_plugin.py')
+    if not os.path.exists(path):
+        with open(path, 'w') as fh:
+            fh.write(COVER_PLUGIN)
+    return d
+
+
 def _stub_dir(modules):
     """A directory of stand-in modules for test-only packages the environment lacks: every attribute is an object
     equal to anything."""
@@ -185,19 +225,33 @@ def _parse(out):
     return failed, passed
 
 
-def run(root, targets, timeout=None, cwd=None, stubs=()):
+def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None):
     """Runs each target group in its own pytest process, in parallel. Returns {'ran', 'failed', 'passed', 'output',
-    'timeouts', 'missing'}: ran is False when pytest itself could not run."""
+    'timeouts', 'missing', 'covered'}: ran is False when pytest itself could not run; covered is the set of (rel,
+    line) of cover ({rel: lines}) that the tests ran, or None when it could not be measured."""
     timeout = timeout or FILE_TIMEOUT
     extra = [_stub_dir(stubs)] if stubs else []
     flags = PYTEST + ([f'--timeout={TEST_TIMEOUT}'] if _has_pytest_timeout() else [])
+    cover_env, outs = {}, []
+    if cover:
+        extra = [_cover_dir()] + extra
+        flags = flags + ['-p', 'swe_cover_plugin']
+        cover_env['SWE_COVER_FILES'] = json.dumps({os.path.join(cwd or root, rel): sorted(lines)
+                                                  for rel, lines in cover.items()})
     procs = []
-    for group in targets:
+    for k, group in enumerate(targets):
         out = tempfile.TemporaryFile('w+')
-        p = subprocess.Popen([sys.executable] + flags + group, cwd=cwd or root, env=_env(cwd or root, extra),
+        env = _env(cwd or root, extra)
+        if cover:
+            outs.append(os.path.join(_state.directory(), f'cover_{os.getpid()}_{k}.json'))
+            if os.path.exists(outs[-1]):
+                os.remove(outs[-1])
+            env.update(cover_env, SWE_COVER_OUT=outs[-1])
+        p = subprocess.Popen([sys.executable] + flags + group, cwd=cwd or root, env=env,
                              stdout=out, stderr=subprocess.STDOUT, text=True)
         procs.append((group, p, out))
-    result = {'ran': False, 'failed': set(), 'passed': 0, 'output': '', 'timeouts': [], 'missing': set()}
+    result = {'ran': False, 'failed': set(), 'passed': 0, 'output': '', 'timeouts': [], 'missing': set(),
+              'covered': None}
     deadline = time.time() + timeout          # one deadline for the parallel runs, not one per run
     for group, p, out in procs:
         try:
@@ -220,6 +274,15 @@ def run(root, targets, timeout=None, cwd=None, stubs=()):
         result['failed'] |= failed
         result['passed'] += passed
         result['output'] += text
+    base = os.path.realpath(cwd or root)
+    for path in outs:
+        try:
+            with open(path) as fh:
+                hits = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        result['covered'] = result['covered'] or set()
+        result['covered'] |= {(os.path.relpath(f, base), n) for f, n in hits}
     return result
 
 
@@ -271,29 +334,31 @@ def _test_uses(root, test_id, names):
     return False
 
 
-def check(root, changed, renamed=()):
-    """The verdict on the current code: ('OK' | 'BROKEN' | 'NOT VERIFIED', detail, new failures). A new failure of a
+def check(root, changed, renamed=(), cover=None):
+    """The verdict on the current code: ('OK' | 'UNCHECKED' | 'BROKEN', detail, new failures). OK needs passing tests
+    that run the changed statements (cover: {rel: lines}; a false OK is worse than none: Reflexion's 16.3% false
+    positives, Olausson); passing tests that do not run them, or no test at all, give UNCHECKED. A new failure of a
     test that uses a name the statement renames does not count: the hidden tests replace such tests."""
     slow = _state.load('slow_tests', [])
     targets = [g for g in select(root, changed) if g[0].split('::')[0] not in slow]
     if not targets:
-        return 'NOT VERIFIED', 'no existing test uses the changed code' + (
+        return 'UNCHECKED', 'no existing test uses the changed code' + (
             f' (left out because they ran out of time before: {", ".join(slow)})' if slow else ''), []
-    r = run(root, targets)
+    r = run(root, targets, cover=cover)
     if r['timeouts']:
         _state.save('slow_tests', sorted(set(slow) | set(r['timeouts'])))
     stubs = ()
     if r['missing']:
         stubs = tuple(sorted(r['missing']))
-        r = run(root, targets, stubs=stubs)
+        r = run(root, targets, stubs=stubs, cover=cover)
     if not r['ran']:
-        return 'NOT VERIFIED', 'pytest could not run', []
+        return 'UNCHECKED', 'pytest could not run', []
     files = sorted({g[0].split('::')[0] for g in targets} - set(r['timeouts']))
     late = f'; out of time, not counted: {", ".join(r["timeouts"])}' if r['timeouts'] else ''
     if not r['failed']:
         if r['passed'] == 0:
-            return 'NOT VERIFIED', 'the selected tests did not finish (' + ', '.join(r['timeouts'] or files) + ')', []
-        return 'OK', f'{r["passed"]} existing tests pass ({", ".join(files)}){late}', []
+            return 'UNCHECKED', 'the selected tests did not finish (' + ', '.join(r['timeouts'] or files) + ')', []
+        return _ran_it(r, cover, f'{r["passed"]} existing tests pass ({", ".join(files)}){late}')
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
     old_name = [f for f in new if renamed and _test_uses(root, f, renamed)]
@@ -303,12 +368,24 @@ def check(root, changed, renamed=()):
                  f'count (the hidden tests replace them)')
     if not new:
         if r['passed'] == 0:      # nothing passes: the tests say nothing about the change (SWE-ABS: not verified)
-            return 'NOT VERIFIED', (f'no selected test passes, before or after the change ({len(r["failed"])} failed '
-                                    f'already before it){late}'), []
+            return 'UNCHECKED', (f'no selected test passes, before or after the change ({len(r["failed"])} failed '
+                                 f'already before it){late}'), []
         already = len(r['failed']) - len(old_name)
-        return 'OK', (f'{r["passed"]} existing tests pass' + (f'; {already} failures were already there before the '
-                                                              f'change' if already else '') + late), []
+        return _ran_it(r, cover, f'{r["passed"]} existing tests pass' + (
+            f'; {already} failures were already there before the change' if already else '') + late)
     return 'BROKEN', _failure_excerpt(r['output'], new), new
+
+
+def _ran_it(r, cover, detail):
+    """OK when the passing tests ran a changed statement; UNCHECKED when they ran none; OK with a note when it could not
+    be measured (no sys.monitoring)."""
+    if not cover:
+        return 'OK', detail, []
+    if r['covered'] is None:
+        return 'OK', detail + ' (whether they run the changed lines could not be measured)', []
+    if r['covered']:
+        return 'OK', detail + ' and run the changed lines', []
+    return 'UNCHECKED', detail.replace('pass', 'pass but none of them runs the changed lines', 1), []
 
 
 def _failure_excerpt(output, ids, limit=1500):

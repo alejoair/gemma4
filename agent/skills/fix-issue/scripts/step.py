@@ -29,6 +29,7 @@ import _rank  # noqa: E402
 import _repo  # noqa: E402
 import _state  # noqa: E402
 import _statement  # noqa: E402
+import _status  # noqa: E402
 import _tests  # noqa: E402
 
 N_CANDIDATES = 10
@@ -882,7 +883,9 @@ def _after_edit(root, state, i, p, r, before):
             changed.setdefault(q['rel'], []).append(q['name'].split('.')[-1])
     changed.setdefault(p['rel'], []).extend(l.strip() for l in new_lines)
     renamed = sorted({n for r_ in state['requirements'] for n in r_.get('old', [])})
-    verdict, detail, new_failures = _tests.check(root, changed, renamed)
+    after = _repo.read_lines(root, p['rel'])
+    cover = _status.changed_statements(before, after)
+    verdict, detail, new_failures = _tests.check(root, changed, renamed, cover={p['rel']: cover} if cover else None)
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
     shown = _changed_view(before, _repo.read_lines(root, p['rel']))
     if verdict == 'BROKEN':
@@ -892,7 +895,7 @@ def _after_edit(root, state, i, p, r, before):
                        f'Read the failing test: send a corrected edit of {p["handle"]} that keeps it passing.',
                        'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
-    what = 'OK' if verdict == 'OK' else 'APPLIED, NOT VERIFIED'
+    what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
     if move == 'next':
@@ -913,33 +916,39 @@ def _failed(root, state, i, message, error):
     return f'{message}\n{left}\n\n' + _finish_view(root, state)
 
 
-def _coverage(state, root):
-    """Which requirement shares names or words with an edited place (its name, its plan line, its changed lines)."""
+def _added_text(root):
     diff = _repo.worktree_diff(root) or ''
-    added = ' '.join(l[1:] for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++'))
-    edited_text = ' '.join(f'{e["intent"]} {_place(state, e["place"])["name"]}' for e in state['plan']
-                           if e['status'] == 'done') + ' ' + added
-    have = {t for w in re.findall(r'[A-Za-z_]\w*', edited_text) for t in _rank.tokens(w)}
-    out = []
-    for r in state['requirements']:
-        terms = _statement.terms(r['text'])
-        hits = sorted({term for term, w in terms.items() for ident in re.findall(r'[A-Za-z_]\w*', term)
-                       if w >= 2 and any(t in have for t in _rank.tokens(ident))})
-        out.append((r, hits))
-    return out
+    return '\n'.join(l[1:] for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+
+def _uncovered(state, root):
+    """The requirements the code shows are not met yet: a new name that nothing defines. When none is known, all."""
+    added = _added_text(root)
+    out = [r for r in state['requirements']
+           if any('not defined anywhere' in f for f in _status.requirement_facts(root, r, added))]
+    return out or list(state['requirements'])
 
 
 def _finish_view(root, state):
-    out = ['The planned places are done. The patch now holds:']
-    for e in state['plan']:
-        p = _place(state, e['place'])
-        status = {'done': 'changed', 'skipped': 'NOT changed', 'todo': 'not edited'}[e['status']]
-        out.append(f'  {p["handle"]} ({p["rel"]}) — {status}')
-    out.append('Requirements:')
-    for r, hits in _coverage(state, root):
-        mark = f'the changes share its words {", ".join(hits[:4])}' if hits else \
-            'NOTHING changed shares its words: is it covered?'
-        out.append(f'  - {r["text"][:120]}\n      -> {mark}')
+    """What the patch holds, read from git (not from the plan, which forgets edits after a way back), the places that
+    were looked at and not changed, and per requirement the facts the code can show. No question is asked: a
+    question without a new fact makes the model undo correct work (Huang et al.; FlipFlop)."""
+    rows = _status.summary(root)
+    if rows:
+        out = ['The patch changes:'] + [f'  - {name} in {rel} (+{a} -{r})' for rel, name, a, r in rows]
+    else:
+        out = ['The patch is empty: nothing is changed.']
+    changed = {(rel, name) for rel, name, _, _ in rows}
+    left = [_place(state, e['place'])['handle'] for e in state['plan']
+            if (_place(state, e['place'])['rel'], _place(state, e['place'])['name']) not in changed]
+    if left:
+        out.append('Looked at and not changed: ' + ', '.join(left) + '.')
+    out.append('The requirements, with what the code shows:')
+    added = _added_text(root)
+    for r in state['requirements']:
+        facts = _status.requirement_facts(root, r, added)
+        out.append(f'  - {r["text"][:160]}')
+        out.append('      ' + ('; '.join(facts) + '.' if facts else 'nothing here can be checked automatically.'))
     return '\n'.join(out)
 
 
@@ -948,8 +957,7 @@ def d4(root, state, args):
     picks them from the coverage map: no requirement id to look up), or an edit of a listed place again."""
     ids, others = _args.ids(args, 'R')
     if _args.plan(args) == 'back' or (ids and not others):
-        reqs = [r for r in state['requirements'] if r['id'] in ids] or \
-            [r for r, hits in _coverage(state, root) if not hits] or state['requirements']
+        reqs = [r for r in state['requirements'] if r['id'] in ids] or _uncovered(state, root)
         st = _state.load('statement', {})
         text = '\n'.join(r['text'] for r in reqs)
         cands, _ = _rank_candidates(root, text, st.get('terms', []), reqs)
@@ -979,6 +987,25 @@ def _is_statement_again(args):
     known = norm(_state.load('statement', {}).get('text', ''))
     head = norm(first)[:60]
     return bool(known) and len(head) >= 30 and head in known
+
+
+def _progress(root, state):
+    """The first line of every answer (recap: Laban et al. +16 to +17.5 points; Manus todo list): what the patch
+    holds, read from git, what is open now and what is left."""
+    now, left = '', []
+    if state['step'] == 'D3' and state.get('current') is not None:
+        now = _name_of(state, state['plan'][state['current']]['place'])
+        left = [_name_of(state, e['place']) for i, e in enumerate(state['plan'])
+                if e['status'] == 'todo' and i != state['current']]
+    elif state['step'] == 'D1':
+        now = 'choosing the code to change'
+    elif state['step'] == 'D4':
+        now = 'finishing'
+    try:
+        return _status.progress_line(root, now, left)
+    except Exception as e:      # the recap must never cost the answer
+        _state.record({'error': f'progress: {type(e).__name__}: {e}'})
+        return ''
 
 
 def _current_view(root, state):
@@ -1047,6 +1074,8 @@ def main(argv):
         _journal.remember(state, args, state['answer'])
     _state.save('journal', state)
     out = out.rstrip()
+    if state['step'] != 'S0':
+        out = _progress(root, state) + '\n\n' + out
     if len(out) > MAX_CHARS:
         out = out[:MAX_CHARS - 2500] + '\n      ... (output cut) ...\n' + out[-2400:]
     print(out + '\n\n' + _journal.next_call(state))
