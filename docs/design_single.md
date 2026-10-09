@@ -504,3 +504,7 @@ answer says so. The runaway itself is the known 12B escape loop; watch for it wi
 12B sent the same plan line three more times. Fixed: a repeat is answered "STOP REPEATING" followed by the call to
 make now, and the edit window says on which line the code named in the plan is (`line 79 (param.default ==
 param.empty)`), so the next call is concrete.
+
+**Local 12B, fifth run (rich_3006): RESOLVED** (harness and local re-verification). 6 calls (S0, C1, plan, one
+edit, submit, final text), about 20 s of model time; the patch is the reference patch. The plan said `is` this time
+(sampling at temperature 0.2), so the BROKEN path was not exercised in this run.
