@@ -115,7 +115,7 @@ gaps. The fixes, grouped, in this order:
    back"; compile errors with the offending line's text; refusals that describe instead of quoting; a repeat answer
    that differs each time and moves on at the third repeat in every step; no capitals or pressure words.
 3. **Budget** (B10, W4, P5): time used and the edit deadline in every answer; at time-up only submit_patch.
-4. **Prompt** (P1, P3, P5, P6, F8, B2): the statement inside `<issue>…</issue>`; positive rules with their reason and
+4. **Prompt** (P1, P3, P5, P6, F8, B2; the full list is `docs/prompt_audit.md`): the statement inside `<issue>…</issue>`; positive rules with their reason and
    who judges the patch (the hidden tests); no contradictions; the step's decision at both ends of each answer; what
    the harness's skill errors mean; any copy of the statement accepted.
 5. **A -/+ diff after an edit** (W5).
@@ -132,7 +132,8 @@ recommended sampling (temperature 1.0, top_p 0.95, top_k 64) against 0.2.
   `tools/fetch_snapshots.sh`).
 - `VERSIONS.md`: every eval run and submission.
 - `docs/llm_checklist.md`: the checklist; `docs/llm_strengths.md`, `docs/prompting_input.md`,
-  `docs/prompting_feedback.md`: the literature behind it; `docs/audit_v10.md`: the critical audit of the V10 traces.
+  `docs/prompting_feedback.md`: the literature behind it; `docs/audit_v10.md`: the critical audit of the V10 traces. `docs/prompt_audit.md`: every text the model reads
+  (ours, the ADK's, the harness's) and its problems.
 - `docs/design_single.md`: the design method (HTA → function allocation → workflow vs agent → detailed design), design
   v1, its verification and the local batches. `docs/scripts_spec.md`: what each script must do, with the literature
   per script. `docs/literature.md`: the 31B's failures in V1–V6 with the techniques from the literature, and the papers
