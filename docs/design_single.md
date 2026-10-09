@@ -598,3 +598,9 @@ resolved. Every run found a protocol problem, each fixed with a unit test (102 t
 **Local 12B, fastapi_14986, second run (testing the fixes).** S0 and C2 fine; the 12B then sent `"P2"` alone in the
 edit step (it wanted the related place `FastAPI.openapi`), answered as a malformed edit. Fixed: a place id alone opens
 that place for editing.
+
+**Local 12B, fastapi_14986, third run: not resolved, no procedure errors.** 12 calls in 5 min (time limit, 20–30 s per
+call). The new tolerances worked as designed: code names opened their functions (`server_urls` → `FastAPI.setup`,
+`FastAPI.openapi`, `get_swagger_ui_html`), a file path was refused, repeats were stopped. The 12B used them to look
+around and made one edit late (`url: {json.dumps(openapi_url)}` in `get_swagger_ui_html`, a part of the reference fix);
+5 of 7 fail-to-pass tests still fail. The remaining gap is the model's decision, not the protocol.
