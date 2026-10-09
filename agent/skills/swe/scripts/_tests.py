@@ -255,8 +255,25 @@ def failing_before(root, ids, stubs=()):
     return {i for i in ids if known.get(i)}
 
 
-def check(root, changed):
-    """The verdict on the current code: ('OK' | 'BROKEN' | 'NOT VERIFIED', detail, new failures)."""
+def _test_uses(root, test_id, names):
+    """Whether the test function test_id ('file::name' or 'file::Class::name') uses one of names."""
+    parts = test_id.split('::')
+    try:
+        tree = ast.parse(_repo.read_text(root, parts[0]))
+    except (SyntaxError, ValueError):
+        return False
+    lines = _repo.read_text(root, parts[0]).splitlines()
+    want = parts[-1].split('[')[0]
+    for fname, a, b in _test_functions(tree):
+        if fname.split('::')[-1] == want:
+            body = '\n'.join(lines[a - 1:b])
+            return any(re.search(rf'\b{re.escape(n)}\b', body) for n in names)
+    return False
+
+
+def check(root, changed, renamed=()):
+    """The verdict on the current code: ('OK' | 'BROKEN' | 'NOT VERIFIED', detail, new failures). A new failure of a
+    test that uses a name the statement renames does not count: the hidden tests replace such tests."""
     slow = _state.load('slow_tests', [])
     targets = [g for g in select(root, changed) if g[0].split('::')[0] not in slow]
     if not targets:
@@ -279,12 +296,18 @@ def check(root, changed):
         return 'OK', f'{r["passed"]} existing tests pass ({", ".join(files)}){late}', []
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
+    old_name = [f for f in new if renamed and _test_uses(root, f, renamed)]
+    new = [f for f in new if f not in old_name]
+    if old_name:
+        late += (f'; {len(old_name)} failing tests use the renamed {", ".join(f"`{n}`" for n in renamed)} and do not '
+                 f'count (the hidden tests replace them)')
     if not new:
         if r['passed'] == 0:      # nothing passes: the tests say nothing about the change (SWE-ABS: not verified)
             return 'NOT VERIFIED', (f'no selected test passes, before or after the change ({len(r["failed"])} failed '
                                     f'already before it){late}'), []
-        return 'OK', (f'{r["passed"]} existing tests pass; {len(r["failed"])} failures were already there before '
-                      f'the change{late}'), []
+        already = len(r['failed']) - len(old_name)
+        return 'OK', (f'{r["passed"]} existing tests pass' + (f'; {already} failures were already there before the '
+                                                              f'change' if already else '') + late), []
     return 'BROKEN', _failure_excerpt(r['output'], new), new
 
 

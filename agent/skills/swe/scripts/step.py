@@ -273,7 +273,9 @@ def s0(root, state, args):
     index = _rank.Index(root)
     for i, r in enumerate(_statement.requirements(text) or [text[:300]], 1):
         kind, names = _statement.change_type(r, index.names.__contains__)
-        reqs.append({'id': f'R{i}', 'text': r, 'type': kind, 'names': names})
+        old_names = [names[0].split('.')[-1]] if kind == 'rename' and names and \
+            names[0].split('.')[-1] in index.names else []          # "A -> B", "rename A to B": A is the old name
+        reqs.append({'id': f'R{i}', 'text': r, 'type': kind, 'names': names, 'old': old_names})
     cands, _ = _rank_candidates(root, text, extra, reqs)
     _journal.start(state, reqs, cands)
     return f'{_requirements_view(state)}\n\n{_candidates_view(state)}\n\nChoose the code to change.'
@@ -800,7 +802,8 @@ def d3(root, state, args):
         if e2['status'] == 'done' or e2['place'] == pid:
             changed.setdefault(q['rel'], []).append(q['name'].split('.')[-1])
     changed.setdefault(p['rel'], []).extend(l.strip() for l in new_lines)
-    verdict, detail, new_failures = _tests.check(root, changed)
+    renamed = sorted({n for r in state['requirements'] for n in r.get('old', [])})
+    verdict, detail, new_failures = _tests.check(root, changed, renamed)
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
     shown = _code.numbered(_repo.read_lines(root, p['rel']), max(1, r.start - 2), r.end + 2)
     if verdict == 'BROKEN':
