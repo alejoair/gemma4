@@ -499,3 +499,8 @@ to correct its plan line (`is not` → `is`), had no form for it in the edit ste
 argument and ran into the 4,096-token limit (80 s): the cut call ends the task in the harness. Fixed: in the edit
 step a corrected plan line `["P1: <what changes there>"]` updates the plan and shows the place again, and the BROKEN
 answer says so. The runaway itself is the known 12B escape loop; watch for it with the 31B.
+
+**Local 12B, fourth run (rich_3006).** BROKEN → corrected plan line (`is`) → "Plan updated" worked, but then the
+12B sent the same plan line three more times. Fixed: a repeat is answered "STOP REPEATING" followed by the call to
+make now, and the edit window says on which line the code named in the plan is (`line 79 (param.default ==
+param.empty)`), so the next call is concrete.

@@ -111,7 +111,26 @@ def _window(root, state, i):
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
     hint = ('Send the line numbers of the lines to replace and the new lines with their full indentation. To add '
             'lines, replace the line before them with that same line followed by the new ones.')
+    named = _named_lines(root, p, entry['intent'])
+    if named:
+        hint = 'The plan names code on ' + '; '.join(f'line {n} (`{frag}`)' for n, frag in named) + '.\n' + hint
     return f'{head}\n{body}\n{hint}'
+
+
+def _named_lines(root, p, intent, limit=3):
+    """[(line number, fragment)] for the code fragments in backticks of the plan line found in the place."""
+    if p['name'] == '<exports>':
+        start, lines = 1, _repo.read_lines(root, p['rel'])
+    else:
+        start, lines = p['start'], _repo.read_lines(root, p['rel'])[p['start'] - 1:p['end']]
+    out = []
+    for frag in re.findall(r'`([^`\n]{6,})`', intent):
+        norm = re.sub(r'\s+', ' ', frag.strip())
+        for i, line in enumerate(lines):
+            if norm in re.sub(r'\s+', ' ', line):
+                out.append((start + i, norm))
+                break
+    return out[:limit]
 
 
 def _requirements_view(state):
@@ -452,8 +471,9 @@ def main(argv):
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else list(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     if state['step'] != 'S0' and _journal.repeated(state, args):
-        out = (f'This is the same call as the previous one, so it gets the same answer and was not run again: '
-               f'{state.get("answer", "")} Change the call.')
+        now = _journal.next_call(state).replace('NEXT: ', '', 1)
+        out = (f'STOP REPEATING: this call was already made and was not run again (its answer: '
+               f'{state.get("answer", "")}). The call to make now is different: {now}')
     else:
         out = STEPS[state['step']](root, state, args)
         state['answer'] = out.strip().split('\n')[0][:300]

@@ -88,7 +88,7 @@ def test_wrong_forms_and_repeats_are_answered_with_the_expected_call(repo):
     out = call(repo, 'P9: something')
     assert 'P9 is not a listed place' in out
     out = call(repo, 'P9: something')
-    assert 'same call as the previous one' in out and 'P9 is not a listed place' in out
+    assert out.startswith('STOP REPEATING') and 'P9 is not a listed place' in out
     out = call(repo, 'back')
     assert 'Choose the code to change' in out and '"C<n>"' in out.splitlines()[-1]
 
@@ -125,3 +125,11 @@ def test_a_corrected_plan_line_in_the_edit_step_updates_the_plan(repo):
     out = call(repo, 'P1: keep the history without the response itself')
     assert out.startswith('Plan updated') and 'Plan: keep the history without the response itself' in out
     assert (repo / 'pkg/sessions.py').read_text() == SESSIONS
+
+
+def test_the_window_points_to_code_the_plan_names(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    out = call(repo, 'P1: change `resp.history = hist[1:]` to `resp.history = hist[:-1]`')
+    assert 'The plan names code on line 11 (`resp.history = hist[1:]`).' in out
