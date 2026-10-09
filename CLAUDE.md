@@ -30,6 +30,7 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 **The only design principle: make the task easier for the 31B model** (`gemma-4-31b-it-qat-w4a16-ct`). Every design choice is judged by this alone; there are no other design principles.
 
 **Rules for Claude working on this repo:**
+- **Check every design change against `docs/llm_checklist.md`** (what an LLM does well and badly, with evidence): for each item say whether the change moves us closer, farther or is neutral, and why; record the table with the change. A change that moves us farther on any item needs a stated reason. Add an item when a trace or a paper shows a new strength or weakness (the user's rule, 2026-10-09).
 - Never remove or replace a piece of this design because it has few or no calls. Zero calls means it is not wired into the prompts or tools. Find out why and wire it.
 - Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md`: date, commit, system, tools, generation, budget, result, tool-call counts, failures seen and what changed next. Update it as soon as a run finishes.
