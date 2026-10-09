@@ -463,8 +463,19 @@ SHOW_LINES = 80
 LIMIT = 'LIMIT'     # returned by a question asked after the MAX_LOOKUPS of the place were used
 
 
+EDIT_BY_CALL = 12   # without an edit by this call, questions stop (SHERLOC final-turn prompt; notebooks: edit by call 12)
+
+
+def _no_edit_yet(state):
+    return not state['edited'] and state.get('calls', 0) >= EDIT_BY_CALL
+
+
 def _limit_message(state, cur, asked=''):
     pid = state['plan'][cur]['place']
+    if _no_edit_yet(state):
+        return (f'NOT RUN: {state.get("calls", 0)} calls and no edit yet. Questions stop here: make your best edit of '
+                f'{pid} now (a wrong edit can be corrected, reading more cannot score), or ["skip"] it if it needs no '
+                f'change. Nothing was opened or changed.')
     asked = _args.clean(asked or '').strip('[]"\'\\ ')
     words = {w for w in re.findall(r'[A-Za-z_]\w+', asked) if w not in ('search', 'py', 'src')}
     match = [c for c in state['candidates'] if asked and (c['rel'] == asked or c['rel'].endswith('/' + asked)
@@ -488,7 +499,7 @@ def _show_lines(root, state, items):
         return None
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS:
+    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
         return LIMIT
     if max(a, p['start']) > min(b, p['end']):
         return f'Lines {a}-{b} are outside {pid}, which has lines {p["start"]}-{p["end"]}. Nothing was changed.'
@@ -532,12 +543,12 @@ def _lookup(root, state, text):
             return None
         entry = state['plan'][state['current']]
         entry['lookups'] = entry.get('lookups', 0) + 1
-        if entry['lookups'] > MAX_LOOKUPS:
+        if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
             return LIMIT
         return _search_text(root, needle, only)
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS:
+    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
         return LIMIT
     name = m.group(1)
     table = _impact.Table(root, docs=False)
@@ -590,7 +601,7 @@ def _file_outline(root, state, path):
     lookup."""
     entry = state['plan'][state['current']]
     entry['lookups'] = entry.get('lookups', 0) + 1
-    if entry['lookups'] > MAX_LOOKUPS:
+    if entry['lookups'] > MAX_LOOKUPS or _no_edit_yet(state):
         return LIMIT
     table = _impact.Table(root, docs=True)
     rel = next((r for r in table.syms if _rank.names_file(path, r)), None)
@@ -914,6 +925,7 @@ def main(argv):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
+    state['calls'] = state.get('calls', 0) + 1
     skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
     if state['step'] == 'D3' and len(args) == 1 and not skip and state['current'] is not None:
         # opening another listed place is a move, not a repeat
