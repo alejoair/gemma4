@@ -600,19 +600,27 @@ def _file_outline(root, state, path):
 def _add_candidate(state, text):
     """A candidate id that is not a listed place, sent in the edit step: the candidate joins the places and the plan
     (choosing more of the system's own list is part of the procedure) and is opened. Returns the new place id."""
-    text = _args.clean(text).strip('[]"\' ').upper()
-    if not re.fullmatch(r'C\d+', text) or len(state['places']) >= MAX_PLACES + 4:
+    ids = re.findall(r'C\d+', _args.clean(text).upper())
+    if not ids or not re.fullmatch(r'[\sC\d,;"\'\[\]]+', _args.clean(text).upper()):
         return None
-    c = next((c for c in state['candidates'] if c['id'] == text), None)
-    if c is None:
+    added = []
+    for cid in ids[:3]:
+        c = next((c for c in state['candidates'] if c['id'] == cid), None)
+        if c is None or len(state['places']) >= MAX_PLACES + 4:
+            continue
+        old = next((p for p in state['places'] if (p['rel'], p['name']) == (c['rel'], c['name'])), None)
+        pid = old['id'] if old else f'P{len(state["places"]) + 1}'
+        if not old:
+            state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
+                                    'reason': 'chosen', 'id': pid})
+        i = _journal.target(state, pid)
+        if state['plan'][i]['status'] == 'skipped':
+            state['plan'][i]['status'] = 'todo'
+        added.append((pid, i))
+    if not added:
         return None
-    pid = f'P{len(state["places"]) + 1}'
-    state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
-                            'reason': 'chosen', 'id': pid})
-    i = _journal.target(state, pid)
-    state['plan'][i]['intent'] = ''
-    state['current'] = i
-    return pid
+    state['current'] = added[0][1]
+    return ', '.join(pid for pid, _ in added)
 
 
 def d3(root, state, args):
@@ -667,14 +675,14 @@ def d3(root, state, args):
         return _failed(root, state, cur, _limit_message(state, cur), 'questions')
     if shown:
         return shown
+    added = _add_candidate(state, single) if single else None
+    if added:
+        return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
     if lookup == LIMIT:
         return _failed(root, state, cur, _limit_message(state, cur), 'questions')
     if lookup:
         return lookup + '\n\n' + _window(root, state, cur)
-    added = _add_candidate(state, single) if single else None
-    if added:
-        return f'{added} added to the plan.\n\n' + _window(root, state, state['current'])
     e = _args.edit(args)
     if e is None:
         if len(items) == 4 or (len(items) > 1 and re.fullmatch(r'(?i)\W*P\d+\W*', items[0] or '')):
