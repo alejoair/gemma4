@@ -69,7 +69,7 @@ def test_whole_flow(repo):
     assert 'P2 pkg/sessions.py :: Session.send' in out and 'calls resolve_redirects' in out
 
     out = call(repo, '["P1: the history must not hold the response itself"]')
-    assert out.startswith('EDIT P1 (1 of 1 planned)') and '["P1", "<first line>"' in out
+    assert out.startswith('EDIT P1 (1 of 1 planned)') and '["P1", "<first line number>"' in out
 
     out = call(repo, 'P1', '11', '11', '            resp.history = hist[:-1]')
     assert out.startswith('OK: P1 lines 11-11 changed; 1 existing tests pass')
@@ -88,7 +88,7 @@ def test_wrong_forms_and_repeats_are_answered_with_the_expected_call(repo):
     out = call(repo, 'P9: something')
     assert 'P9 is not a listed place' in out
     out = call(repo, 'P9: something')
-    assert 'already made' in out
+    assert 'same call as the previous one' in out and 'P9 is not a listed place' in out
     out = call(repo, 'back')
     assert 'Choose the code to change' in out and '"C<n>"' in out.splitlines()[-1]
 

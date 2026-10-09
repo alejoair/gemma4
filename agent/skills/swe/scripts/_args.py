@@ -95,6 +95,9 @@ def edit(args):
     if len(args) < 3 or is_placeholder(args[0]):
         return None
     place = clean(args[0]).upper()
+    # a number written as the numbered line the viewer printed ('79|    code') is that number
+    args = [args[0]] + [re.sub(r'^(\s*\d+)\|.*$', r'\1', a, flags=re.S) if NUMBERED.match(a) else a
+                        for a in args[1:3]] + args[3:]
     m = re.fullmatch(r'(\d+)\s*[-:,]\s*(\d+)', clean(args[1]))
     if m:
         start, end, rest = int(m.group(1)), int(m.group(2)), args[2:]

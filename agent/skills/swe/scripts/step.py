@@ -330,8 +330,13 @@ def d3(root, state, args):
     if e is None:
         cur = state['current']
         again = _window(root, state, cur) if cur is not None else ''
-        return ('The edit was not read: it needs the place id, the first and the last line number, and the new '
-                'lines. Nothing was changed.\n' + again)
+        items = [x for x in args if x is not None]
+        if len(items) < 4:
+            why = f'it has {len(items)} items; it needs 4: the place id, two line numbers and the new lines.'
+        else:
+            why = (f'the second and third items must be line numbers like 79 and 82, not "{items[1][:40]}" and '
+                   f'"{items[2][:40]}".')
+        return f'The edit was not read: {why} Nothing was changed.\n' + again
     pid, start, end, text = e
     p = _place(state, pid)
     if p is None:
@@ -439,9 +444,11 @@ def main(argv):
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else list(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     if state['step'] != 'S0' and _journal.repeated(state, args):
-        out = 'This exact call was already made and answered above; it was not run again.'
+        out = (f'This is the same call as the previous one, so it gets the same answer and was not run again: '
+               f'{state.get("answer", "")} Change the call.')
     else:
         out = STEPS[state['step']](root, state, args)
+        state['answer'] = out.strip().split('\n')[0][:300]
     _state.save('journal', state)
     out = out.rstrip()
     if len(out) > MAX_CHARS:

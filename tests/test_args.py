@@ -89,3 +89,8 @@ def test_placeholders_are_recognised():
 def test_a_one_item_list_in_a_string_is_unpacked():
     assert _args.unpack(['["P1: the history must change"]']) == ['P1: the history must change']
     assert _args.plan(['["P1: the history must change"]']) == [('P1', 'the history must change')]
+
+
+def test_edit_with_numbered_lines_instead_of_numbers():
+    args = ['P1', '79|        if a == b:', '82|            yield a', '        if a is b:\\n            yield b']
+    assert _args.edit(args) == ('P1', 79, 82, '        if a is b:\n            yield b\n')

@@ -17,7 +17,7 @@ def test_happy_path_s0_to_d4():
     _journal.choose(s, [{'id': 'P1'}, {'id': 'P2'}])
     assert s['step'] == 'D2' and '"back"' in _journal.next_call(s)
     _journal.set_plan(s, [('P1', 'a'), ('P2', 'b')])
-    assert s['step'] == 'D3' and '["P1", "<first line>"' in _journal.next_call(s)
+    assert s['step'] == 'D3' and '["P1", "<first line number>"' in _journal.next_call(s)
     assert _journal.edit_done(s, 0) == 'next' and '["P2"' in _journal.next_call(s)
     assert _journal.edit_done(s, 1) == 'finish' and s['step'] == 'D4'
     assert 'submit_patch' in _journal.next_call(s) and s['edited'] == ['P1', 'P2']

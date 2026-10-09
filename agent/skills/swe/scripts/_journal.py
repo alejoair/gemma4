@@ -16,9 +16,9 @@ FORMS = {
     'D1': '["C<n>"] or ["C<n>", "C<m>"] (1 to 3 candidate ids), or ["<file>::<Name>"] for code not in the list',
     'D2': '["P<n>: <what changes there>", "P<m>: <what changes there>"] (one item per place to edit), or ["back"] '
           'to choose other candidates',
-    'D3': '["P<n>", "<first line>", "<last line>", "<new lines>"] to replace those lines of place P<n>',
+    'D3': '["P<n>", "<first line number>", "<last line number>", "<new lines>"] to replace those lines of place P<n>',
     'D4': 'none: call submit_patch now. Or args ["R<n>"] to go back for a requirement that is not covered, or '
-          '["P<n>", "<first line>", "<last line>", "<new lines>"] to edit a place again',
+          '["P<n>", "<first line number>", "<last line number>", "<new lines>"] to edit a place again',
 }
 
 
@@ -34,7 +34,7 @@ def next_call(state):
         return 'NEXT: ' + FORMS['D4']
     if step == 'D3' and state['current'] is not None:
         pid = state['plan'][state['current']]['place']
-        return f'NEXT: call {CALL}["{pid}", "<first line>", "<last line>", "<new lines>"]'
+        return f'NEXT: call {CALL}["{pid}", "<first line number>", "<last line number>", "<new lines>"]'
     return f'NEXT: call {CALL}{FORMS[step]}'
 
 
