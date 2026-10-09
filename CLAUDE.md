@@ -34,8 +34,10 @@ Source: the competition pages on Kaggle (Overview, Evaluation, Rules, Data, "Mod
 - Record design decisions and literature here, not only in the scratchpad: the scratchpad and the conversation context are lost.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md`: date, commit, system, tools, generation, budget, result, tool-call counts, failures seen and what changed next. Update it as soon as a run finishes.
 
-### Current state of the repository (2026-10-08)
-The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …) and the old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`) were removed: they were built for a model that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in `docs/old_scripts_lessons.md`; their results are in `VERSIONS.md`. The new single agent is built from `docs/design_single.md`.
+### Current state of the repository (2026-10-09)
+The old scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`, …) and the old agent configs (`single/`, `pipeline/`, `submission/`, `build.py`) were removed: they were built for a model that explores, and V4–V6 showed the model browsing instead of deciding. What they learned is in `docs/old_scripts_lessons.md`; their results are in `VERSIONS.md`.
+
+v1 of the new single agent (`docs/design_single.md`, "Design v1") is implemented: `agent/` is the submission (one `LlmAgent`, skill `swe` whose only entry point is `scripts/step.py`; internal modules `_*.py`), `tests/` the unit tests (`venv/bin/python -m pytest -q tests`), `tools/build.py` builds and validates it, `tools/bench_locate.py` is the 129-task localization benchmark (snapshots' Python files via `tools/fetch_snapshots.sh`). Measurements and the local 12B runs are at the end of `docs/design_single.md`. Local runs need thinking on (the harness sends `enable_thinking: true` with our `thinking_budget`); a faithful local loop needs llama-server with `--reasoning-budget 512`.
 
 ### What the 31B does badly, and what the literature does about it (2026-10-08)
 

@@ -522,3 +522,13 @@ approximate the 512-token budget). The harness sends `enable_thinking: true` and
 ran into the 4,096-token limit twice (rich_3006 and requests_7328, both in a plan line): an artifact of the local
 setup. From now on local runs keep thinking on (llama-server's global budget is 3,072 tokens). The prompt also says
 that the reasoning goes before the call and the args hold only the decision.
+
+**Local 12B, requests_7328 with thinking on: not resolved (time).** With llama-server's global 3,072-token reasoning
+budget each call took 60–75 s and the prompt grew by about 4.4k tokens per call (16k after 5 calls, then
+compaction); the 5.5 min ran out after 6 calls with an empty patch. The 12B planned only `Session.send` with a vague
+line ("change how history is handled") and re-sent the plan line. On Kaggle the budget is 512 tokens, so neither the
+time nor the growth is representative; a faithful local loop needs llama-server restarted with
+`--reasoning-budget 512` (the GPU machine's session is inactive, so this is for the user).
+
+Local 12B tally of v1 so far: rich_3006 resolved (6 calls); requests_7328 not resolved (wrong place first; the right
+cause was in its plan for `resolve_redirects` in the first attempt).
