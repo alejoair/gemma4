@@ -849,7 +849,10 @@ def _current_view(root, state):
 def main(argv):
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
-    args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else list(argv)
+    argv = list(argv)
+    while len(argv) > 1 and argv[-1].strip().lower() in ('false', 'true', 'none', ''):
+        argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
+    args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     skip = state['step'] == 'D3' and len(args) == 1 and _is_skip(args[0])     # one skip per place: not a repeat
     if state['step'] == 'D3' and len(args) == 1 and not skip and state['current'] is not None:

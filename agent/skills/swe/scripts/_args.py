@@ -49,6 +49,31 @@ def unpack(args):
     return args
 
 
+def split_escaped(args):
+    """One item that holds a whole argument list with escaped quotes, as the model writes it after the history is
+    compacted ('P3\\", \\"378\\", \\"399\\", \\"<code>'): the separate items. Other arguments are returned as they
+    are."""
+    args = [a for a in args if a is not None]
+    if not args or not re.match(r'\s*\[?\s*\\?"?\s*P\d+\s*\\"\s*,\s*\\"', args[0]):
+        return args
+    if any(str(a).strip().lower() not in ('false', 'true', '') for a in args[1:]):
+        return args             # other real items: not a packed list (the model's leftovers are bare true/false)
+    args = args[:1]
+    raw = args[0].strip().lstrip('[').strip()
+    raw = raw[2:] if raw.startswith('\\"') else raw.lstrip('"')
+    for tail in ('"]', ']', ''):
+        cand = '["' + raw.replace('\\"', '"') + tail
+        try:
+            items = json.loads(cand)
+        except ValueError:
+            continue
+        if isinstance(items, list) and all(isinstance(i, str) for i in items):
+            return [i for i in items if i != ''] or args
+    parts = re.split(r'\\"\s*,\s*\\"', raw)          # no valid JSON: split at the escaped separators
+    parts[-1] = re.sub(r'\\"\s*\]?\s*$', '', parts[-1])
+    return [p.replace('\\n', '\n').replace('\\"', '"') for p in parts]
+
+
 def ids(args, prefix):
     """(ids, others) from the model's choice: 'C2', 'c2', '2', 'C2, C5' and packed lists become prefix ids; anything
     else (a name or a path off the list) is returned in others."""
