@@ -106,15 +106,24 @@ Compare them per task when both finish.
 
 ## Next (the plan agreed on 2026-10-09)
 
-1. Fold the two prompting reports (`docs/prompting_input.md`, `docs/prompting_feedback.md`) into the checklist as new
-   items, and check the design against the whole list.
-2. Fix the items the check found, in this order: truthful status (patch summary from the real diff, no "OK" from
-   tests that do not run the changed lines, coverage by facts) → refusals that describe instead of quoting the
-   model's input, and a repeat guard keyed on the state → the budget visible in every answer, and only submit_patch
-   at time-up → accept any copy of the statement → a -/+ diff after an edit → stub scripts for invented names
-   (`show.py`, `grep.py`, …) → the prompting findings.
-3. Run the 10 local tasks with the 12B, monitored step by step; then a Kaggle eval.
-4. Separately, an A/B run of Gemma's recommended sampling (temperature 1.0, top_p 0.95, top_k 64) against 0.2.
+The checklist now has 7 W, 14 B, 10 P and 9 F items (`docs/llm_checklist.md`); its check of commit 8c95d1d lists the
+gaps. The fixes, grouped, in this order:
+1. **Truthful status** (B11, F3, F4, F5, P8): a progress line from `git diff` at the top of every answer; the finish
+   summary from the diff; "OK" only when a selected test runs the changed lines, else "kept, not checked"; coverage as
+   labelled facts, never "is it covered?".
+2. **Feedback** (F1, F2, F7, F9, B5, P4): test failures as test name + expected vs actual, "passed before, the code is
+   back"; compile errors with the offending line's text; refusals that describe instead of quoting; a repeat answer
+   that differs each time and moves on at the third repeat in every step; no capitals or pressure words.
+3. **Budget** (B10, W4, P5): time used and the edit deadline in every answer; at time-up only submit_patch.
+4. **Prompt** (P1, P3, P5, P6, F8, B2): the statement inside `<issue>…</issue>`; positive rules with their reason and
+   who judges the patch (the hidden tests); no contradictions; the step's decision at both ends of each answer; what
+   the harness's skill errors mean; any copy of the statement accepted.
+5. **A -/+ diff after an edit** (W5).
+6. **Stub scripts** for invented names (`show.py`, `grep.py`, …) (B6).
+7. **Window content** (W1, W3, W6, P7): evidence lines under each candidate; the right part of long places; cleaner
+   requirement extraction; context lists without distractors.
+Then the 10 local tasks with the 12B, monitored step by step, then a Kaggle eval. Separately, an A/B run of Gemma's
+recommended sampling (temperature 1.0, top_p 0.95, top_k 64) against 0.2.
 
 ## Repository map
 
