@@ -560,3 +560,10 @@ model), the plan decision is removed: after choosing, the chosen places are the 
 window, and related places (copies, callers, overrides) stay listed and are edited by id when needed. One call and one
 free-text decision fewer; the impact list (CodePlan-light) is kept. A plan line sent in the edit step is still
 accepted. Steps are now S0 start → D1 choose (= open for editing) → D3 edit per place → D4 finish.
+
+**Local 12B, rich_3521, third run (no plan step).** S0, C1+C2 and the edit window worked; the 12B then sent names
+(`Segment.split_cells`) and candidate ids in the edit step: it did not know what to change. The statement is only
+"Segment.split_cells fix" plus an external link, and the reference rewrites the algorithm of `_split_cells`; the 31B
+solved it in V6, the 12B has nothing to infer it from. Fix: candidate ids in the edit step choose again. Idea for
+later: show the existing test of the chosen function next to its code (the expected behaviour), for statements that
+say nothing.

@@ -361,6 +361,10 @@ def d2(root, state, args):
 
 
 def d3(root, state, args):
+    ids, others = _args.ids(args, 'C')
+    if ids and not others:                     # candidate ids: choose again (the edits made so far stay)
+        _journal.back(state)
+        return d1(root, state, args)
     if _args.plan(args) == 'back':
         _journal.back(state)
         return 'The edits made so far stay. ' + _candidates_view(state) + '\n\nChoose the code to change.'

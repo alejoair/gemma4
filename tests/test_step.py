@@ -170,3 +170,11 @@ def test_choosing_opens_the_first_place_for_editing(repo):
     assert 'Edit the chosen code now, starting with P1' in out
     out = call(repo, 'P1', '11', '11', '            resp.history = hist[:-1]')
     assert out.startswith('OK: P1 lines 11-11 changed')
+
+
+def test_candidate_ids_in_the_edit_step_choose_again(repo):
+    setup(repo)
+    call(repo, STATEMENT)
+    call(repo, 'C1')
+    out = call(repo, 'C1,C2')
+    assert 'Edit the chosen code now' in out
