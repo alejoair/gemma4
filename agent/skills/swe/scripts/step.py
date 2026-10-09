@@ -456,7 +456,7 @@ def _listed_place(root, state, text):
     return p['id'] if p else None
 
 
-MAX_LOOKUPS = 3    # name lookups per place in the edit step that are answered without counting as a failed attempt
+MAX_LOOKUPS = 5    # questions per place in the edit step (asking never counts as a failed attempt at the place)
 
 
 SHOW_LINES = 80
@@ -675,10 +675,10 @@ def _add_candidate(state, text):
 
 
 def d3(root, state, args):
-    """Only an edit of a listed place, ["skip"] (the open place needs no change), ["back"] (choose other code) or a
-    listed place id alone (open that place) is accepted; anything else is refused, changes nothing and counts as a
-    failed attempt at the open place, so that the model edits instead of browsing (SOP-Agent: only the valid actions
-    of the step)."""
+    """The edit step (SOP-Agent: only the valid actions of the step). Accepted: an edit of a listed place, skip, done,
+    back, a listed place, candidates or names to add to the plan, and up to MAX_LOOKUPS questions per place. Anything
+    else is refused and changes nothing. Only failed edits (not applied, tests broken, repeated) count against a
+    place; asking or a refused form never makes the model leave the place it is working on."""
     word = _args.plan(args)
     if word == 'back':
         _journal.back(state)
@@ -729,7 +729,7 @@ def d3(root, state, args):
     view = list(packed.groups()) if packed else items
     shown = _show_lines(root, state, view) if len(view) == 3 and cur is not None else None
     if shown == LIMIT:
-        return _failed(root, state, cur, _limit_message(state, cur, single), 'questions')
+        return _limit_message(state, cur, single) + '\n\n' + _window(root, state, cur)
     if shown:
         return shown
     added = _add_candidate(state, single) if single else None
@@ -746,7 +746,7 @@ def d3(root, state, args):
         return f'{added} in the plan now.\n\n' + _window(root, state, state['current'])
     lookup = _lookup(root, state, single) if single and cur is not None else None
     if lookup == LIMIT:
-        return _failed(root, state, cur, _limit_message(state, cur, single), 'questions')
+        return _limit_message(state, cur, single) + '\n\n' + _window(root, state, cur)
     if lookup:
         return lookup + '\n\n' + _window(root, state, cur)
     e = _args.edit(args)
@@ -765,7 +765,7 @@ def d3(root, state, args):
                    + '\n'.join('  ' + _place_line(q) for q in state['places']))
         if cur is None:
             return msg
-        return _failed(root, state, cur, msg, 'not an edit')
+        return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
     pid, start, end, text = e
     p = _place(state, pid)
     if p is None:
@@ -928,8 +928,8 @@ def main(argv):
         now = _journal.next_call(state).replace('NEXT: ', '', 1)
         out = (f'STOP REPEATING: this call was already made and was not run again (its answer was: '
                f'{state.get("repeated_answer") or state.get("answer", "")}).')
-        if state['step'] == 'D3' and state['current'] is not None and _args.edit(args) is None and state['repeats'] < 2:
-            # a repeated question (not an edit): answered again with the window; a third time counts as a failure
+        if state['step'] == 'D3' and state['current'] is not None and _args.edit(args) is None:
+            # a repeated question (not an edit): pointed to its answer; asking never leaves the place
             out += ' The answer is above in the conversation.\n\n' + _window(root, state, state['current'])
         elif _args.edit(args) is not None and str(state.get('repeated_answer', '')).startswith(('OK', 'APPLIED')):
             # the same edit again after it was applied: nothing to undo or count
