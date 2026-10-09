@@ -159,6 +159,9 @@ def requirements(text):
         if len(s) > 3 and s.lower() not in (o.lower() for o in out):
             out.append(s if len(s) <= 300 else s[:297] + '...')
 
+    if lines and len(lines[0]) > 200:          # a statement copied on one line: its sentences are the requests
+        first = re.split(r'(?<=[.!?])\s+(?=\S)|\s+(?=\*\s)', lines[0])
+        lines = [first[0]] + ['- ' + x.strip('* ') for x in first[1:]] + lines[1:]
     if lines:
         put(lines[0])
     body = []
