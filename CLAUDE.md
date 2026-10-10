@@ -130,7 +130,8 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 2. Dry run: `scratchpad/dry_d3.sh <task> reset`, then `scratchpad/dry_d3.sh <task> <args…>` runs one `step.py` call on
    `scratchpad/repos/<task>` through `harness_like.py` (which deletes the skill's files when the script ends, as ADK
    does: nothing may run at exit).
-3. Replay the real calls: `venv/bin/python replay_step.py <skill dir> step_calls_v10.json` (and `step_calls.json`)
+3. Replay the real calls: `venv/bin/python replay_step.py <skill dir> step_calls_v10.json` (and `step_calls.json`,
+   `step_calls_v13b.json`)
    must print NO PROBLEMS.
 4. Build (`tools/build.py <dir>`) and validate (`scratchpad/validate_submission.py <dir>/submission`).
 5. Run with the local 12B: `run_local12.py <submission dir> e10 <out dir>` (`e10/tasks.jsonl` holds the tasks), with

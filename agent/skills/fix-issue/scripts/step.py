@@ -48,12 +48,29 @@ MAX_CHARS = 10000       # a cap on one answer (about 2,900 tokens) against conte
 
 def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
     """Numbered lines start..end of rel, long strings collapsed. Over the limit: the head of the place (its def and
-    first lines) and the part where the focus terms occur most."""
+    first lines) and the part where the focus terms occur most. Sizes count the lines shown (a collapsed text is one
+    line) and text lines score nothing: in V13b (fastapi_14851) raw counts and scored Doc texts that name "FastAPI" hid
+    the 36 lines to change (the `routing.APIRouter(..., lifespan=lifespan)` call) under 98 lines of Doc text."""
     lines = _repo.read_lines(root, rel)
     tree = _code.parse(''.join(lines))
     collapse = _code.long_strings(tree)
     start, end = max(1, start), min(len(lines), end)
-    if end - start + 1 <= limit + 30:          # hiding a few lines saves little and hides code
+    hidden = set()
+    for a, b in collapse:
+        if b - a + 1 > _code.COLLAPSE_AT:
+            hidden.update(range(a + 1, b))     # shown as one marker line: the first hidden line counts, the rest not
+    prose = set()
+    for node in ast.walk(tree) if tree is not None else ():
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.end_lineno > node.lineno:
+            prose.update(range(node.lineno, node.end_lineno + 1))
+    shown = [0] * (len(lines) + 2)             # shown[i]: lines displayed from line 1 to line i
+    for i in range(1, len(lines) + 1):
+        shown[i] = shown[i - 1] + (0 if i in hidden and i - 1 in hidden else 1)
+
+    def size(a, b):
+        return shown[b] - shown[a - 1]
+
+    if size(start, end) <= limit + 30:         # hiding a few lines saves little and hides code
         return _code.numbered(lines, start, end, collapse=collapse)
     head = min(end, start + 14)
     sig_end = None
@@ -69,18 +86,27 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
                f'      ... (the parameters, lines {start + 1}-{sig_end}, not shown) ...']
         body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2)
         return '\n'.join(out + [body])
-    best, best_score = head + 1, -1
+    width = limit - size(start, head)
     toks = focus_terms or {}
-    width = limit - (head - start + 1)
-    if toks:
-        score = [0] * (end + 2)
-        for i in range(head + 1, end + 1):
+    score = [0] * (end + 2)
+    for i in range(head + 1, end + 1):
+        if toks and i not in prose and not lines[i - 1].lstrip().startswith('#'):
             score[i] = sum(toks.get(t, 0) for w in re.findall(r'[A-Za-z_]\w*', lines[i - 1]) for t in _rank.tokens(w))
-        for s in range(head + 1, max(head + 2, end - width + 2)):
-            total = sum(score[s:s + width])
-            if total > best_score:
-                best, best_score = s, total
-    a, b = best, min(end, best + width - 1)
+    total = [0] * (end + 2)
+    for i in range(head + 1, end + 1):
+        total[i] = total[i - 1] + score[i]
+    best, best_end, best_score = head + 1, head + 1, -1
+    b = head + 1
+    for a in range(head + 1, end + 1):        # the window a..b with `width` shown lines and the highest score
+        b = max(b, a)
+        while b < end and size(a, b + 1) <= width:
+            b += 1
+        got = total[b] - total[a - 1]
+        if got > best_score:
+            best, best_end, best_score = a, b, got
+        if b == end:
+            break
+    a, b = best, best_end
     out = [_code.numbered(lines, start, head, collapse=collapse)]
     if a > head + 1:
         out.append(f'      ... (lines {head + 1}-{a - 1} not shown) ...')
@@ -138,6 +164,8 @@ def _norm_name(text):
     t = _args.clean(text or '')
     t = re.sub(r'^(?:async\s+def|def|class)\s+', '', t)
     t = re.sub(r'\s*::\s*', '::', t)
+    if '::' in t and t.endswith(' top level'):
+        t = t.rsplit('::', 1)[1]            # 'fastapi/routing.py::fastapi/routing.py top level' (V13b, 14448)
     t = re.sub(r'\s+[(—-].*$', '', t) if not t.startswith('(') else t     # "Name (file, lines ..) — reason" copied
     t = re.sub(r'\(\)$|:$', '', t.strip())
     return t.strip().strip('`')
@@ -253,7 +281,9 @@ def _window(root, state, i):
                  f"their full indentation ('DELETE' deletes them).\n"
                  f"  ['skip'] if {name} needs no change; ['<name of a function or class>'] to open it (it joins the "
                  f"places), or a file name to choose among its functions; ['back'] to choose again. Questions are not "
-                 f"answered in this step.")
+                 f"answered in this step.\n"
+                 f"  ['<file or name>', '<first line number>', '<last line number>'] shows lines this window does not "
+                 f"show (a file's imports, the rest of a long function); it changes nothing.")
     return '\n'.join(parts)
 
 
@@ -624,7 +654,26 @@ def s0(root, state, args):
         reqs.append({'id': f'R{i}', 'text': r, 'type': kind, 'names': names, 'old': old_names})
     cands, _ = _rank_candidates(root, text, extra, reqs)
     _journal.start(state, reqs, cands)
-    return f'{_requirements_view(state)}\n\n{_candidates_view(state)}\n\nChoose the code to change.'
+    # V13b fastapi_14986 and 14851: the model copied only the title, and every window's "what the change must do" held
+    # the title alone; the issue's concrete sentences never reached the edit step. Asked once, never refused.
+    short = len([l for l in statement.splitlines() if l.strip()]) <= 1 and not state.get('statement_asked')
+    state['statement_short'] = short
+    state['statement_asked'] = True
+    more = ('\n\nOnly one line of the issue was read, so the requirements come from that line alone. If the issue has '
+            "more text, send all of it now as ['<the whole issue statement>'] and the requirements and candidates are "
+            'made again from it; if that line was all of it, go on.') if short else ''
+    return f'{_requirements_view(state)}\n\n{_candidates_view(state)}{more}\n\nChoose the code to change.'
+
+
+def _more_statement(state, args):
+    """True when, after a one-line copy, the model sends more of the statement at the choose step: a long text item
+    (several lines, or 20 words or more) that names no candidate."""
+    items = [a for a in args if a and a.strip()]
+    if not state.get('statement_short') or state['step'] != 'D1' or not items:
+        return False
+    first = items[0].replace('\\n', '\n')
+    long_text = len([l for l in first.splitlines() if l.strip()]) >= 2 or len(first.split()) >= 20
+    return long_text and _match(state['candidates'], first) is None
 
 
 BIG_FILE = 60       # a file longer than this is never one place: it is chosen through its functions and classes
@@ -660,6 +709,13 @@ def _resolve(root, names):
     out = []
     for raw in names:
         raw = _args.clean(raw)
+        top = re.fullmatch(r'(?:[\w./-]+::)?([\w./-]+\.py) top level', raw.strip())
+        if top:                             # a file's top-level code by its handle, also for a big file
+            doc = next((d for d in _rank.Index(root).docs if d.sym is None and _rank.names_file(top.group(1), d.rel)),
+                       None)
+            if doc is not None:
+                out.append({'rel': doc.rel, 'name': MODULE, 'start': doc.start, 'end': doc.end, 'line': ''})
+            continue
         rel, _, name = raw.partition('::') if '::' in raw else ('', '', raw)
         rel = rel.strip()
         name = name.strip().strip('()')
@@ -736,11 +792,15 @@ def d1(root, state, args):
                                      'the issue):') + '\n\nChoose the code to change.')
     if not chosen and len(others) == 1 and re.fullmatch(r'[A-Za-z_][\w.]*', others[0]):
         name = others[0].split('.')[-1]
+        lib = _library_view(root, others[0])
         users = _candidates_using(root, name)
         if users:
             state['candidates'] = users
-            return (_candidates_view(state, title=f'No function or class here is named {name}; the code that uses it:')
-                    + '\n\nChoose the code to change.')
+        if users or lib:
+            title = (f'The code here that uses {name}:' if lib else
+                     f'No function or class here is named {name}; the code that uses it:')
+            return ((lib + '\n\n' if lib else '') + _candidates_view(state, title=title if users else
+                                                                       'Candidates:') + '\n\nChoose the code to change.')
     if not chosen:
         msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
                if others else 'No candidate was chosen. ')
@@ -758,6 +818,7 @@ def d1(root, state, args):
         p['id'] = f'P{i}'
     _set_handles(places)
     _journal.choose(state, places)
+    state['statement_short'] = False            # code is chosen: more statement text is no longer asked for
     out = []
     focus = _focus(state)
     new = [(r, n) for r in state['requirements'] if r['type'] == 'new' for n in r['names']]
@@ -889,6 +950,11 @@ def _open_named(root, state, text):
         return None
     found = _resolve(root, [x])
     if not found and re.fullmatch(r'[A-Za-z_][\w.]*', x):
+        cur = state.get('current')
+        here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None and state.get('plan') else None
+        lib = _library_view(root, x, prefer=here)
+        if lib:                 # read only: the place stays open
+            return lib + ('\n\n' + _window(root, state, cur) if cur is not None else '')
         users = _candidates_using(root, x.split('.')[-1])
         if users:
             _journal.requirement_back(state, users)
@@ -1008,6 +1074,166 @@ def _whole_edit(root, p, text):
     return _edit.Result(True, start, end, None, repairs, warnings)
 
 
+# ---------------------------------------------------------------------------------------------------------- reading
+
+# The model needs to read code the window does not hold: a file's imports, the hidden part of a long function, the
+# library definition of a name the repository imports. With no form for it, it used DELETE over line ranges as a viewer
+# (V13b: 9 calls in fastapi_14851 and fastapi_14448; "Let's look at lines 960-999" sent as a DELETE of them, and a
+# DELETE of 240 lines applied and undone only by the tests). So a read has its own form, the one it wrote anyway: a
+# file or code name and two line numbers, with no new lines. It changes nothing and is answered in every step.
+
+READ_LINES = 80          # lines shown by one read
+DELETE_CONFIRM = 30      # a DELETE of more lines is shown first and applied when the same call comes again
+LIBRARY_LINES = 60
+
+
+def _read_target(root, state, text):
+    """(rel, label) of the file a read names: a file path, a listed place or candidate, or code of the repository."""
+    x = _args.clean(text or '').strip('/')
+    if re.fullmatch(r'[\w./-]+\.py', x):
+        rel = next((r for r in _repo.iter_py(root, tests=True, docs=True) if _rank.names_file(x, r)), None)
+        return (rel, rel) if rel else (None, None)
+    for items in (state.get('places') or [], state.get('candidates') or []):
+        hit = _match(items, text)
+        if hit is not None:
+            return hit['rel'], hit['handle']
+    found = _resolve(root, [x]) if re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*', x) else []
+    return (found[0]['rel'], found[0]['name']) if found else (None, None)
+
+
+def _owners(root, rel, a, b):
+    """The names of the functions and classes that hold lines a..b (the top level when none does)."""
+    lines = _repo.read_lines(root, rel)
+    syms = _code.symbols(_code.parse(''.join(lines)))
+    owner = _code.owner_map(syms, len(lines))
+    names = []
+    for i in range(a, min(b, len(lines)) + 1):
+        o = owner[i] if i < len(owner) else None
+        name = o.name if o is not None else f'{rel} top level'
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _lines_view(root, rel, a, b, label):
+    lines = _repo.read_lines(root, rel)
+    a, b = max(1, min(a, b)), min(len(lines), max(a, b))
+    if a > len(lines):
+        return f'{label} has {len(lines)} lines; lines {a}-{b} do not exist. Nothing was changed.'
+    cut = b - a + 1 > READ_LINES
+    b2 = a + READ_LINES - 1 if cut else b
+    tree = _code.parse(''.join(lines))
+    body = _code.numbered(lines, a, b2, collapse=_code.long_strings(tree))
+    more = f'\n      ... (lines {b2 + 1}-{b} not shown: at most {READ_LINES} lines per read) ...' if cut else ''
+    owners = _owners(root, rel, a, b2)
+    where = ', '.join(owners[:4]) + (' and more' if len(owners) > 4 else '')
+    return (f'Lines {a}-{b2} of {rel} (read only: nothing was changed). They belong to {where}.\n{body}{more}\n'
+            f'To change them, edit the function or class that holds them: send its name to open it.')
+
+
+def _read_request(root, state, args):
+    """The answer to a read, ['<file or name>', '<first line>', '<last line>'], or None when args are not one. At the
+    choose step a line range with anything after it is a read too: nothing is edited there."""
+    items = [x for x in args if x is not None and str(x).strip()]
+    if len(items) not in (3, 4) or not all(_args.clean(str(n)).isdigit() for n in items[1:3]):
+        return None
+    if len(items) == 4 and state['step'] not in ('D1',):
+        rel, label = _read_target(root, state, items[0])
+        is_file = re.fullmatch(r'[\w./-]+\.py', _args.clean(items[0]).strip('/') or '')
+        if not (is_file and rel and _match(state.get('places') or [], items[0]) is None):
+            return None             # an edit of a place: d3 reads it
+        note = 'Code is edited through its function or class name, not a file name. '
+    else:
+        rel, label = _read_target(root, state, items[0])
+        note = 'In this step nothing is edited. ' if len(items) == 4 else ''
+    if not rel:
+        return None
+    return note + _lines_view(root, rel, int(_args.clean(items[1])), int(_args.clean(items[2])), label)
+
+
+def _import_bindings(root, first, prefer=None):
+    """The dotted import paths the repository binds the name first to (from M import X as first; import M as first),
+    those of the file prefer first, then package code, tests last."""
+    rels = sorted(_repo.iter_py(root, tests=True, docs=False),
+                  key=lambda r: (r != prefer, _repo.is_test_path(r), r))
+    out = []
+    for rel in rels:
+        text = _repo.read_text(root, rel)
+        if first not in text:
+            continue
+        tree = _code.parse(text)
+        for node in ast.walk(tree) if tree is not None else ():
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                out += [f'{node.module}.{al.name}' for al in node.names if (al.asname or al.name) == first]
+            elif isinstance(node, ast.Import):
+                out += [al.name if al.asname == first else first for al in node.names
+                        if al.asname == first or (not al.asname and al.name.split('.')[0] == first)]
+    return list(dict.fromkeys(out))
+
+
+def _library_def(root, dotted, depth=0):
+    """(file, start, end, qualified name) of a library definition from its dotted path, following re-exports; None
+    when it is not found or lives in the repository."""
+    import importlib.util
+    parts = dotted.split('.')
+    for k in range(len(parts) - 1, 0, -1):
+        module, attrs = '.'.join(parts[:k]), parts[k:]
+        try:
+            spec = importlib.util.find_spec(module)
+        except (ImportError, ValueError, AttributeError):
+            spec = None
+        if spec is None or not spec.origin or not spec.origin.endswith('.py'):
+            continue
+        path = os.path.realpath(spec.origin)
+        if path.startswith(os.path.realpath(root) + os.sep):
+            return None                 # the repository's own code: it is reached by name, not as a library
+        tree = _code.parse(_repo.read_text('/', path))
+        if tree is None:
+            return None
+        body, node = tree.body, None
+        for j, name in enumerate(attrs):
+            defs = [n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    and n.name == name]
+            node = defs[-1] if defs else None       # the implementation comes after its @overload stubs
+            if node is None:
+                if j == 0 and depth < 3:          # re-exported: from ._utils import name
+                    for n in body:
+                        if isinstance(n, ast.ImportFrom):
+                            for al in n.names:
+                                if (al.asname or al.name) == name:
+                                    base = module if spec.submodule_search_locations else module.rsplit('.', 1)[0]
+                                    src = n.module or ''
+                                    if n.level:
+                                        up = base.split('.')
+                                        up = up[:len(up) - (n.level - 1)] if n.level > 1 else up
+                                        src = '.'.join(up + ([src] if src else []))
+                                    return _library_def(root, '.'.join([src, al.name] + attrs[1:]), depth + 1)
+                return None
+            body = node.body
+        start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+        return path, start, node.end_lineno, '.'.join([module] + attrs)
+    return None
+
+
+def _library_view(root, name, prefer=None):
+    """The library code a name refers to through the repository's imports (Router for `routing.Router`,
+    is_async_callable from starlette), read only; '' when there is none. V10 audit #9 and V13b fastapi_14448: the
+    model needed Starlette's code and could not reach it."""
+    name = _args.clean(name).strip('`').rstrip('()')
+    if not re.fullmatch(r'[A-Za-z_][\w.]*', name):
+        return ''
+    parts = name.split('.')
+    hit = next((h for h in (_library_def(root, '.'.join([b] + parts[1:]))
+                            for b in _import_bindings(root, parts[0], prefer)[:6]) if h), None)
+    if hit is None:
+        return ''
+    path, a, b, qual = hit
+    shown = _code_view(root, path, a, b, limit=LIBRARY_LINES)
+    short = path.split('site-packages/')[-1] if 'site-packages/' in path else os.path.basename(path)
+    return (f'{name} is library code, read only (not in the repository, so it cannot be edited here): {qual} '
+            f'({short}, lines {a}-{b}).\n{shown}')
+
+
 def d3(root, state, args):
     """The edit step (SOP-Agent: only the valid actions of the step). Accepted: an edit of a listed place (its whole
     new function or class, or a line range), ["skip"], ["back"] and a listed place's name (opens it). Questions
@@ -1068,7 +1294,8 @@ def d3(root, state, args):
                    "callers are listed in the window). Accepted: the whole new function or class ['<place name>', "
                    "'<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
                    "lines>'], ['skip'] if the place needs no change, ['<name of a function or class>'] to open it, "
-                   "or ['back'] to choose other code. Nothing was opened or changed.")
+                   "['<file or name>', '<first line number>', '<last line number>'] to read lines, or ['back'] to "
+                   "choose other code. Nothing was opened or changed.")
         if cur is None:
             return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
         return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
@@ -1077,6 +1304,13 @@ def d3(root, state, args):
     if p is None:
         return ('The first item is not the name of a listed place. Nothing was changed.\nPlaces:\n'
                 + '\n'.join('  ' + _place_line(q) for q in state['places']))
+    big = [pid, start, end]
+    if text.strip() == 'DELETE' and end - start + 1 > DELETE_CONFIRM and state.get('pending_delete') != big:
+        state['pending_delete'] = big
+        return (f'Nothing was deleted yet: {end - start + 1} lines is a large deletion, so here they are first. To '
+                f"delete them, send the same call again: ['{p['handle']}', '{start}', '{end}', 'DELETE'].\n"
+                + _lines_view(root, p['rel'], start, end, p['handle']))
+    state.pop('pending_delete', None)
     i = _journal.target(state, pid)
     before = _repo.read_lines(root, p['rel'])
     return _after_edit(root, state, i, p, _edit.apply(root, p['rel'], start, end, text), before)
@@ -1110,8 +1344,13 @@ def _after_edit(root, state, i, p, r, before):
         if e2['status'] == 'done' or e2['place'] == pid:
             changed.setdefault(q['rel'], []).append(q['name'].split('.')[-1])
     changed.setdefault(p['rel'], []).extend(l.strip() for l in new_lines)
-    renamed = sorted({n for r_ in state['requirements'] for n in r_.get('old', [])})
     after = _repo.read_lines(root, p['rel'])
+    # the removed lines name the behaviour a deletion takes away: their tests must run too (fastapi_14986, V13b: the
+    # deleted root_path code selected no test and the deletion was kept unchecked)
+    for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        if tag in ('delete', 'replace'):
+            changed[p['rel']].extend(l.strip() for l in before[i1:i2])
+    renamed = sorted({n for r_ in state['requirements'] for n in r_.get('old', [])})
     cover = _status.changed_statements(before, after)
     verdict, detail, new_failures = _tests.check(root, changed, renamed, cover={p['rel']: cover} if cover else None)
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
@@ -1283,7 +1522,11 @@ def main(argv):
         # opening another listed place is a move, not a repeat
         target = _listed_place(state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
-    resent = state['step'] != 'S0' and _is_statement_again(args)
+    if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
+        e = _args.edit(_place_args(state, args))
+        skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation
+    restate = _more_statement(state, args)
+    resent = state['step'] != 'S0' and not restate and _is_statement_again(args)
     if state['step'] in ('D1', 'D2', 'D3', 'D4') and _journal.time_is_up(state):
         # time for edits is over: the call is not run, and the only next call is submit_patch (V10: "TIME IS UP"
         # while NEXT still offered edits, and the model lost its last turns)
@@ -1291,6 +1534,14 @@ def main(argv):
         state['time_up'], state['step'], state['current'] = True, 'D4', None
         out = (('Time for edits is over, so this call was not run. ' if first else
                 'Edits are closed, so this call was not run. ') + _finish_view(root, state))
+    elif restate:
+        st = _state.load('statement', {})
+        known, sent = st.get('text', ''), args[0]
+        norm = lambda t: re.sub(r'\W+', ' ', t).strip().lower()
+        text = sent if norm(known)[:40] and norm(sent).startswith(norm(known)[:40]) else known + '\n\n' + sent
+        out = ('The requirements and candidates are made again from the whole statement.\n\n'
+               + s0(root, state, [text] + st.get('terms', []) + list(args[1:])))
+        state['answer'] = out.strip().split('\n')[0][:300]
     elif resent:
         # after the harness compacts the history the model may start again: say where the work is
         out = ('The start was already made: the requirements and candidates are known and the work is in a later '
@@ -1311,7 +1562,8 @@ def main(argv):
                    + (f'; its answer began: {before[:160].rstrip(".")}' if before else '') + '.\n\n' + _current_view(root, state))
     else:
         try:
-            out = STEPS[state['step']](root, state, args)
+            read = _read_request(root, state, args) if state['step'] in ('D1', 'D3', 'D4') else None
+            out = read if read is not None else STEPS[state['step']](root, state, args)
         except Exception as e:      # never a traceback for the model: say what happened and the call to make
             _state.record({'error': f'{type(e).__name__}: {e}'})
             out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Make the call below; '

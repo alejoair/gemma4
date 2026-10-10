@@ -741,3 +741,74 @@ Proposed fixes (to be checked against `docs/llm_checklist.md` before they are ma
 5. Failure excerpt: match headers with any number of underscores.
 6. Statements with no content (a title and a link): no fix in the procedure; the existing test closest to the place is
    the only evidence and is already shown.
+
+### The near-miss fixes (2026-10-10) and their check against `docs/llm_checklist.md`
+
+Made (each verified by a dry run on the task where the fault was seen):
+1. **Step 1, the whole statement**: the prompt and `SKILL.md` ask for every line of it (the first 40 if longer; "the
+   title alone is not enough"). A one-line copy is still accepted, and the answer says once that only one line was
+   read and how to send the rest; a long text at the choose step after that rebuilds the requirements and candidates
+   (fastapi_14986: 1 requirement from the title → 3, with "do not store `root_path` in servers" and "Escape Swagger UI
+   configs").
+2. **A read form in every step**: `['<file or name>', '<first line>', '<last line>']` shows up to 80 lines, read
+   only, and names the functions or classes that hold them; at the choose step a range with a 4th item (the model's
+   `['fastapi/routing.py', 1, 50, 'DELETE']`) is a read too, and so is a file path with a range in the edit step. A
+   name the repository imports from a library shows the library's definition, read only, found through the import
+   that binds it in the open place's file first (`is_async_callable` → `starlette._utils`, the implementation after
+   its `@overload` stubs; `routing.Router` → `starlette.routing.Router`). `file::file top level` names the file's
+   top-level code. A `DELETE` of more than 30 lines is shown first and made when the same call comes again (the
+   confirmation is not counted as a repeat).
+3. **Window of a long place**: sizes count shown lines (a collapsed text is one line) and text lines score nothing
+   (fastapi_14851: `FastAPI.__init__`'s body, lines 857-999, is now shown whole with the `routing.APIRouter(...)`
+   call).
+4. **Tests**: the removed lines' names select tests too, and the `inline_snapshot` stand-in returns its argument
+   (fastapi_14986: the root_path deletion is now undone, 3 tests failing with `Right contains 1 more item:
+   {'servers': [{'url': '/api/v1'}]}`).
+5. **Failure excerpt**: test headers with one underscore (long parametrized ids) are found, and `_ _ _` frame
+   separators no longer end a test's section.
+
+Check (closer / farther / neutral):
+
+| Item | Verdict | Why |
+|---|---|---|
+| W1 | neutral | Choosing is unchanged; the library view adds the users of the name as candidates, as before |
+| W2 | neutral | Edits unchanged |
+| W3 | **closer** | The code to change is shown (long window), and the code the model asks for can be read (imports, library code) |
+| W4 | neutral | NEXT unchanged; the large-deletion answer gives the exact repeat call |
+| W5 | neutral | Reads use the same numbered format |
+| W6 | **closer** | The requirements carry the statement's own words instead of the title |
+| W7 | neutral | — |
+| B1 | farther (small) | The read form takes two line numbers. Reason: the model already sent them (9 calls), and a wrong range costs nothing since a read changes nothing; ranges come from numbered code it has seen |
+| B2 | **farther** | Step 1 asks for a longer copy. Reason: the requirements are read only from that copy (the sandbox has no copy of the statement), and a one-line copy left every window with the title alone (14986). Mitigated: any copy is still accepted, the rest is asked once, never refused |
+| B3 | neutral | — |
+| B4 | neutral | No new tool or string to spell |
+| B5 | neutral | Reads quote nothing of the call |
+| B6 | neutral | — |
+| B7 | neutral | Answers stay under the cap; a read is at most 80 lines |
+| B8 | **farther** | One more accepted form (read) in every step, and a confirmation for large deletions. Reason: B16; the form is the one the model wrote on its own, and it is described once in the prompt, the windows and the refusal text |
+| B9 | farther (small) | A read lets the model postpone the decision. Reason: the reads it needs (imports, a hidden function body, library code) are bounded at 80 lines and do not replace the window; the edit budget still closes at 5.7 min |
+| B10 | neutral | — |
+| B11 | **closer** | "Kept and checked" now means the tests can fail: snapshot assertions compare values, and deletions select their tests |
+| B12 | **closer** | "Questions are not answered" no longer contradicts the model's need to read: reading has its own form |
+| B13 | neutral | — |
+| B14 | neutral | — |
+| B15 | neutral | — |
+| B16 (new) | **closer** | A read form with no side effect in every step, and large deletions shown first |
+| P1 | neutral | — |
+| P2 | neutral | Layouts unchanged; one line added to the window's answer forms |
+| P3 | neutral | — |
+| P4 | neutral | No pressure words |
+| P5 | **closer** | The prompt no longer says "its first paragraph" (which the model read as the title) next to "the requirements are read from it" |
+| P6 | neutral | — |
+| P7 | neutral | Library code is shown only when asked for |
+| P8 | neutral | — |
+| P9 | neutral | The read example in the prompt is a call form with placeholders |
+| P10 | neutral | — |
+| F1 | **closer** | Failures of parametrized tests show their marked line and `E` lines (14448 got only names) |
+| F2 | **closer** | Same: expected vs actual instead of nothing |
+| F3 | **closer** | Fewer false OKs (snapshot stand-in, deletions) |
+| F4 | neutral | The deletion confirmation states a fact (the line count and the lines), it does not ask to reconsider |
+| F5–F9 | neutral | — |
+
+Not fixed: statements without content (rich_3469, rich_3521: a title and a link); the evidence is in the linked issue,
+which the sandbox does not have.

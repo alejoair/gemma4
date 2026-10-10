@@ -199,9 +199,16 @@ def _cover_dir():
     return d
 
 
+SNAPSHOT_STUB = ('_MISSING = object()\n'
+                 'def snapshot(value=_MISSING): return _Any() if value is _MISSING else value\n'
+                 'def Is(value): return value\n')
+
+
 def _stub_dir(modules):
     """A directory of stand-in modules for test-only packages the environment lacks: every attribute is an object
-    equal to anything."""
+    equal to anything, except inline_snapshot's snapshot(value) and Is(value), which return the value: 290 of fastapi's
+    468 test files assert `== snapshot({...})`, and a stand-in equal to anything made them pass whatever the code did
+    (fastapi_14986, V13b: a deletion of the root_path behaviour passed)."""
     d = os.path.join(_state.directory(), 'stubs')
     os.makedirs(d, exist_ok=True)
     body = ('class _Any:\n    def __init__(self, *a, **k): pass\n    def __call__(self, *a, **k): return _Any()\n'
@@ -211,7 +218,7 @@ def _stub_dir(modules):
             'def __getattr__(name): return _Any()\n')
     for m in modules:
         with open(os.path.join(d, m + '.py'), 'w') as fh:
-            fh.write(body)
+            fh.write(body + (SNAPSHOT_STUB if m == 'inline_snapshot' else ''))
     return d
 
 
@@ -396,11 +403,11 @@ def _failure_excerpt(output, ids, limit=1500):
     for test_id in ids[:3]:
         parts = test_id.split('::')
         name = parts[-1]
-        head = re.compile(rf'(?m)^_{{3,}} (?:\S+\.)?{re.escape(name)} _{{3,}}$')
+        head = re.compile(rf'(?m)^_+ (?:\S+\.)?{re.escape(name)} _+$')   # one '_' when the id is long
         m = head.search(output)
         marked, errors = '', []
         if m:
-            nxt = re.search(r'(?m)^(_{3,} |=+ short test summary)', output[m.end():])
+            nxt = re.search(r'(?m)^(_+ (?!_)\S.* _+$|=+ short test summary)', output[m.end():])  # not '_ _ _'
             body = output[m.end():m.end() + nxt.start()] if nxt else output[m.end():]
             lines = body.splitlines()
             arrows = [l for l in lines if l.startswith('>')]
