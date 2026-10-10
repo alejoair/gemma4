@@ -91,6 +91,11 @@ thinking_budget 512, include_thoughts true. Answers are capped at 10,000 charact
   literature all address code by name.
 - 10-09 (the user's): **the LLM checklist** (`docs/llm_checklist.md`) and the rule above. Its check of the current
   design found 7 items not met (see "Next").
+- 10-10: **finding instead of reading** (after V14: 50 range reads were a search done by hand, "I can't grep"): no
+  read form; a name, text or range gives the functions and classes that hold it with the matching lines, to choose
+  from; naming code chooses it (it replaces the places not edited yet); an edit of code that is not a place chooses
+  it; windows show the imports the place uses and the library code it calls. Reasons and checklist table in
+  `docs/design_single.md` ("Finding instead of reading").
 
 ## Results so far
 

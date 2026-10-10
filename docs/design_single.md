@@ -826,3 +826,88 @@ unchanged code in the eval sandbox (as in V3). Row in `VERSIONS.md`.
   in 10 tasks; 14986 read `fastapi/applications.py` in 16 slices and timed out with an empty patch; 14851 read 12
   slices and opened 14 names without an edit; 3 empty patches against 1 in V13b. The check table had marked B9 "farther
   (small)": the trace shows it is not small. The read form needs a bound that the model sees and the script enforces.
+
+### Finding instead of reading (2026-10-10, after V14): what the 51 reads were for, and the fix
+
+**What the reads were** (every V14 call read with the model's own words, `tools/trace_calls.py`): 50 range reads in
+6 tasks (14986: 16, 14851: 12, rich_3521: 10, 15800: 6, 14448, httpx_3672, rich_3469: 2 each). They were not reading:
+they were **a search done by hand**, and the model said so:
+- fastapi_14986: "I need to find where `root_path_in_servers` is defined" → 16 slices of `fastapi/applications.py`,
+  then "Found it! at line 663", then 2 more for its default; timed out with an empty patch.
+- fastapi_14851: "I'll search for `super().__init__` … but I can't. I have to read" → 12 slices of `FastAPI.__init__`
+  and `APIRouter.__init__`; also "where is `add_event_handler` defined" (Starlette's `Router`, a library base class).
+- rich_3521: "I'll search for `test_split_cells` in tests/test_segment.py" → 8 slices of the test file.
+- rich_3469 (a statement with no content): "Let me search for `pad(1)` in the whole repository. No, I can't."; 20 names
+  opened one after the other.
+
+**Why a cap is not the fix.** A cap on reads moves the browsing to names (rich_3469) and is arbitrary. The cause is
+that a read was the only answer that decides nothing: it showed code, left the same decision open and cost nothing,
+so it could be repeated without end (B9). And the need behind it, search, had no form.
+
+**The design.** Code outside the window is reached by finding it, and its code is shown only once it is chosen:
+1. **Search** (step.py `_search`, `_search_view`): a name the repository does not define, a text, or
+   `['search', '<text>']` / `'search <text> in <file>'` gives the functions and classes whose lines hold it, each with
+   its matching lines numbered (grep's answer, W5), the files of the current work first; the tests' matching lines as
+   read-only lines; a library name also shows the library's definition. The answer is a candidate list: choosing is
+   the next call (W1).
+2. **A line range** (`_range_request`): inside the open place, or inside a listed place, it opens that place with those
+   lines in view (the window is the place's code: W3); elsewhere it gives the functions and classes at those lines,
+   to choose from; in a test file it shows the test functions that hold them, whole and read only, and the current
+   step again (tests are evidence, never places).
+3. **Naming code** means the same in every step (B12): a listed place opens; other code is chosen, and it and its
+   related code replace the places not edited yet (`_choose_code`; the edits made stay, the dropped places are named).
+   An edit that names code which is not a place chooses it and applies the edit (`_edit_of_other`; V14 sent 6 edits of
+   code that was no longer a place).
+4. **The window carries what the reads looked for**: the imports the place uses (not only "lines 1-43"), and the
+   library code it calls, including a method that only a library base class defines (`_library_uses`; 14851's
+   `self.add_event_handler` → `starlette.routing.Router.add_event_handler`, shown as code).
+5. **Every look is logged** (`look` events in the state log: search, range, range in a place, test, name, file, edit of
+   other code), so each trace shows which needs the window still misses (the permanent loop: a need found in a trace
+   goes into the window, not into a new form).
+
+No count limits anything: a search costs the places not edited yet, and the time to edits stays the only budget.
+Accepted risk, to be measured: a range inside a long open place pages through it (the place under decision, W3).
+
+Dry runs on fastapi_14986, fastapi_14851 and rich_3469, and a replay of all their V14 calls through the new script:
+no script error; 14986's search for `root_path_in_servers` answers with lines 663, 678, 886 and 1110 in one call;
+14851's `search super().__init__ in fastapi/routing.py` answers `APIRouter.__init__` line 906; `APIRouter.on_event`'s
+window shows Starlette's `add_event_handler` code; rich_3469's `pad(1)` lists `Panel._title` and `Panel._subtitle`.
+
+Check against `docs/llm_checklist.md`:
+
+| Item | Verdict | Why |
+|---|---|---|
+| W1 | **closer** | Every look ends in a choice from a short list of names with the lines that make the right one recognizable |
+| W2 | neutral | Edits unchanged |
+| W3 | **closer** | The window shows the imports the place uses and the library code it calls; ranges in a place show those lines in it |
+| W4 | **closer** | After a look the NEXT is always the choose call; after opening, the edit call |
+| W5 | **closer** | Search answers are grep's numbered lines |
+| W6 | **closer** | The model finds code with its own words (a parameter name, `super().__init__`, `pad(1)`) |
+| W7 | neutral | — |
+| B1 | **closer** | Line numbers are no longer needed to see code (a range still works, never required) |
+| B2 | neutral | — |
+| B3 | neutral | — |
+| B4 | neutral | `search` is a word the model already wrote; no new tool or argument |
+| B5 | neutral | No answer quotes the call; a search answer names the text searched, as a fact |
+| B6 | neutral | — |
+| B7 | **farther (small)** | Windows grow by the used imports and library entries. Reason: they replace reads of 80 lines each; library entries are one line unless the definition is 15 lines or fewer, at most 4 |
+| B8 | neutral | The read form is gone, the search form is new; the edit step accepts the same kinds of answer (edit, skip, back, a name) |
+| B9 | **closer** | No answer shows code that no decision asked for; every look replaces the plan left or opens a place |
+| B10 | neutral | — |
+| B11 | **closer** | The dropped places are named in the answer; nothing is lost silently |
+| B12 | **closer** | A name means "choose this code" in every step; a range always means "the code that holds these lines" |
+| B13 | **closer** | Search results put the files of the current work first |
+| B14 | neutral | — |
+| B15 | neutral | — |
+| B16 | **closer** | An edit of code that is not a place is applied to it (chosen first); a range never edits |
+| P1 | neutral | Library code and tests are labelled read only |
+| P2 | **farther** | The window gains blocks and the look answers change. Reason: the reads had no other cure; measured in one run against V14 |
+| P3 | neutral | — |
+| P4 | neutral | — |
+| P5 | **closer** | "Questions are not answered in this step" next to a read form is gone; the prompt, SKILL.md, windows and refusals give the same forms |
+| P6 | neutral | — |
+| P7 | **farther (small)** | Library entries may be noise. Reason: only code the place calls, not the signature's annotations nor the standard library |
+| P8 | **closer** | The answer says which places are no longer planned |
+| P9 | neutral | — |
+| P10 | neutral | — |
+| F1–F9 | neutral | Edit feedback unchanged |

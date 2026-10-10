@@ -18,7 +18,7 @@ CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 FORMS = {
     'S0': "['<the issue statement, or its first paragraph>', '<search term>', '<search term>', ...]",
     'D1': "['<candidate name>'] or ['<candidate name>', '<candidate name>'] (1 to 3 names from the list), or "
-          "['<file>::<Name>'] for code not in the list",
+          "['<file>::<Name>'] for code not in the list, or ['<a name or text to find>']",
     'D2': "['P<n>: <what changes there>', 'P<m>: <what changes there>'] (one item per place to edit), or ['back'] "
           "to choose other candidates",
     'D3': "['<place name>', '<the whole new function or class>'] or ['<place name>', '<first line number>', "

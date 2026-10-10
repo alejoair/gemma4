@@ -8,7 +8,8 @@ step produced, a fixed verdict when something was checked, and the exact next ca
                                                 with the code it uses, its callers and what the change must do
     D3  args ["Session.send", whole new def]  -> edit (by name), syntax, existing tests; the next place, or the finish
         or ["Session.send", first, last, new lines]
-        or ["skip"], ["back"], ["<place name>"] -> nothing else is accepted in this step (no questions)
+        or ["skip"], ["back"], ["<place name>"]; other code is reached by finding it: a name, a text or a file
+        with two line numbers gives the functions and classes that hold it, to choose from (never lines to read)
     D4  submit_patch, or ["back"]             -> back to D1 for the requirements that nothing changed covers
 The model names code by its name; the ids (C2, P1, R1) stay inside the journal and are still read when sent.
 """
@@ -46,11 +47,12 @@ MAX_CHARS = 10000       # a cap on one answer (about 2,900 tokens) against conte
 
 # ---------------------------------------------------------------------------------------------------------- views
 
-def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
+def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=None):
     """Numbered lines start..end of rel, long strings collapsed. Over the limit: the head of the place (its def and
     first lines) and the part where the focus terms occur most. Sizes count the lines shown (a collapsed text is one
     line) and text lines score nothing: in V13b (fastapi_14851) raw counts and scored Doc texts that name "FastAPI" hid
-    the 36 lines to change (the `routing.APIRouter(..., lifespan=lifespan)` call) under 98 lines of Doc text."""
+    the 36 lines to change (the `routing.APIRouter(..., lifespan=lifespan)` call) under 98 lines of Doc text. show,
+    (a, b): the lines the model asked to see, shown instead of the best-matching part."""
     lines = _repo.read_lines(root, rel)
     tree = _code.parse(''.join(lines))
     collapse = _code.long_strings(tree)
@@ -79,12 +81,12 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
                 min([node.lineno] + [d.lineno for d in node.decorator_list]) == start:
             sig_end = node.body[0].lineno - 1
             break
-    if sig_end is not None and sig_end - start + 1 > 8:
+    if sig_end is not None and sig_end - start + 1 > 8 and not (show and show[0] <= sig_end):
         # a long signature (FastAPI's Annotated[..., Doc(...)] parameters): its first line, then the body, so that
         # the window shows the code that runs (V10 audit #8: windows showed Doc texts and hid the body)
         out = [_code.numbered(lines, start, start, collapse=collapse),
                f'      ... (the parameters, lines {start + 1}-{sig_end}, not shown) ...']
-        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2)
+        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2, show=show)
         return '\n'.join(out + [body])
     width = limit - size(start, head)
     toks = focus_terms or {}
@@ -107,6 +109,11 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES):
         if b == end:
             break
     a, b = best, best_end
+    if show:
+        a = min(max(show[0], head + 1), end)
+        b = a
+        while b < end and size(a, b + 1) <= width:
+            b += 1
     out = [_code.numbered(lines, start, head, collapse=collapse)]
     if a > head + 1:
         out.append(f'      ... (lines {head + 1}-{a - 1} not shown) ...')
@@ -171,7 +178,7 @@ def _norm_name(text):
     return t.strip().strip('`')
 
 
-def _match(items, text):
+def _match(items, text, fuzzy=True):
     """The item (candidate or place) that text names: its handle, its qualified name, a unique last part of it
     ("send" for Session.send), its file for top-level code, an old id (C2, P1), or a close spelling of a handle."""
     if '\n' in (text or '').strip():
@@ -193,23 +200,25 @@ def _match(items, text):
     hits = [x for x in items if x['name'] == MODULE and _rank.names_file(t, x['rel'])]
     if hits:
         return hits[0]
+    if not fuzzy:
+        return None
     close = difflib.get_close_matches(t, list(by), n=1, cutoff=0.85)
     return by[close[0]] if close else None
 
 
-def _pick(items, args):
+def _pick(items, args, fuzzy=True):
     """(matched items, texts that name none of them) from the model's choice: one name per item, or several names in
     one item separated by commas or lines."""
     found, others = [], []
     for a in args:
         if not (a or '').strip():
             continue
-        x = _match(items, a)
+        x = _match(items, a, fuzzy)
         if x is not None:
             found.append(x)
             continue
         parts = [q for q in re.split(r'[,;\n]+', a) if q.strip()]
-        got = [_match(items, q) for q in parts] if len(parts) > 1 else [None]
+        got = [_match(items, q, fuzzy) for q in parts] if len(parts) > 1 else [None]
         if all(g is not None for g in got):
             found += got
         else:
@@ -234,7 +243,7 @@ def _focus(state, entry=None):
     return out
 
 
-def _window(root, state, i):
+def _window(root, state, i, show=None):
     """The place of plan entry i, ready to edit: its code, then what the change must do (the requirements, the
     statement's sentences about the behaviour, its example, an existing test that uses the code), then how to send
     the edit. The task is repeated in every window so that it is next to the decision even after the history is
@@ -253,7 +262,7 @@ def _window(root, state, i):
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
-        body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES)
+        body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES, show=show)
         if re.search(r'\(lines \d+-\d+ not shown\)', body):
             body += (f'\n{p["handle"]} is longer than the window: rewrite one of its members whole, from its def line '
                      'to its last line, or change the lines shown here by their numbers.')
@@ -279,11 +288,10 @@ def _window(root, state, i):
                  f"name is added after {name}); write it whole, from its def or class line to its last line.\n"
                  f"  ['{name}', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with "
                  f"their full indentation ('DELETE' deletes them).\n"
-                 f"  ['skip'] if {name} needs no change; ['<name of a function or class>'] to open it (it joins the "
-                 f"places), or a file name to choose among its functions; ['back'] to choose again. Questions are not "
-                 f"answered in this step.\n"
-                 f"  ['<file or name>', '<first line number>', '<last line number>'] shows lines this window does not "
-                 f"show (a file's imports, the rest of a long function); it changes nothing.")
+                 f"  ['skip'] if {name} needs no change, or ['back'] to choose again.\n"
+                 f"  To change other code: a listed place's name opens it; the name of other code chooses it (it and its "
+                 f"related code replace the places not edited yet; the edits made stay). A file name, a text to find "
+                 f"or a file with two line numbers gives the functions and classes there, to choose from.")
     return '\n'.join(parts)
 
 
@@ -320,8 +328,15 @@ def _imports_view(root, p):
     a, b = imps[0].lineno, max(n.end_lineno or n.lineno for n in imps)
     if b >= p['start']:
         return ''
-    if b - a + 1 > IMPORT_LINES:          # a long block is noise in every window (P7): where it is is enough
-        return f'The imports of {p["rel"]} are at lines {a}-{b}.'
+    if b - a + 1 > IMPORT_LINES:
+        # a long block is noise in every window (P7), so only the imports of the names the place uses: where they come
+        # from is what the model searched for by hand (V14 fastapi_14851: "Let's check the imports in fastapi/routing.py")
+        used = set(re.findall(r'[A-Za-z_]\w*', ''.join(lines[p['start'] - 1:p['end']])))
+        mine = [n for n in imps if any((al.asname or al.name).split('.')[0] in used for al in n.names)]
+        if not mine:
+            return f'The imports of {p["rel"]} are at lines {a}-{b}.'
+        shown = '\n'.join(_code.numbered(lines, n.lineno, n.end_lineno or n.lineno, collapse=[]) for n in mine)
+        return f'The imports of {p["rel"]} that {p["handle"]} uses (all imports: lines {a}-{b}):\n{shown}'
     shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
     more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
     return f'The imports of {p["rel"]}:\n{shown}{more}'
@@ -369,10 +384,14 @@ def _context_view(root, p, focus=None):
         x.name == own and x.kind == 'class' for x in table.syms.get(p['rel'], [])) else '')
     calls = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
     imported = {}               # name -> module it is imported from in this file ('' for a relative import's level)
+    modules = {}                # name -> the module an `import m` / `import m as name` binds
     for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom):
             for al in n.names:
-                imported[al.asname or al.name] = (n.module or '', al.name)
+                imported[al.asname or al.name] = (('.' * n.level) + (n.module or ''), al.name)
+        elif isinstance(n, ast.Import):
+            for al in n.names:
+                modules[al.asname or al.name.split('.')[0]] = al.name if al.asname else al.name.split('.')[0]
     here = {x.name for x in table.syms.get(p['rel'], [])}
     used = []                   # (line, name, how): f() / obj.f(), self.attr, a Name of this file or imported
     for node in ast.walk(tree):
@@ -450,6 +469,13 @@ def _context_view(root, p, focus=None):
             chars += len(text)
         if len(uses) >= USES:
             break
+    lib = _library_uses(root, p, tree, used, imported, modules, table, cls)
+    room = USES_CHARS - chars
+    for text in lib:
+        if len(text) > room:
+            break
+        uses.append(text)
+        room -= len(text)
     short = own.split('.')[-1]
     callers = [] if short.startswith('__') else [
         (r, c, n) for r, c, n in table.calls.get(short, []) if c and (r, c) != (p['rel'], own)
@@ -466,6 +492,63 @@ def _context_view(root, p, focus=None):
         more = f' ({len(callers)} calls, first {CALLERS})' if len(callers) > CALLERS else ''
         out.append(f'Code that calls {short}{more}:\n' + '\n'.join(calls))
     return '\n'.join(out)
+
+
+LIBRARY_USES = 4   # library definitions shown in one window
+
+
+def _library_uses(root, p, tree, used, imported, modules, table, cls):
+    """Library code the place calls: names imported from a library, and methods of its class that only a library
+    base class defines (V14 fastapi_14851: APIRouter.on_event calls self.add_event_handler, which Starlette's Router
+    defines; the model read 12 slices looking for it). Each as its qualified name and signature, or its code when it
+    is short. Read only."""
+    def module_of(name):
+        if name in imported:
+            mod, orig = imported[name]
+            return f'{mod}.{orig}' if mod and not mod.startswith('.') else None
+        return modules.get(name)
+
+    sym = next((x for x in table.syms.get(p['rel'], []) if x.name == p['name']), None)
+    body = sym.node.body[0].lineno if sym is not None and getattr(sym.node, 'body', None) else p['start']
+    wanted = []
+    for line, name, how in sorted(used):
+        if line < body:
+            continue                    # the signature's annotations (Annotated, Doc): not what the code does
+        if how in ('name', 'call') and name in imported and not table.find(imported[name][1]):
+            dotted = module_of(name)
+            if dotted and dotted.split('.')[0] not in sys.stdlib_module_names:
+                wanted.append(dotted)
+        elif how == 'self' and cls and not any(x.name.split('.')[-1] == name for _, x in table.find(name)):
+            node = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == cls.split('.')[-1]),
+                        None)
+            for base in (node.bases if node is not None else []):
+                try:
+                    parts = ast.unparse(base).split('.')
+                except Exception:       # noqa: BLE001
+                    continue
+                head = module_of(parts[0])
+                if head:
+                    wanted.append('.'.join([head] + parts[1:] + [name]))
+    out, seen = [], set()
+    for dotted in dict.fromkeys(wanted):
+        if len(out) >= LIBRARY_USES:
+            break
+        try:
+            hit = _library_def(root, dotted)
+        except Exception:               # noqa: BLE001  (a library that fails to import is not shown)
+            hit = None
+        if hit is None or hit[3] in seen:
+            continue
+        seen.add(hit[3])
+        path, a, b, qual = hit
+        lines = _repo.read_lines('/', path)
+        short = path.split('site-packages/')[-1] if 'site-packages/' in path else os.path.basename(path)
+        if b - a + 1 <= SHORT_MEMBER:
+            out.append(f'  {qual} (library, read only; {short}):\n' + _code.numbered(lines, a, b, collapse=[]))
+        else:
+            d = next((i for i in range(a, b + 1) if re.match(r'\s*(async\s+def|def|class)\s', lines[i - 1])), a)
+            out.append(f'  {qual} (library, read only; {short}, lines {a}-{b}): {lines[d - 1].strip()[:140]}')
+    return out
 
 
 def _task_view(root, state, p):
@@ -676,27 +759,158 @@ def _more_statement(state, args):
     return long_text and _match(state['candidates'], first) is None
 
 
+NAME_LIKE = re.compile(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?|([\w./-]+::)?[\w./-]+\.py( top level)?')
 BIG_FILE = 60       # a file longer than this is never one place: it is chosen through its functions and classes
 
 
-def _candidates_using(root, name, n=N_CANDIDATES):
-    """The functions and classes whose code uses name (a library's or a builtin's: the repository does not define it),
-    package code first, as candidates with the lines that use it: a question 'where is X used' answered as a choice
-    from a list (W1) instead of a search."""
-    index = _rank.Index(root)
-    pat = re.compile(rf'(?<![\w]){re.escape(name)}(?![\w])')
-    hits = []
-    for doc in index.docs:
-        if doc.sym is None or _repo.is_test_path(doc.rel):
+# ---------------------------------------------------------------------------------------------------------- finding
+# V14: 51 of 161 calls were reads of line ranges, and the model said what they were for: "I can't grep", "search for
+# super().__init__", "where is root_path_in_servers defined", "find test_split_cells", "search for pad(1)". The reads
+# were a search done by hand (fastapi_14986 read fastapi/applications.py in 16 slices looking for one parameter and
+# timed out). So code outside the window is reached by finding, never by reading: a name, a text or a line range is
+# answered with the functions and classes that hold it, each with the lines that match (grep's answer, numbered), and
+# their code is shown only once one is chosen. Choosing outside the places replaces the places not edited yet, so
+# every look is a decision that leaves a trace (B9), and no answer shows code that no decision asked for.
+
+SEARCH_LINES = 3    # matching lines shown under one candidate (as grep would show them)
+SEARCH_WORDS = ('search', 'grep', 'find', 'look for', 'search for')
+
+
+def _search_query(items):
+    """The text of a search the model wrote as one ('search', 'X') or ('search X'), else None."""
+    if len(items) == 2 and _args.clean(items[0]).lower().strip(' :') in SEARCH_WORDS:
+        return _args.clean(items[1]).strip('`')
+    if len(items) == 1:
+        m = re.match(r'(?i)^\s*(?:search for|search|grep|find|look for)\s*:?\s+(.+)$', items[0].strip())
+        if m and '\n' not in m.group(1):
+            return _args.clean(m.group(1)).strip('`"\'')
+    return None
+
+
+def _search_pattern(text):
+    """A whole word for an identifier, else the text literally with any run of spaces matching any spaces."""
+    t = text.strip()
+    if re.fullmatch(r'[A-Za-z_]\w*', t):
+        return re.compile(rf'(?<![\w]){re.escape(t)}(?![\w])')
+    return re.compile(r'\s+'.join(re.escape(w) for w in t.split()))
+
+
+def _search(root, text, n=N_CANDIDATES, near=(), only=None):
+    """(candidates, test lines, total matches): the innermost function or class (or a file's top-level code) of each
+    line that holds text, package code first and most matches first, each with its matching lines; and the matching
+    lines of the tests (read only: the hidden tests replace them). The files of near (the places and candidates the
+    work is on) come first; only, a file, limits the search to it."""
+    pat = _search_pattern(text)
+    groups, tests, total = collections.OrderedDict(), [], 0
+    for rel in _repo.iter_py(root, tests=True, docs=True):
+        if only and rel != only:
             continue
-        lines = _repo.read_lines(root, doc.rel)[doc.start - 1:doc.end]
-        if any(pat.search(l) for l in lines):
-            hits.append(doc)
-    inner = [d for d in hits if not any(o is not d and o.rel == d.rel and d.start <= o.start and o.end <= d.end
-                                        and any(pat.search(l) for l in _repo.read_lines(root, o.rel)[o.start - 1:o.end])
-                                        for o in hits)]
-    inner.sort(key=lambda d: (_repo.is_doc_path(d.rel), d.rel, d.start))
-    out = [_candidate(index, d, [], root=root, literals=[name], toks={}) for d in inner[:n]]
+        lines = _repo.read_lines(root, rel)
+        hits = [i for i, l in enumerate(lines, 1) if pat.search(l)]
+        if not hits:
+            continue
+        total += len(hits)
+        if _repo.is_test_path(rel):
+            tests += [f'{rel}:{i}: {lines[i - 1].strip()[:110]}' for i in hits]
+            continue
+        syms = _code.symbols(_code.parse(''.join(lines)))
+        owner = _code.owner_map(syms, len(lines))
+        for i in hits:
+            o = owner[i] if i < len(owner) else None
+            groups.setdefault((rel, o.name if o else MODULE), []).append(i)
+    if not groups:
+        return [], tests, total
+    index = _rank.Index(root)
+    docs = {(d.rel, d.name): d for d in index.docs}
+    order = sorted(groups, key=lambda k: (_repo.is_doc_path(k[0]), k[0] not in near, -len(groups[k]), k[0],
+                                          groups[k][0]))
+    out = []
+    for key in order:
+        doc = docs.get(key)
+        if doc is None or len(out) >= n:
+            continue
+        c = _candidate(index, doc, [])
+        lines = _repo.read_lines(root, key[0])
+        found = groups[key]
+        c['evidence'] = [f'{i}: {lines[i - 1].strip()[:110]}' for i in found[:SEARCH_LINES]] + (
+            [f'... and {len(found) - SEARCH_LINES} more lines'] if len(found) > SEARCH_LINES else [])
+        out.append(c)
+    for i, c in enumerate(out, 1):
+        c['id'] = f'C{i}'
+    _set_handles(out)
+    return out, tests, total
+
+
+def _search_view(root, state, text, prefer=None):
+    """The answer to a search, or None when nothing holds text: the library code a name refers to (read only), the
+    code that holds the text as candidates to choose from, and the tests' matching lines. The candidates replace the
+    list; the step becomes the choose step."""
+    only = None
+    m = re.match(r'^(.+?)\s+in\s+`?([\w./-]+\.py)`?$', text.strip())     # "super().__init__ in fastapi/applications.py"
+    if m:
+        only = next((r for r in _repo.iter_py(root, tests=True, docs=True) if _rank.names_file(m.group(2), r)), None)
+        if only:
+            text = m.group(1).strip().strip('`')
+    lib = _library_view(root, text, prefer=prefer) if re.fullmatch(r'[A-Za-z_][\w.]*', text.strip()) else ''
+    near = {x['rel'] for x in (state.get('places') or []) + (state.get('candidates') or [])}
+    cands, tests, total = _search(root, text, near=near, only=only)
+    if not cands and not tests and not lib:
+        return None
+    _state.record({'look': 'search', 'q': text[:120], 'step': state['step'], 'found': len(cands)})
+    head = f'Where the code holds {text}' if total else f'Nothing in the code holds {text}'
+    out = []
+    if lib:
+        out.append(lib)
+    if cands:
+        if state['step'] == 'D1':
+            state['candidates'] = cands
+        else:
+            _journal.requirement_back(state, cands)
+            state['rechosen'] = state.get('rechosen', 0) + 1
+        shown = sum(1 for c in cands)
+        out.append(_candidates_view(state, title=f'{head} ({total} lines; the functions and classes that hold '
+                                    f'them{", first " + str(shown) if shown >= N_CANDIDATES else ""}):'))
+    if tests:
+        more = f' (first {N_CANDIDATES} of {len(tests)})' if len(tests) > N_CANDIDATES else ''
+        out.append(f'In the tests{more} (read only: the hidden tests replace the test files):\n'
+                   + '\n'.join('  ' + t for t in tests[:N_CANDIDATES]))
+    if not cands:
+        out.append('No function or class of the package holds it.')
+        if state['step'] == 'D1':
+            out.append(_candidates_view(state))
+        else:
+            return '\n\n'.join(out) + '\n\nNothing was changed.' + ('\n\n' + _window(root, state, state['current'])
+                                                                    if state.get('current') is not None else '')
+    return '\n\n'.join(out) + '\n\nChoose the code to change.'
+
+
+def _owner_candidates(root, state, rel, a, b):
+    """The functions and classes (or the top-level code) that hold lines a..b of rel, as candidates with the lines of
+    each that bear on the statement."""
+    st = _state.load('statement', {})
+    text = st.get('text', '')
+    lines = _repo.read_lines(root, rel)
+    syms = _code.symbols(_code.parse(''.join(lines)))
+    owner = _code.owner_map(syms, len(lines))
+    keys = []
+    for i in range(max(1, a), min(b, len(lines)) + 1):
+        if not lines[i - 1].strip():
+            continue                    # a blank line between methods belongs to the class: it says nothing
+        o = owner[i] if i < len(owner) else None
+        k = (rel, o.name if o else MODULE)
+        if k not in keys:
+            keys.append(k)
+    index = _rank.Index(root)
+    docs = {(d.rel, d.name): d for d in index.docs}
+    literals = [x for x in dict.fromkeys(re.findall(r'`([^`\n]{4,60})`', text)) if len(x) >= 4]
+    toks = {}
+    for term in _statement.terms(text):
+        for ident in re.findall(r'[A-Za-z_]\w*', term):
+            for t in _rank.tokens(ident):
+                if len(t) >= 4 and t not in _statement.STOP:
+                    toks[t] = 1
+    out = [_candidate(index, docs[k], [], root=root, literals=literals, toks=toks) for k in keys[:N_CANDIDATES]
+           if k in docs]
     for i, c in enumerate(out, 1):
         c['id'] = f'C{i}'
     _set_handles(out)
@@ -769,6 +983,13 @@ def d1(root, state, args):
         return ('In this step code is chosen; nothing is open to skip or finish. ' + _candidates_view(state)
                 + '\n\nChoose the code to change.')
     items = [a for a in args if a and a.strip()]
+    edited = _edit_of_other(root, state, args)
+    if edited is not None:
+        return edited
+    query = _search_query(items)
+    if query:
+        return _search_view(root, state, query) or (f'Nothing in the code holds {query}. Nothing was opened.\n\n'
+                                                    + _candidates_view(state))
     big = []                            # files over BIG_FILE lines sent at the choose step
     for a in items:
         x = _args.clean(a).strip('/')
@@ -776,10 +997,24 @@ def d1(root, state, args):
             r = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None)
             if r and len(_repo.read_lines(root, r)) > BIG_FILE:
                 big.append((a, r))
-    picked, others = _pick(state['candidates'], [a for a in items if a not in {b for b, _ in big}])
+    # exact names first, then code the repository defines, then near spellings of a candidate: a close spelling must
+    # not turn Panel._title (defined, off the list) into the listed Panel._subtitle
+    picked, others = _pick(state['candidates'], [a for a in items if a not in {b for b, _ in big}], fuzzy=False)
     chosen = picked[:3]
     if others and len(chosen) < 3:
-        chosen += _resolve(root, others)[:3 - len(chosen)]
+        # names choose code; a text (a code fragment) is found instead, so that it gives a list, not the first match
+        named = [o for o in others if NAME_LIKE.fullmatch(_args.clean(o).strip().strip('`'))]
+        unresolved = []
+        for o in named:
+            got = _resolve(root, [o])
+            if got:
+                chosen += got[:1]
+            else:
+                unresolved.append(o)
+        near, _ = _pick(state['candidates'], unresolved)
+        chosen = (chosen + near)[:3]
+        others = [o for o in others if o not in named] + [o for o in unresolved if _match(state['candidates'], o)
+                                                          is None]
     if not chosen and big:
         # a file sent at the choose step: its functions and classes become the candidates, best first, so the choice
         # stays a pick from a short list of names (W1) instead of opening a whole file (or its top lines) as a place
@@ -790,17 +1025,11 @@ def d1(root, state, args):
             state['candidates'] = cands
             return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related to '
                                      'the issue):') + '\n\nChoose the code to change.')
-    if not chosen and len(others) == 1 and re.fullmatch(r'[A-Za-z_][\w.]*', others[0]):
-        name = others[0].split('.')[-1]
-        lib = _library_view(root, others[0])
-        users = _candidates_using(root, name)
-        if users:
-            state['candidates'] = users
-        if users or lib:
-            title = (f'The code here that uses {name}:' if lib else
-                     f'No function or class here is named {name}; the code that uses it:')
-            return ((lib + '\n\n' if lib else '') + _candidates_view(state, title=title if users else
-                                                                       'Candidates:') + '\n\nChoose the code to change.')
+    if not chosen and len(others) == 1 and '\n' not in others[0].strip() and len(others[0]) <= 200:
+        # a name the repository does not define, or a text: where the code holds it, to choose from
+        found = _search_view(root, state, others[0])
+        if found:
+            return found
     if not chosen:
         msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
                if others else 'No candidate was chosen. ')
@@ -930,10 +1159,13 @@ def _place_args(state, args):
 
 
 def _open_named(root, state, text):
-    """In the edit step, code named off the list of places: a function or class of the repository joins the places
-    and opens (the model names the code the window shows it, such as Dependant from 'Code that ... uses'); a big file
-    goes back to choosing among its functions and classes (the edits made stay). None when text names neither."""
+    """In the edit step, code named off the list of places. A function or class of the repository is chosen: it and the
+    code related to it replace the places not edited yet (the edits made stay), so naming code is a decision, as at the
+    choose step (B12: a name means the same in every step). A big file gives its functions and classes to choose from;
+    any other name or text gives the code that holds it to choose from. None when nothing matches."""
     x = _args.clean(text).strip('/')
+    cur = state.get('current')
+    here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None and state.get('plan') else None
     if re.fullmatch(r'[\w./-]+\.py', x):
         rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None)
         if rel and len(_repo.read_lines(root, rel)) > BIG_FILE:
@@ -941,40 +1173,64 @@ def _open_named(root, state, text):
             cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'],
                                         only_rel=rel)
             if cands:
+                _state.record({'look': 'file', 'q': rel, 'step': state['step']})
                 _journal.requirement_back(state, cands)
+                state['rechosen'] = state.get('rechosen', 0) + 1
                 return ('The edits made so far stay. ' + _candidates_view(
                     state, title=f'Candidates in {rel} (its functions and classes most related to the issue):')
                     + '\n\nChoose the code to change.')
             return None
-    if not re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x):
+    found = _resolve(root, [x]) if re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) else []
+    if not found:
+        return _search_view(root, state, x, prefer=here)
+    _state.record({'look': 'name', 'q': x[:120], 'step': state['step']})
+    head, out = _choose_code(root, state, found[0])
+    return head + '\n\n' + out
+
+
+def _choose_code(root, state, found):
+    """Chooses code off the places (a dict with rel, name, start, end): it and the code related to it become the
+    places, the edits made stay, the places not edited yet are no longer planned. (head, answer of the choice)."""
+    c = dict(found)
+    # the chosen code first, then the candidates of before, so that ['back'] still finds them
+    rest = [dict(q) for q in state.get('candidates') or [] if (q['rel'], q['name']) != (c['rel'], c['name'])]
+    cands = [c] + rest[:N_CANDIDATES - 1]
+    for i, q in enumerate(cands, 1):
+        q['id'] = f'C{i}'
+    _set_handles(cands)
+    left = [_name_of(state, e['place']) for e in state.get('plan') or [] if e['status'] == 'todo']
+    _journal.requirement_back(state, cands)
+    state['rechosen'] = state.get('rechosen', 0) + 1
+    out = d1(root, state, [cands[0]['handle']])
+    dropped = f' The places not edited yet ({", ".join(left[:4])}) are no longer planned.' if left else ''
+    return (f'{cands[0]["handle"]} is chosen: it and the code related to it are the places now. The edits made so far '
+            f'stay.{dropped}', out)
+
+
+def _edit_of_other(root, state, args):
+    """An edit that names code which is not a place (a candidate, or any function or class of the repository): an edit
+    is the clearest decision there is, so that code is chosen and the edit is applied to it. None for anything else
+    (a file path with line numbers is a range, not an edit)."""
+    items = [x for x in args if x is not None and str(x).strip()]
+    if len(items) == 2:
+        if not DEF_LINE.search(items[1]):
+            return None
+    elif len(items) != 4 or not all(_args.clean(str(n)).isdigit() for n in items[1:3]):
         return None
-    found = _resolve(root, [x])
-    if not found and re.fullmatch(r'[A-Za-z_][\w.]*', x):
-        cur = state.get('current')
-        here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None and state.get('plan') else None
-        lib = _library_view(root, x, prefer=here)
-        if lib:                 # read only: the place stays open
-            return lib + ('\n\n' + _window(root, state, cur) if cur is not None else '')
-        users = _candidates_using(root, x.split('.')[-1])
-        if users:
-            _journal.requirement_back(state, users)
-            return ('The edits made so far stay. ' + _candidates_view(
-                state, title=f'No function or class here is named {x.split(".")[-1]}; the code that uses it:')
-                + '\n\nChoose the code to change.')
-    if not found or len(state['places']) >= MAX_PLACES + 4:
+    name = _norm_name(items[0])
+    if not name or re.fullmatch(r'(?i)P\d+|[\w./-]+\.py', name) or not NAME_LIKE.fullmatch(name):
         return None
-    c = found[0]
-    old = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name'])), None)
-    if old is None:
-        old = {'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'], 'reason': 'chosen',
-               'id': f'P{len(state["places"]) + 1}'}
-        state['places'].append(old)
-        _set_handles(state['places'])
-    i = _journal.target(state, old['id'])
-    if state['plan'][i]['status'] == 'skipped':
-        state['plan'][i]['status'] = 'todo'
-    state['current'] = i
-    return f'{old["handle"]} is added to the places and open now.\n\n' + _window(root, state, i)
+    if _match(state.get('places') or [], name, fuzzy=False) is not None:
+        return None                         # a place: the edit step reads it
+    cand = _match(state.get('candidates') or [], name, fuzzy=False)
+    found = [cand] if cand is not None else _resolve(root, [name])
+    if not found:
+        return None
+    _state.record({'look': 'edit of other code', 'q': name[:120], 'step': state['step']})
+    head, _ = _choose_code(root, state, found[0])
+    if state['step'] != 'D3':
+        return None
+    return head + '\n\n' + d3(root, state, args)
 
 
 def _whole_args(items):
@@ -1074,21 +1330,19 @@ def _whole_edit(root, p, text):
     return _edit.Result(True, start, end, None, repairs, warnings)
 
 
-# ---------------------------------------------------------------------------------------------------------- reading
+# ---------------------------------------------------------------------------------------------------------- line ranges
 
-# The model needs to read code the window does not hold: a file's imports, the hidden part of a long function, the
-# library definition of a name the repository imports. With no form for it, it used DELETE over line ranges as a viewer
-# (V13b: 9 calls in fastapi_14851 and fastapi_14448; "Let's look at lines 960-999" sent as a DELETE of them, and a
-# DELETE of 240 lines applied and undone only by the tests). So a read has its own form, the one it wrote anyway: a
-# file or code name and two line numbers, with no new lines. It changes nothing and is answered in every step.
+# The model writes line ranges to see code ("Let's look at lines 960-999"; V13b sent them as DELETEs, V14 as reads:
+# 51 reads, 16 in one task). A range is answered by the code that holds it: inside the open place (or a listed one) it
+# opens that place with those lines in view; elsewhere it gives the functions and classes there to choose from. No
+# answer shows lines that no place holds, so a range is never a way to browse (B9) and never needs an edit (B16).
 
-READ_LINES = 80          # lines shown by one read
 DELETE_CONFIRM = 30      # a DELETE of more lines is shown first and applied when the same call comes again
 LIBRARY_LINES = 60
 
 
 def _read_target(root, state, text):
-    """(rel, label) of the file a read names: a file path, a listed place or candidate, or code of the repository."""
+    """(rel, label) of the file a range names: a file path, a listed place or candidate, or code of the repository."""
     x = _args.clean(text or '').strip('/')
     if re.fullmatch(r'[\w./-]+\.py', x):
         rel = next((r for r in _repo.iter_py(root, tests=True, docs=True) if _rank.names_file(x, r)), None)
@@ -1101,54 +1355,98 @@ def _read_target(root, state, text):
     return (found[0]['rel'], found[0]['name']) if found else (None, None)
 
 
-def _owners(root, rel, a, b):
-    """The names of the functions and classes that hold lines a..b (the top level when none does)."""
+def _lines_view(root, rel, a, b, label):
+    """Lines a..b of rel, numbered (the lines of a large deletion, shown before it is made)."""
+    lines = _repo.read_lines(root, rel)
+    a, b = max(1, min(a, b)), min(len(lines), max(a, b))
+    body = _code.numbered(lines, a, b, collapse=_code.long_strings(_code.parse(''.join(lines))))
+    return f'Lines {a}-{b} of {label}:\n{body}'
+
+
+TEST_DEFS = 2       # test functions shown for one range of a test file
+
+
+def _test_view(root, state, rel, a, b):
+    """A range of a test file: the test functions that hold it, whole and read only, then the current step again.
+    Tests are not places (the hidden tests replace them), but how the code is tested today is evidence for the change
+    (V14 rich_3521 read tests/test_segment.py in 8 slices looking for test_split_cells and its cases)."""
     lines = _repo.read_lines(root, rel)
     syms = _code.symbols(_code.parse(''.join(lines)))
     owner = _code.owner_map(syms, len(lines))
-    names = []
-    for i in range(a, min(b, len(lines)) + 1):
+    tops = []
+    for i in range(max(1, a), min(b, len(lines)) + 1):
         o = owner[i] if i < len(owner) else None
-        name = o.name if o is not None else f'{rel} top level'
-        if name not in names:
-            names.append(name)
-    return names
+        while o is not None and '.' in o.name and o.kind == 'def':      # a nested helper: its test function
+            o = next((x for x in syms if x.name == o.name.rsplit('.', 1)[0]), None)
+        if o is not None and o not in tops and lines[i - 1].strip():
+            tops.append(o)
+    _state.record({'look': 'test', 'q': f'{rel} {a}-{b}', 'step': state['step']})
+    shown = [f'{t.name} ({rel}, lines {t.start}-{t.end}):\n' + _code_view(root, rel, t.start, t.end, limit=60)
+             for t in tops[:TEST_DEFS]]
+    if not tops:                # the test file's top level: its cases and fixtures data
+        shown = [_code_view(root, rel, a, min(b, len(lines)), limit=60)]
+    more = f' ({len(tops)} tests hold these lines; the first {TEST_DEFS})' if len(tops) > TEST_DEFS else ''
+    return (f'Lines {a}-{b} of {rel} are in tests{more}, read only (the hidden tests replace the test files):\n'
+            + '\n\n'.join(shown) + '\n\n' + _current_view(root, state))
 
 
-def _lines_view(root, rel, a, b, label):
-    lines = _repo.read_lines(root, rel)
-    a, b = max(1, min(a, b)), min(len(lines), max(a, b))
-    if a > len(lines):
-        return f'{label} has {len(lines)} lines; lines {a}-{b} do not exist. Nothing was changed.'
-    cut = b - a + 1 > READ_LINES
-    b2 = a + READ_LINES - 1 if cut else b
-    tree = _code.parse(''.join(lines))
-    body = _code.numbered(lines, a, b2, collapse=_code.long_strings(tree))
-    more = f'\n      ... (lines {b2 + 1}-{b} not shown: at most {READ_LINES} lines per read) ...' if cut else ''
-    owners = _owners(root, rel, a, b2)
-    where = ', '.join(owners[:4]) + (' and more' if len(owners) > 4 else '')
-    return (f'Lines {a}-{b2} of {rel} (read only: nothing was changed). They belong to {where}.\n{body}{more}\n'
-            f'To change them, edit the function or class that holds them: send its name to open it.')
-
-
-def _read_request(root, state, args):
-    """The answer to a read, ['<file or name>', '<first line>', '<last line>'], or None when args are not one. At the
-    choose step a line range with anything after it is a read too: nothing is edited there."""
+def _range_request(root, state, args):
+    """The answer to ['<file or name>', '<first line>', '<last line>'], or None when args are not one. At the choose
+    4-item call is one only when it names a file that is not a place (the model's ['fastapi/routing.py', 1, 50,
+    'DELETE'] in V13b): code is edited through its name."""
     items = [x for x in args if x is not None and str(x).strip()]
     if len(items) not in (3, 4) or not all(_args.clean(str(n)).isdigit() for n in items[1:3]):
         return None
-    if len(items) == 4 and state['step'] not in ('D1',):
-        rel, label = _read_target(root, state, items[0])
+    if len(items) == 4:
         is_file = re.fullmatch(r'[\w./-]+\.py', _args.clean(items[0]).strip('/') or '')
+        rel, _ = _read_target(root, state, items[0])
         if not (is_file and rel and _match(state.get('places') or [], items[0]) is None):
             return None             # an edit of a place: d3 reads it
-        note = 'Code is edited through its function or class name, not a file name. '
-    else:
-        rel, label = _read_target(root, state, items[0])
-        note = 'In this step nothing is edited. ' if len(items) == 4 else ''
+    rel, _ = _read_target(root, state, items[0])
     if not rel:
         return None
-    return note + _lines_view(root, rel, int(_args.clean(items[1])), int(_args.clean(items[2])), label)
+    a, b = sorted((int(_args.clean(items[1])), int(_args.clean(items[2]))))
+    n = len(_repo.read_lines(root, rel))
+    if a > n:
+        return f'{rel} has {n} lines; lines {a}-{b} do not exist. Nothing was changed.'
+    b = min(b, n)
+    if state['step'] in ('D3', 'D4') and state.get('plan'):
+        _refresh(root, state, rel)
+        cur = state.get('current')
+        order = ([cur] if cur is not None else []) + [i for i in range(len(state['plan'])) if i != cur]
+        for i in order:
+            p = _place(state, state['plan'][i]['place'])
+            if p['rel'] == rel and p['name'] != '<exports>' and p['start'] <= a and b <= p['end']:
+                _state.record({'look': 'range in a place', 'q': f'{rel} {a}-{b}', 'step': state['step']})
+                state['step'], state['current'] = 'D3', i
+                if state['plan'][i]['status'] == 'skipped':
+                    state['plan'][i]['status'] = 'todo'
+                return (f'Lines {a}-{b} are in {p["handle"]}: here is its window with them in view.\n\n'
+                        + _window(root, state, i, show=(a, b)))
+        for p in state['places']:
+            if p['rel'] == rel and p['name'] != '<exports>' and p['start'] <= a and b <= p['end']:
+                i = _journal.target(state, p['id'])
+                state['step'], state['current'] = 'D3', i
+                state['plan'][i]['status'] = 'todo' if state['plan'][i]['status'] == 'skipped' else \
+                    state['plan'][i]['status']
+                _state.record({'look': 'range in a place', 'q': f'{rel} {a}-{b}', 'step': state['step']})
+                return (f'Lines {a}-{b} are in {p["handle"]}: here is its window with them in view.\n\n'
+                        + _window(root, state, i, show=(a, b)))
+    if _repo.is_test_path(rel):
+        return _test_view(root, state, rel, a, b)
+    cands = _owner_candidates(root, state, rel, a, b)
+    if not cands:
+        return None
+    _state.record({'look': 'range', 'q': f'{rel} {a}-{b}', 'step': state['step']})
+    if state['step'] == 'D1':
+        state['candidates'] = cands
+        stay = ''
+    else:
+        _journal.requirement_back(state, cands)
+        state['rechosen'] = state.get('rechosen', 0) + 1
+        stay = 'The edits made so far stay. '
+    return (f'Code is shown through the function or class that holds it. {stay}'
+            + _candidates_view(state, title=f'The code at lines {a}-{b} of {rel}:') + '\n\nChoose the code to change.')
 
 
 def _import_bindings(root, first, prefer=None):
@@ -1261,6 +1559,14 @@ def d3(root, state, args):
         if move == 'back':
             return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
         return head + '\n\n' + _finish_view(root, state)
+    query = _search_query(items)
+    if query:
+        here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None else None
+        found = _search_view(root, state, query, prefer=here)
+        if found:
+            return found
+        return f'Nothing in the code holds {query}. Nothing was changed.' + (
+            '\n\n' + _window(root, state, cur) if cur is not None else '')
     listed = _listed_place(state, single) if single else None
     if listed:
         i = _journal.target(state, listed)               # a listed place: open it
@@ -1272,6 +1578,10 @@ def d3(root, state, args):
         opened = _open_named(root, state, single)
         if opened:
             return opened
+    if not re.fullmatch(r'(?i)\W*P\d+\W*', items[0] if items else ''):
+        edited = _edit_of_other(root, state, raw)
+        if edited is not None:
+            return edited
     whole = _whole_args(items)
     if whole:
         pid, text = whole
@@ -1290,12 +1600,11 @@ def d3(root, state, args):
                    'name, two line numbers and the new lines.')
             msg = f'The edit was not read: {why} Nothing was changed.'
         else:
-            msg = ("Not run: this step only edits; questions are not answered here (the code the place uses and its "
-                   "callers are listed in the window). Accepted: the whole new function or class ['<place name>', "
-                   "'<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
-                   "lines>'], ['skip'] if the place needs no change, ['<name of a function or class>'] to open it, "
-                   "['<file or name>', '<first line number>', '<last line number>'] to read lines, or ['back'] to "
-                   "choose other code. Nothing was opened or changed.")
+            msg = ("Not run: this step edits the open place. Accepted: the whole new function or class ['<place "
+                   "name>', '<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
+                   "lines>'], ['skip'] if the place needs no change, ['back'] to choose other code, or the name of "
+                   "code, a text to find or a file with two line numbers to choose other code. Nothing was opened or "
+                   "changed.")
         if cur is None:
             return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
         return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
@@ -1441,6 +1750,16 @@ def d4(root, state, args):
         if state['step'] == 'D3' and state['current'] is None:
             state['step'] = 'D4'
         return out
+    items = [x for x in args if x and x.strip()]
+    if _search_query(items) or (len(items) == 1 and '\n' not in items[0].strip() and len(items[0]) <= 200
+                                and not _is_done(items[0]) and not _is_skip(items[0])):
+        # a place's name, other code or a text: the same as in the edit step
+        state['step'] = 'D3'
+        out = d3(root, state, args)
+        if state['step'] == 'D3' and state['current'] is None:
+            state['step'] = 'D4'
+            return 'Nothing left to do in this step. ' + _finish_view(root, state)
+        return out
     return 'Nothing left to do in this step. ' + _finish_view(root, state)
 
 
@@ -1562,7 +1881,7 @@ def main(argv):
                    + (f'; its answer began: {before[:160].rstrip(".")}' if before else '') + '.\n\n' + _current_view(root, state))
     else:
         try:
-            read = _read_request(root, state, args) if state['step'] in ('D1', 'D3', 'D4') else None
+            read = _range_request(root, state, args) if state['step'] in ('D1', 'D3', 'D4') else None
             out = read if read is not None else STEPS[state['step']](root, state, args)
         except Exception as e:      # never a traceback for the model: say what happened and the call to make
             _state.record({'error': f'{type(e).__name__}: {e}'})
