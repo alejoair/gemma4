@@ -812,3 +812,17 @@ Check (closer / farther / neutral):
 
 Not fixed: statements without content (rich_3469, rich_3521: a title and a link); the evidence is in the linked issue,
 which the sandbox does not have.
+
+### V14 on Kaggle (2026-10-10): what the near-miss fixes did
+
+1/10 real (rich_3006); fastapi_14851 counts as resolved with an empty patch because its hidden tests pass on the
+unchanged code in the eval sandbox (as in V3). Row in `VERSIONS.md`.
+
+- **Worked**: the whole statement reached step 1 in 7 of 10 tasks (14986's three paragraphs became its requirements);
+  the deletion check undid 14986's root_path DELETE with the selected tests; malformed calls stayed low (6%).
+- **Did not work**: the one-line note fired in 3 tasks and the model never sent the rest (15800 sent 100 of 1,236
+  characters).
+- **Made things worse: the read form brought back browsing** (B9, the V4–V6 failure the D3 redesign removed). 51 reads
+  in 10 tasks; 14986 read `fastapi/applications.py` in 16 slices and timed out with an empty patch; 14851 read 12
+  slices and opened 14 names without an edit; 3 empty patches against 1 in V13b. The check table had marked B9 "farther
+  (small)": the trace shows it is not small. The read form needs a bound that the model sees and the script enforces.
