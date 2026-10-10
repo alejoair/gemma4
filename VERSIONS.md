@@ -77,8 +77,8 @@ Readings: (a) the automatic check said OK in 5 failed tasks, so the related test
 | S1 | 10-05 15:31 | 56855789 | Sample agent baseline, no LoRA, out 8192 | 4 min, 40 calls | **0.12** | |
 | S2 | 10-06 09:30 | 56877024 | Locator committee (3 parallel) + merge + fails-before repro + fix/check loop + finalizer | 3.5 min, 50 calls | **0.05** | |
 | S3 | 10-07 04:46 | 56900403 | 4-stage sequential: grep locator → graph → fixer (edit + bash) → submitter, out 8192 | 4 min, 45 calls | **0.05** | Shown as ERROR at first; Kaggle lists it as COMPLETE 0.05 on 10-09 |
-| S4 | 10-08 13:03 | 56954989 | **V3** exactly as evaluated (`kout_single3/eval_single`), validated with `validate_submission.py` | 5 min, 45 calls | pending | |
-| S5 | 10-09 (queued) | — | **v1 step procedure** (commit bea4f0f): one agent, `swe/step.py` journal (S0 candidates → choose → plan → edit + tests → submit), thinking 512, out 4096. Never run on Kaggle with the 31B (GPU weekly quota exhausted); local 12B: rich_3006 resolved, requests_7328 not | 5 min, 30 calls, 40 turns | not yet submitted | 02:42 UTC refused: S4 still pending (one pending submission per team). `scratchpad/submit_s5_when_free.sh` submits it when S4 finishes, until 23:50 UTC |
+| S4 | 10-08 13:03 | 56954989 | **V3** exactly as evaluated (`kout_single3/eval_single`), validated with `validate_submission.py` | 5 min, 45 calls | **0.13** (public, scored 10-10 ~08:50 UTC) | The best so far (S1 sample agent 0.12); local eval of the same build 3/10 |
+| S5 | 10-10 08:57 | 57037411 | **v1 step procedure** (commit bea4f0f): one agent, `swe/step.py` journal (S0 candidates → choose → plan → edit + tests → submit), thinking 512, out 4096. Never run on Kaggle with the 31B (GPU weekly quota exhausted); local 12B: rich_3006 resolved, requests_7328 not | 5 min, 30 calls, 40 turns | pending | Refused on 10-09 while S4 was pending (one pending submission per team); submitted by the hourly routine once S4 was scored |
 
 ## Earlier eval-quick runs (Q)
 

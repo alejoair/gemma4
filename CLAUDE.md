@@ -96,9 +96,9 @@ thinking_budget 512, include_thoughts true. Answers are capped at 10,000 charact
 
 All rows are in `VERSIONS.md`. Kaggle evals (the 31B on the same 10 dev tasks): V2 1/10, V3 3/10, V4 1/10, V6 2/10,
 V8 harness error, V10 1/10 (rich_3006 in almost every run). Local 12B batches with step.py: 1/10 and 1/10.
-Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, S4 (= V3) pending since 10-08, S5 (step procedure
-v1, commit bea4f0f) queued: the hourly routine "Kaggle S4/S5 hourly check" submits it when S4 is scored and no
-submission was made that UTC day.
+Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, **S4 (= V3) 0.13** (scored 10-10), S5 (step
+procedure v1, commit bea4f0f) submitted 10-10 08:57 UTC, pending; the hourly routine "Kaggle S4/S5 hourly check"
+records its score and then turns itself off.
 
 Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
 (vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
