@@ -35,6 +35,11 @@ import _statement  # noqa: E402
 import _status  # noqa: E402
 import _tests  # noqa: E402
 
+try:
+    from _role import ROLE  # noqa: E402  'single', or 'coordinator' in the agent_tool variant (variants/agent_tool)
+except ImportError:
+    ROLE = 'single'
+
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
@@ -1115,6 +1120,10 @@ def d1(root, state, args):
     _journal.set_plan(state, [(pid, '') for pid in planned])
     _tests.save_verified(root)
     first = _place(state, planned[0])['handle']
+    if ROLE == 'coordinator':
+        out.append(f'Places (the chosen code and the code related to it):\n{places_view}\nEach place is edited by the '
+                   f'tool edit_place, one at a time, starting with {first}.')
+        return '\n\n'.join(out)
     out.append(f'Places (the chosen code and the code related to it):\n{places_view}\n'
                f'They are edited one at a time, starting with {first}. A related place outside the plan needs an '
                f'edit only when the change must be made there too: send its name to open it.')
@@ -1674,6 +1683,8 @@ def d3(root, state, args):
         pid = state['plan'][cur]['place']
         move = _journal.skip(state, cur)
         head = f'{_name_of(state, pid)} skipped: it keeps its code.'
+        if ROLE == 'editor':
+            return _editor_done(state, head, _name_of(state, pid))
         if move == 'next':
             return head + '\n\n' + _window(root, state, state['current'])
         if move == 'back':
@@ -1806,6 +1817,8 @@ def _after_edit(root, state, i, p, r, before):
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
+    if ROLE == 'editor':
+        return _editor_done(state, head, p['handle'])
     if move == 'next':
         return head + '\n\n' + _window(root, state, state['current'])
     return head + '\n\n' + _finish_view(root, state)
@@ -1826,12 +1839,25 @@ def _remember_failed(state, p, r, failures):
             del failed[k]
 
 
+EDITOR_DONE = ('Your work on {name} is finished. Reply now, without any call, with one sentence for the coordinator: '
+               'what changed at {name}, or why nothing did (name other code if the change belongs there).')
+
+
+def _editor_done(state, head, name):
+    """In the editor role (edit_place), the place is decided: the editor ends with one sentence, and the coordinator,
+    whose history holds only that sentence, hands the next place to a fresh editor (no window is ever compacted)."""
+    state['editor_done'] = True
+    return head + '\n\n' + EDITOR_DONE.format(name=name)
+
+
 def _failed(root, state, i, message, error):
     name = _name_of(state, state['plan'][i]['place'])  # before the plan may be emptied
     move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
     left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
+    if ROLE == 'editor':
+        return _editor_done(state, f'{message}\n{left}', name)
     if state['step'] == 'D3':
         return f'{message}\n{left}\n\n' + _window(root, state, state['current'])
     if state['step'] == 'D1':
@@ -1927,6 +1953,8 @@ def _move_on(root, state):
         name = _name_of(state, state['plan'][state['current']]['place'])
         move = _journal.skip(state, state['current'])
         head = f'The same call came three times, so {name} keeps its code and the work moves on.'
+        if ROLE == 'editor':
+            return _editor_done(state, head, name)
         if move == 'next':
             return head + '\n\n' + _window(root, state, state['current'])
         if move == 'back':
@@ -1970,7 +1998,45 @@ def _current_view(root, state):
     return _requirements_view(state) + '\n\n' + _candidates_view(state) + '\n\nChoose the code to change.'
 
 
-def main(argv):
+def _coordinator_status(root, state):
+    """The coordinator's answer while places are left: which, and that edit_place edits them."""
+    left = [_name_of(state, e['place']) for e in state['plan'] if e['status'] == 'todo']
+    return ('Places still to edit: ' + ', '.join(left) + '. Each is edited by the tool edit_place (the script does '
+            'not edit for the coordinator).')
+
+
+def _editor_scope(root, state, args):
+    """In the editor role: the editor works on the place it was given. Its first call names that place (and resets
+    a finished editor); another place or other code is not opened here. None when args stay in scope."""
+    items = [a for a in args if a and a.strip()]
+    if not items or state['step'] not in ('D3', 'D4') or not state.get('plan'):
+        return None
+    name = _args.clean(items[0])
+    hit = _match(state['places'], name, fuzzy=False)
+    if len(items) == 1 and hit is not None and (state.get('editor_done') or state.get('editor_place') is None
+                                                 or state.get('editor_place') != hit['id']):
+        # a new editor opens its place
+        state['editor_done'], state['editor_place'] = False, hit['id']
+        i = _journal.target(state, hit['id'])
+        if state['plan'][i]['status'] == 'skipped':
+            state['plan'][i]['status'] = 'todo'
+        state['current'], state['step'] = i, 'D3'
+        return _window(root, state, i)
+    if state.get('editor_done'):
+        return EDITOR_DONE.format(name=_name_of(state, state.get('editor_place') or ''))
+    mine = state.get('editor_place')
+    if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and \
+            _args.plan(args) != 'back' and not _is_tests(name):
+        return (f'Only {_name_of(state, mine)} is edited here. If the change belongs to {name}, reply now with one '
+                'sentence saying so, without a call: the coordinator will open it.\n\n'
+                + (_window(root, state, state['current']) if state.get('current') is not None else ''))
+    return None
+
+
+def main(argv, role=None):
+    global ROLE
+    if role:
+        ROLE = role
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
     argv = list(argv)
@@ -1989,11 +2055,21 @@ def main(argv):
     if any(re.sub(r'[\W_]', '', _args.clean(x).lower()) in ('submitpatch', 'submit') for x in args if x):
         skip = True
     nums = [x for x in args if x and x.strip()]
+    reread = None
     if len(nums) == 3 and all(_args.clean(str(x)).isdigit() for x in nums[1:3]):
-        # a range read again is not a loop: the lines may have been compacted away, and the answer is short. The
-        # third repeat used to move on and mark the open place skipped (local run of requests_7328: Session.send and
-        # resolve_redirects were both skipped this way, undecided)
+        # a range read again never moves on (the third repeat used to mark the open place skipped, undecided: local
+        # run of requests_7328), but it is not shown again either: the editor of the agent_tool variant read the same
+        # 14 lines of Session.send 4 times in a context of 8k tokens, so the lines were there; the answer says so
+        # and asks for the decision (F7: a repeat gets a different answer)
         skip = True
+        seen = state.setdefault('ranges_seen', [])
+        if key in seen[-6:] and ROLE != 'editor':
+            # (not in the editor: there a re-read is how a reasoning cut by the thinking budget goes on, and its
+            # context is fresh; the agent_tool trace of requests_7328 found the bug on the fourth read)
+            reread = (f'Lines {nums[1]}-{nums[2]} were shown a few calls ago and have not changed since. Decide '
+                      'now: edit them, or send [\'skip\'] if this place needs no change.')
+        seen.append(key)
+        del seen[:-6]
     if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
         e = _args.edit(_place_args(state, args))
         skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation
@@ -2035,9 +2111,22 @@ def main(argv):
     else:
         try:
             items0 = [a for a in args if a and a.strip()]
+            scoped = _editor_scope(root, state, args) if ROLE == 'editor' else None
+            if scoped is None and len(items0) == 1 and _args.clean(items0[0]).lower().strip('[]\'" ') in (
+                    'status', 'state', 'next'):
+                # the coordinator's call after each edit_place: where the work is (never a code name: 'status' chose
+                # rich's Console.status in a dry run)
+                scoped = (_coordinator_status(root, state) if ROLE == 'coordinator' and state['step'] == 'D3'
+                          else _current_view(root, state))
+            if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and _args.plan(args) != 'back':
+                scoped = _coordinator_status(root, state)
             state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
             seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
-            if items0 and all(re.sub(r'[\W_]', '', _args.clean(a).lower()) in ('submitpatch', 'submit', 'submitpatchtool')
+            if reread is not None and state['step'] in ('D3', 'D4'):
+                read = reread
+            elif scoped is not None:
+                read = scoped
+            elif items0 and all(re.sub(r'[\W_]', '', _args.clean(a).lower()) in ('submitpatch', 'submit', 'submitpatchtool')
                               for a in items0):
                 read = ('submit_patch is a tool of its own, not an argument of this script, so nothing was done. To '
                         'submit, call the tool submit_patch with no arguments, instead of run_skill_script.\n\n'
@@ -2070,7 +2159,7 @@ def main(argv):
         out = _progress(root, state) + '\n\n' + out
     if len(out) > MAX_CHARS:
         out = out[:MAX_CHARS - 2500] + '\n      ... (output cut) ...\n' + out[-2400:]
-    print(out + '\n\n' + _journal.next_call(state))
+    print(out + '\n\n' + _journal.next_call(state, ROLE))
 
 
 if __name__ == '__main__':

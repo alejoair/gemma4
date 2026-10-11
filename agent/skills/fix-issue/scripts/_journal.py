@@ -41,9 +41,23 @@ def budget_line(state, now=None):
     return line
 
 
-def next_call(state):
-    """The exact next call, the last line of every answer."""
+def next_call(state, role='single'):
+    """The exact next call, the last line of every answer. role: 'single' (one agent does everything), 'coordinator'
+    (chooses, then hands each place to the edit_place tool) or 'editor' (edit_place: one place, then one sentence)."""
     step = state['step']
+    if role == 'editor':
+        if state.get('editor_done') or state.get('time_up') or step != 'D3' or state.get('current') is None:
+            return ('NEXT: no call: reply now with one sentence for the coordinator (what changed at the place, or why '
+                    'nothing did, naming other code if the change belongs there).')
+        pid = state['plan'][state['current']]['place']
+        pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
+        call = CALL.replace('file_path step.py', 'file_path edit.py')
+        return (f"NEXT: call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
+                f"'<last line number>', '<new lines>'], or ['skip']")
+    if role == 'coordinator' and step == 'D3' and state.get('current') is not None and not state.get('time_up'):
+        pid = state['plan'][state['current']]['place']
+        pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
+        return f"NEXT: call the tool edit_place with request '{pid}' (it opens that place and edits it)."
     if state.get('time_up'):
         return ('NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of '
                 'run_skill_script). Edits are closed.')

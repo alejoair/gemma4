@@ -1,0 +1,6 @@
+name: edit_place
+description: Edits one place of the code (a function, a class or the top part of a file), named in the request, with the fix-issue script, and replies with one sentence about what changed there.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include edit_place.md
+skills: [skills/fix-issue]
+generate_content_config: !include sampling.yaml

@@ -1147,3 +1147,32 @@ dropping the others), and the budget line is gone from the answers (the user's d
 model). `tools/local_eval.py` can dump every request as sent (`SWE_DUMP_REQUESTS`): the fixed part of each request is
 about 4,075 tokens (our prompt ~1,500, ADK's skill text ~450, the task message ~1,470 with a 700-token directory tree,
 tool definitions 646), 28% of the compaction threshold.
+
+### The agent_tool variant (2026-10-11): a coordinator and an editor per place
+
+`variants/agent_tool/` (built with `tools/build.py <dir> --variant agent_tool`, copied over `agent/`): the root agent
+`issue_fixer` (prompt `prompts/coordinator.md`, step.py in the `coordinator` role from `_role.py`) starts, chooses and
+then calls the tool `edit_place` (an ADK AgentTool, `sub_agents/edit_place.yaml`) once per place, and `['status']`
+after each; `edit_place` runs in a fresh session (ADK: a new Runner and session; the parent's state, including
+`problem_description`, is copied in, so its instruction carries the issue) and works through `edit.py` (step.py in
+the `editor` role): it opens its place, edits, skips or reads lines of it, and when the place is decided the script
+tells it to reply with one sentence and make no more calls. Only that sentence enters the coordinator's history, so
+neither history comes near the compaction threshold. Read in ADK's `tools/agent_tool.py`: the child has no
+compaction (a looping editor could reach the 32k context), its tool calls count against the same budget, plugins are
+inherited.
+
+First runs (26B, local):
+- rich_3006: resolved in 87 s; the editor started from 1,568 prompt tokens and made the edit in one call.
+- requests_7328, read call by call: (1) one editor call hit the 4,096-token output limit while thinking (the rare
+  local budget fault) and its half reasoning became its reply; (2) the coordinator did not understand that the
+  editor decides the change ("how does it know what to edit it to? maybe I should provide the edit in the
+  request?"): its prompt now says that the editor, which has the issue too, decides and makes the change, and the
+  coordinator only names the place; (3) the second editor read the same 15 lines of Session.send 5 times, and its
+  reasoning advanced at every call: **with a 512-token thinking budget the model uses repeated reads to go on
+  thinking**; on the fourth read it found the self-reference (no redirect: `r0.history = [r0]`). In the variant the
+  editor's thoughts never reach the coordinator, so the editor can think more without filling any history: its
+  `thinking_budget` is now 1,024 (the coordinator keeps 512). Re-reads are not answered "decide now" in the editor.
+
+Checklist: B7 closer (no history reaches the threshold), W7 closer (room to think where the decision is made), P7
+closer (each editor sees its place only), B4 and B8 farther (one more tool and one more script name; reason: the only
+way to give a clean context from a declarative config), W4 neutral (both roles end every answer with their own NEXT).

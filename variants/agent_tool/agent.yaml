@@ -1,0 +1,13 @@
+name: issue_fixer
+description: Fixes the issue by choosing the code to change with the fix-issue script and handing each place to edit_place.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include prompts/coordinator.md
+tools:
+  # edit_place runs in a fresh session for each place (ADK AgentTool): its windows and edits never enter this history,
+  # only its one-sentence reply, so this history stays far below the compaction threshold (docs/design_single.md,
+  # "The agent_tool variant").
+  - submit_patch
+  - agent_tool:
+      config_path: sub_agents/edit_place.yaml
+skills: [skills/fix-issue]
+generate_content_config: !include configs/sampling.yaml
