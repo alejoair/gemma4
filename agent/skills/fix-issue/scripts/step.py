@@ -875,6 +875,13 @@ def _search_text(raw):
     return t if len(re.sub(r'\W', '', t)) >= 2 else (raw or '').strip()
 
 
+def _said(text, what='the text sent'):
+    """A short name is named back; longer text sent by the model is described, not quoted (a failed input quoted back
+    is repeated: Feedback That Backfires, docs/feedback_audit.md R3)."""
+    t = (text or '').strip()
+    return t if len(t) <= 40 and '\n' not in t else what
+
+
 def _search_view(root, state, text, prefer=None):
     """The answer to a search, or None when nothing holds text: the library code a name refers to (read only), the
     code that holds the text as candidates to choose from, and the tests' matching lines. The candidates replace the
@@ -893,7 +900,8 @@ def _search_view(root, state, text, prefer=None):
     if not cands and not tests and not lib:
         return None
     _state.record({'look': 'search', 'q': text[:120], 'step': state['step'], 'found': len(cands)})
-    head = f'Where the code holds {text}' if total else f'Nothing in the code holds {text}'
+    said = _said(text)
+    head = f'Where the code holds {said}' if total else f'Nothing in the code holds {said}'
     out = []
     if lib:
         out.append(lib)
@@ -901,8 +909,11 @@ def _search_view(root, state, text, prefer=None):
         if state['step'] == 'D1':
             state['candidates'] = cands
         else:
+            dropped = _dropped(state)
             _journal.requirement_back(state, cands)
             state['rechosen'] = state.get('rechosen', 0) + 1
+            if dropped:
+                out.append(dropped)
         shown = sum(1 for c in cands)
         out.append(_candidates_view(state, title=f'{head} ({total} lines; the functions and classes that hold '
                                     f'them{", first " + str(shown) if shown >= N_CANDIDATES else ""}):'))
@@ -918,6 +929,13 @@ def _search_view(root, state, text, prefer=None):
             return '\n\n'.join(out) + '\n\nNothing was changed.' + ('\n\n' + _window(root, state, state['current'])
                                                                     if state.get('current') is not None else '')
     return '\n\n'.join(out) + '\n\nChoose the code to change.'
+
+
+def _dropped(state):
+    """The sentence naming the places not edited yet, said before a search or a range replaces the plan (an implicit
+    change of state is recovered far less often than one that is said: ToolMaze, docs/feedback_audit.md R11)."""
+    left = [_name_of(state, e['place']) for e in state.get('plan') or [] if e['status'] == 'todo']
+    return f'The places not edited yet ({", ".join(left[:4])}) are no longer planned.' if left else ''
 
 
 def _owner_candidates(root, state, rel, a, b):
@@ -1027,7 +1045,7 @@ def d1(root, state, args):
         return edited
     query = _search_query(items)
     if query:
-        return _search_view(root, state, query) or (f'Nothing in the code holds {query}. Nothing was opened.\n\n'
+        return _search_view(root, state, query) or (f'Nothing in the code holds {_said(query)}. Nothing was opened.\n\n'
                                                     + _candidates_view(state))
     big = []                            # files over BIG_FILE lines sent at the choose step
     for a in items:
@@ -1075,7 +1093,7 @@ def d1(root, state, args):
             if found:
                 return found
     if not chosen:
-        msg = (f'Nothing in the repository holds {", ".join(_search_text(o) for o in others[:3])} (library and '
+        msg = (f'Nothing in the repository holds {_said(", ".join(_search_text(o) for o in others[:3]), "the names or text sent")} (library and '
                'standard-library code is not searched). ' if others else 'No candidate was chosen. ')
         return msg + 'Nothing was opened.\n\n' + _candidates_view(state)
     table = _impact.Table(root, docs=True)
@@ -1571,9 +1589,10 @@ def _range_request(root, state, args):
         state['candidates'] = cands
         stay = ''
     else:
+        dropped = _dropped(state)
         _journal.requirement_back(state, cands)
         state['rechosen'] = state.get('rechosen', 0) + 1
-        stay = 'The edits made so far stay. '
+        stay = 'The edits made so far stay. ' + (dropped + ' ' if dropped else '')
     return (f'Code is shown through the function or class that holds it. {stay}'
             + _candidates_view(state, title=f'The code at lines {a}-{b} of {rel}:') + '\n\nChoose the code to change.')
 
@@ -1699,7 +1718,7 @@ def d3(root, state, args):
         found = _search_view(root, state, query, prefer=here)
         if found:
             return found
-        return f'Nothing in the code holds {query}. Nothing was changed.' + (
+        return f'Nothing in the code holds {_said(query)}. Nothing was changed.' + (
             '\n\n' + _window(root, state, cur) if cur is not None else '')
     listed = _listed_place(state, single) if single else None
     if listed:
@@ -1715,7 +1734,7 @@ def d3(root, state, args):
         if not DEF_LINE.search(single):
             # V15 and the local run: 'inspect.Parameter.empty' was answered "Not run: this step edits ...", which
             # reads as a wrong form; it is a search that found nothing
-            return (f'Nothing in the repository holds {_search_text(single)} (library and standard-library code is '
+            return (f'Nothing in the repository holds {_said(_search_text(single))} (library and standard-library code is '
                     'not searched). Nothing was changed.' + ('\n\n' + _window(root, state, cur) if cur is not None
                                                             else '\n\n' + _finish_view(root, state)))
     if not re.fullmatch(r'(?i)\W*P\d+\W*', items[0] if items else ''):
@@ -1738,13 +1757,19 @@ def d3(root, state, args):
             why = ('the second and third items must be line numbers, like 79 and 82.' if len(items) >= 4 else
                    f'it has {len(items)} items: send the place name and the whole new function or class, or the place '
                    'name, two line numbers and the new lines.')
-            msg = f'The edit was not read: {why} Nothing was changed.'
+            msg = (f'The edit was not read: {why} Nothing was changed, and this form is never read, so sending it '
+                   'again gives the same answer.')
+        elif ROLE == 'editor':
+            msg = ("Not run: this form is never accepted here, so sending it again gives the same answer. Accepted: the "
+                   "whole new function or class ['<place name>', '<code>'], a line edit ['<place name>', '<first line "
+                   "number>', '<last line number>', '<new lines>'], ['skip'] if the place needs no change, or the name "
+                   "of related code to read it. Nothing was changed.")
         else:
-            msg = ("Not run: this step edits the open place. Accepted: the whole new function or class ['<place "
-                   "name>', '<code>'], a line edit ['<place name>', '<first line number>', '<last line number>', '<new "
-                   "lines>'], ['skip'] if the place needs no change, ['back'] to choose other code, or the name of "
-                   "code, a text to find or a file with two line numbers to choose other code. Nothing was opened or "
-                   "changed.")
+            msg = ("Not run: this form is never accepted in this step, so sending it again gives the same answer. "
+                   "Accepted: the whole new function or class ['<place name>', '<code>'], a line edit ['<place name>', "
+                   "'<first line number>', '<last line number>', '<new lines>'], ['skip'] if the place needs no change, "
+                   "['back'] to choose other code, or the name of code, a text to find or a file with two line numbers "
+                   "to choose other code. Nothing was opened or changed.")
         if cur is None:
             return msg + '\nPlaces:\n' + '\n'.join('  ' + _place_line(q) for q in state['places'])
         return msg + '\n\n' + _window(root, state, cur)      # refused, but the place stays open
@@ -1821,7 +1846,7 @@ def _after_edit(root, state, i, p, r, before):
         # the place stays open with the diff: run a04 (requests_7328) saw its own wrong deletion in this diff and
         # sent the right fix, which a closed editor refused 5 times (F1: told where, it corrects well)
         state['current'], state['step'], state['editor_review'] = i, 'D3', True
-        return (head + f'\n\nIf this is the whole change {p["handle"]} needs, reply now with one sentence for the '
+        return (head + f'\n\nIf this is the whole change {p["handle"]} needs, reply with one sentence for the '
                 'coordinator, without a call. If it is wrong or incomplete, send the corrected edit of the code '
                 'below (the code as it is now).\n\n' + _window(root, state, i))
     if move == 'next':
@@ -1844,8 +1869,10 @@ def _remember_failed(state, p, r, failures):
             del failed[k]
 
 
-EDITOR_DONE = ('Your work on {name} is finished. Reply now, without any call, with one sentence for the coordinator: '
+EDITOR_DONE = ('The work on {name} is finished here. Reply with one sentence for the coordinator, without a call: '
                'what changed at {name}, or why nothing did (name other code if the change belongs there).')
+EDITOR_CLOSED = ('Edits of {name} are closed, so this call was not run, and no further call runs in this editor. The '
+                 'coordinator waits for one sentence: what changed at {name}, or why nothing did.')
 
 
 def _editor_done(state, head, name):
@@ -1861,6 +1888,8 @@ def _failed(root, state, i, message, error):
     move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
+    # the place is left: the sentence asking to send it again would contradict NEXT (docs/feedback_audit.md #4)
+    message = re.sub(r'\nSend \S+ again with a change that keeps (these tests|this test) passing\.', '', message)
     left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
     if ROLE == 'editor':
         return _editor_done(state, f'{message}\n{left}', name)
@@ -1894,8 +1923,10 @@ def _finish_view(root, state):
     else:
         out = ['The patch is empty: nothing is changed.']
     changed = {(rel, name) for rel, name, _, _ in rows}
-    left = [_place(state, e['place'])['handle'] for e in state['plan']
-            if (_place(state, e['place'])['rel'], _place(state, e['place'])['name']) not in changed]
+
+    def touched(q):             # a class place counts as changed when one of its members changed
+        return any(rel == q['rel'] and (name == q['name'] or name.startswith(q['name'] + '.')) for rel, name in changed)
+    left = [_place(state, e['place'])['handle'] for e in state['plan'] if not touched(_place(state, e['place']))]
     if left:
         out.append('Looked at and not changed: ' + ', '.join(left) + '.')
     out.append('The requirements, with what the code shows:')
@@ -1974,7 +2005,10 @@ def _move_on(root, state):
     if state['step'] == 'D1' and state['candidates']:
         return ('The same call came three times, so the first candidate is opened.\n\n'
                 + d1(root, state, [state['candidates'][0]['id']]))
-    return 'The same call came three times. Nothing else is done in this step: call submit_patch.'
+    if state['step'] == 'D4':
+        return 'The same call came three times. Nothing else is done in this step.\n\n' + _finish_view(root, state)
+    return ('The same call came three times, so it was not run again. Send the name of the code to change, or a name '
+            'or text to find it.')
 
 
 def _progress(root, state):
@@ -2011,40 +2045,88 @@ def _coordinator_status(root, state):
             'not edit for the coordinator).')
 
 
-def _editor_scope(root, state, args):
-    """In the editor role: the editor works on the place it was given. Its first call names that place (and resets
-    a finished editor); another place or other code is not opened here. None when args stay in scope."""
-    items = [a for a in args if a and a.strip()]
-    if not items or state['step'] not in ('D3', 'D4') or not state.get('plan'):
-        return None
-    name = _args.clean(items[0])
-    hit = _match(state['places'], name, fuzzy=False)
+def _editor_gate(root, state, args):
+    """In the editor role (edit_place), the calls that concern the editor's own scope, answered before the repeat guard
+    so that they never change the shared plan; None for an ordinary call on the editor's own place.
+
+    a04 and a05 (docs/feedback_audit.md #1-#3, #9): a closed editor kept calling and got the same text each time,
+    while its calls still reached the repeat guard, whose move-on skipped another place and sent the plan back to
+    choosing; a deciding editor that named related code to read it was refused and guessed wrong."""
+    items = [str(a) for a in args if a is not None and str(a).strip()]
+    places = state.get('places') or []
+    name = _args.clean(items[0]) if items else ''
+    hit = _match(places, name, fuzzy=False) if (places and len(items) == 1) else None
     mine = state.get('editor_place')
-    open_mine = next((e for e in state['plan'] if e['place'] == mine), None) if mine else None
-    if (len(items) == 1 and hit is not None and mine is not None and hit['id'] != mine and not state.get('editor_done')
-            and open_mine is not None and open_mine['status'] == 'todo'):
-        # run a04: the editor of Session.send named resolve_redirects and the script opened that place instead; an
-        # editor works on its own place until it is decided (a new editor starts once it is edited or skipped)
-        return (f'Only {_name_of(state, mine)} is edited here. If the change belongs to {hit["handle"]}, reply now with '
-                'one sentence saying so, without a call: the coordinator will open it.\n\n'
-                + _window(root, state, _journal.target(state, mine)))
-    if len(items) == 1 and hit is not None and (state.get('editor_done') or mine is None or mine != hit['id']):
-        # a new editor opens its place
-        state['editor_done'], state['editor_place'], state['editor_review'] = False, hit['id'], False
+    own = next((e for e in state.get('plan') or [] if e['place'] == mine), None) if mine else None
+    # deciding: its place still to edit, or an accepted edit under review (until the editor replies and the
+    # coordinator's next call to the script moves the work on)
+    deciding = own is not None and (own['status'] == 'todo' or state.get('editor_review')) \
+        and not state.get('editor_done')
+    if deciding and own['status'] != 'todo' and hit is not None:
+        nxt = next((e['place'] for e in state['plan'] if e['status'] == 'todo'), None)
+        deciding = hit['id'] != nxt     # the next place to edit: a new editor (the coordinator did not call status)
+    if hit is not None and state['step'] in ('D3', 'D4') and (hit['id'] != mine or state.get('editor_done')) \
+            and not deciding:
+        # a new editor opens its place (its first call names it, often the coordinator's last call word for word)
+        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[])
+        state['recent'], state['repeats'] = [], 0
         i = _journal.target(state, hit['id'])
         if state['plan'][i]['status'] == 'skipped':
             state['plan'][i]['status'] = 'todo'
         state['current'], state['step'] = i, 'D3'
         return _window(root, state, i)
+    mine_name = _name_of(state, mine) if mine else ''
     if state.get('editor_done'):
-        return EDITOR_DONE.format(name=_name_of(state, state.get('editor_place') or '') or 'this place')
-    mine = state.get('editor_place')
-    if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and \
-            _args.plan(args) != 'back' and not _is_tests(name):
-        return (f'Only {_name_of(state, mine)} is edited here. If the change belongs to {name}, reply now with one '
-                'sentence saying so, without a call: the coordinator will open it.\n\n'
-                + (_window(root, state, state['current']) if state.get('current') is not None else ''))
+        return EDITOR_CLOSED.format(name=mine_name or 'this place')
+    if mine is None or own is None or state['step'] not in ('D3', 'D4'):
+        if not places or state['step'] not in ('D3', 'D4'):
+            return ('No place is open for this editor: choosing code is the coordinator\'s step. Reply with one sentence '
+                    'for the coordinator, without a call, saying what the change needs.')
+        return ('This editor opens its place first: send the place name from the request, alone. The places: '
+                + ', '.join(q['handle'] for q in places) + '.')
+    i_mine = _journal.target(state, mine)
+    if state['step'] == 'D3' and state.get('current') != i_mine:
+        state['current'] = i_mine           # the editor's calls act on its own place only
+    back = f"\n\nBack to {mine_name}: send its edit, or ['skip'] if it needs no change."
+    if len(items) == 1 and _args.plan(items) == 'back':
+        return ("Choosing other code is the coordinator's step, not this editor's. If the change belongs to other "
+                f"code, reply with one sentence naming it, without a call; if {mine_name} needs no change, send "
+                "['skip'].")
+    if hit is not None and hit['id'] != mine:
+        return _editor_read(root, state, hit, mine_name) + back
+    if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and not _is_tests(name) \
+            and name.lower() not in ('status', 'state', 'next') and _match(places, name, fuzzy=False) is None \
+            and not _is_code_to_run(name):
+        found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
+        if found:
+            return _editor_read(root, state, found[0], mine_name) + back
+        return f'Nothing in the repository defines {_said(name)} (library code is not read here).' + back
+    if len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3]):
+        rel, label = _read_target(root, state, items[0])
+        p = _place(state, mine)
+        a, b = sorted((int(_args.clean(items[1])), int(_args.clean(items[2]))))
+        if rel and not _repo.is_test_path(rel) and not (rel == p['rel'] and p['start'] <= a and b <= p['end']):
+            n = len(_repo.read_lines(root, rel))
+            if a > n:
+                return f'{rel} has {n} lines; lines {a}-{b} do not exist.' + back
+            b = min(b, n, a + PLACE_LINES - 1)
+            return _lines_view(root, rel, a, b, f'{label or rel}, read only') + back
     return None
+
+
+def _editor_read(root, state, c, mine_name):
+    """Related code shown read only to the editor of another place (a05: what resolve_redirects yields decided the edit
+    of Session.send)."""
+    label = c.get('handle') or (c['name'] if c['name'] != MODULE else f'{c["rel"]} top level')
+    key = f'{c["rel"]}:{c["start"]}'
+    reads = state.setdefault('editor_reads', [])
+    if key in reads:
+        return f'{label} was shown above and has not changed.'
+    reads.append(key)
+    _state.record({'look': 'editor read', 'q': label[:120], 'step': state['step']})
+    body = _code_view(root, c['rel'], c['start'], c['end'], _focus(state), limit=CODE_LINES)   # read whole: what it yields or returns
+    return (f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor changes {mine_name} alone; '
+            f'if the change belongs to {label}, reply with one sentence saying so, without a call.\n{body}')
 
 
 def main(argv, role=None):
@@ -2088,26 +2170,37 @@ def main(argv, role=None):
             skip = True
     nums = [x for x in args if x and x.strip()]
     reread = None
+    range_key = None
     if len(nums) == 3 and all(_args.clean(str(x)).isdigit() for x in nums[1:3]):
         # a range read again never moves on (the third repeat used to mark the open place skipped, undecided: local
         # run of requests_7328), but it is not shown again either: the editor of the agent_tool variant read the same
         # 14 lines of Session.send 4 times in a context of 8k tokens, so the lines were there; the answer says so
         # and asks for the decision (F7: a repeat gets a different answer)
         skip = True
-        seen = state.setdefault('ranges_seen', [])
-        if key in seen[-6:] and ROLE != 'editor':
+        seen = state.setdefault('ranges_shown', [])
+        # only lines really shown before (not a status, not "do not exist"), only where an edit is the next call
+        # (docs/feedback_audit.md #7: the claim was false for the coordinator and contradicted NEXT in D4)
+        if key in seen[-6:] and ROLE == 'single' and state['step'] == 'D3':
             # (not in the editor: there a re-read is how a reasoning cut by the thinking budget goes on, and its
             # context is fresh; the agent_tool trace of requests_7328 found the bug on the fourth read)
-            reread = (f'Lines {nums[1]}-{nums[2]} were shown a few calls ago and have not changed since. Decide '
-                      'now: edit them, or send [\'skip\'] if this place needs no change.')
-        seen.append(key)
-        del seen[:-6]
+            reread = (f'Lines {nums[1]}-{nums[2]} were shown a few calls ago and have not changed since: edit them, '
+                      'or send [\'skip\'] if this place needs no change.')
+        range_key = key
     if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
         e = _args.edit(_place_args(state, args))
         skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation
     restate = _more_statement(state, args)
     resent = state['step'] != 'S0' and not restate and _is_statement_again(args)
-    if restate:
+    gate = None
+    if ROLE == 'editor':
+        try:
+            gate = _editor_gate(root, state, args)
+        except Exception as e:      # never a traceback: the ordinary path answers
+            _state.record({'error': f'gate {type(e).__name__}: {e}'})
+    if gate is not None:
+        out = gate
+        state['answer'] = out.strip().split('\n')[0][:300]
+    elif restate:
         st = _state.load('statement', {})
         known, sent = st.get('text', ''), args[0]
         norm = lambda t: re.sub(r'\W+', ' ', t).strip().lower()
@@ -2130,13 +2223,20 @@ def main(argv, role=None):
             out = 'This edit is already in the patch, so nothing was changed.\n\n' + _current_view(root, state)
         elif state['repeats'] >= 2:
             out = _move_on(root, state)
+        elif is_edit and (state.get('failed_edits') or {}).get(_edit_key(args)):
+            # a05: the undone edit sent again got "same call", and the model sent it a third time (RLEF: models resend
+            # the same code; the answer says the same text fails again)
+            handle, fails = state['failed_edits'][_edit_key(args)]
+            out = (f'This exact edit of {handle} was made before and undone: these existing tests failed after it: '
+                   f'{", ".join(fails) or "(see before)"}. It was not run again: the same text fails the same way. The '
+                   'code is as it was before that edit.\n\n' + _current_view(root, state))
         else:
-            out = ('This is the same call as just before, so it was not run again'
+            out = ('This is the same call as one of the last three, so it was not run again'
                    + (f'; its answer began: {before[:160].rstrip(".")}' if before else '') + '.\n\n' + _current_view(root, state))
     else:
         try:
             items0 = [a for a in args if a and a.strip()]
-            scoped = _editor_scope(root, state, args) if ROLE == 'editor' else None
+            scoped = None
             if scoped is None and len(items0) == 1 and _args.clean(items0[0]).lower().strip('[]\'" ') in (
                     'status', 'state', 'next'):
                 # the coordinator's call after each edit_place: where the work is (never a code name: 'status' chose
@@ -2153,18 +2253,22 @@ def main(argv, role=None):
                 read = scoped
             elif items0 and all(re.sub(r'[\W_]', '', _args.clean(a).lower()) in ('submitpatch', 'submit', 'submitpatchtool')
                               for a in items0):
-                read = ('submit_patch is a tool of its own, not an argument of this script, so nothing was done. To '
-                        'submit, call the tool submit_patch with no arguments, instead of run_skill_script.\n\n'
-                        + _finish_view(root, state))
-                if state['step'] == 'D3' and state.get('current') is not None:
-                    read = read.replace(_finish_view(root, state), _window(root, state, state['current']))
+                if state['step'] == 'D4':
+                    read = ('submit_patch is a tool of its own, not an argument of this script, so nothing was done. To '
+                            'submit, call the tool submit_patch with no arguments, instead of run_skill_script.\n\n'
+                            + _finish_view(root, state))
+                else:
+                    # text and NEXT agree: submit_patch comes when the work reaches the finish (docs/feedback_audit.md #6)
+                    read = ('submit_patch is a tool of its own, not an argument of this script, so nothing was done. '
+                            'This step is still open: make the call in NEXT; the finish offers submit_patch.\n\n'
+                            + _current_view(root, state))
             elif seen_fail and state['step'] in ('D1', 'D3', 'D4'):
                 # local run of requests_7328: the same failing edit was sent 5 times, each one run with its tests
                 # (about 20 s) and undone by the same 3 failures (F6: a third try of the same thing gains nothing)
                 handle, fails = seen_fail
                 read = (f'This exact edit of {handle} was made before and undone: these existing tests failed after it: '
-                        f'{", ".join(fails) or "(see before)"}. It was not run again. A different change is needed, '
-                        f'at {handle} or at another place.\n\n' + _current_view(root, state))
+                        f'{", ".join(fails) or "(see before)"}. It was not run again: the same text fails the same '
+                        f'way. The code is as it was before that edit.\n\n' + _current_view(root, state))
             elif state['step'] in ('D1', 'D3', 'D4') and len(items0) == 1 and _is_code_to_run(items0[0]):
                 _state.record({'look': 'run', 'q': items0[0][:120], 'step': state['step']})
                 out = RUN_NOTE + '\n\n' + _current_view(root, state)
@@ -2178,6 +2282,9 @@ def main(argv, role=None):
                    'if it fails the same way, call submit_patch.')
         state['answer'] = out.strip().split('\n')[0][:300]
         _journal.remember(state, key, state['answer'])
+        if range_key is not None and out.startswith('Lines ') and ' do not exist' not in out.split('\n')[0]:
+            state.setdefault('ranges_shown', []).append(range_key)
+            del state['ranges_shown'][:-6]
     _state.save('journal', state)
     out = out.rstrip()
     if state['step'] != 'S0':

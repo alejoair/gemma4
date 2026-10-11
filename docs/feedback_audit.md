@@ -50,3 +50,38 @@ partly); the failed-edit memory (R6, R10); accepted edits show the -/+ diff and 
 (R4); the three-repeat move-on (R9); NEXT filled with the place name (R1).
 
 **Order of the fixes:** 1, 2, 3 (they broke a04 and a05), then 4–10 (contradictions), then 11–17.
+
+## Status (2026-10-11, after the audit)
+
+All 17 findings fixed in one round:
+- 1, 2, 3, 9: `_editor_gate` (step.py), answered before the repeat guard:
+  - a closed editor gets "Edits of X are closed …" and its calls change nothing;
+  - the editor's calls act on its own place only;
+  - related code (another place, a resolvable name, a range outside its place) is shown read-only, whole up to 120
+    lines;
+  - `back` is answered as the coordinator's step;
+  - an editor that never opened its place is told to open it.
+- 4: the "Send X again" sentence is dropped when the place is left.
+- 5: a repeated undone edit gets the failed-before text ("the same text fails the same way").
+- 6: submit_patch sent as an argument outside D4 says "make the call in NEXT"; the D1 move-on no longer says
+  "call submit_patch".
+- 7: re-read only for ranges really shown, single role, D3.
+- 8, 17: format refusals say "this form is never read/accepted, sending it again gives the same answer"; the editor's
+  list of forms has no `back`.
+- 10: search and range answers name the places they drop.
+- 11: `_said` names short names back and describes longer text.
+- 12: the test count is now grammatical ("1 existing test passes").
+- 13: the failure excerpt takes the first `>` line (the test's own frame).
+- 14: no partial replacement.
+- 15: a class place whose member changed counts as changed.
+- 16: "Reply now", "Decide now" → plain.
+
+| Item | Effect | Why |
+|---|---|---|
+| B5 | closer | no quoting of long model text; a repeated failed edit is described with its tests |
+| F6, F7 | closer | the same failed text is said to fail again; the closed editor's answer differs from the done answer |
+| B12, W4 | closer | the "send again", "call submit_patch" and false re-read sentences that contradicted NEXT are gone |
+| W3 | closer | the editor can read the code its place uses (a05: what resolve_redirects yields) |
+| B9 | farther (small) | the editor can read related code; bounded: each piece once ("shown above" after), read only, and the answer ends with "Back to X" |
+| B11 | closer | dropped places are said; the finish view no longer lists a changed class as not changed |
+| P4 | closer | pressure words removed |

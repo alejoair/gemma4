@@ -37,7 +37,7 @@ def next_call(state, role='single'):
     step = state['step']
     if role == 'editor':
         if state.get('editor_done') or step != 'D3' or state.get('current') is None:
-            return ('NEXT: no call: reply now with one sentence for the coordinator (what changed at the place, or why '
+            return ('NEXT: no call: reply with one sentence for the coordinator (what changed at the place, or why '
                     'nothing did, naming other code if the change belongs there).')
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)

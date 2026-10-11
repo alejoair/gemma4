@@ -365,7 +365,8 @@ def check(root, changed, renamed=(), cover=None):
     if not r['failed']:
         if r['passed'] == 0:
             return 'UNCHECKED', 'the selected tests did not finish (' + ', '.join(r['timeouts'] or files) + ')', []
-        return _ran_it(r, cover, f'{r["passed"]} existing tests pass ({", ".join(files)}){late}')
+        n = r['passed']
+        return _ran_it(r, cover, f'{n} existing test{"s pass" if n != 1 else " passes"} ({", ".join(files)}){late}')
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
     old_name = [f for f in new if renamed and _test_uses(root, f, renamed)]
@@ -392,7 +393,7 @@ def _ran_it(r, cover, detail):
         return 'OK', detail + ' (whether they run the changed lines could not be measured)', []
     if r['covered']:
         return 'OK', detail + ' and run the changed lines', []
-    return 'UNCHECKED', detail.replace('pass', 'pass but none of them runs the changed lines', 1), []
+    return 'UNCHECKED', re.sub(r'\bpass(es)?\b', lambda m: m.group(0) + ' but none of them runs the changed lines', detail, count=1), []
 
 
 def _failure_excerpt(output, ids, limit=1500):
@@ -411,7 +412,7 @@ def _failure_excerpt(output, ids, limit=1500):
             body = output[m.end():m.end() + nxt.start()] if nxt else output[m.end():]
             lines = body.splitlines()
             arrows = [l for l in lines if l.startswith('>')]
-            marked = arrows[-1][1:].strip() if arrows else ''
+            marked = arrows[0][1:].strip() if arrows else ''    # the first frame is the test's own line
             errors = [l[1:].strip() for l in lines if l.startswith('E ')][:6]
         else:
             short = [l for l in output.splitlines() if l.startswith(('FAILED', 'ERROR')) and test_id in l]
