@@ -97,3 +97,21 @@ All 17 findings fixed in one round:
 - Fix: in the editor role, the third identical range gets "were shown in the last answers and have not changed.
   Decide with what they show …", and the fourth moves the work on (F7, B9 closer). The first two reads stay free:
   a re-read is still how a cut reasoning continues.
+
+**Run a07 (2026-10-11):**
+- What worked: the Session.send editor read `resolve_redirects` read-only and replied "The change belongs to
+  `SessionRedirectMixin.resolve_redirects`", as the gate intends.
+- Two system faults:
+  1. the coordinator chose that code as its instruction says, and the script answered with the status (the D3
+     coordinator path refused every name);
+  2. the editor that replied was still "open" in the state, so the next editor's opening call would have read as a
+     read of related code. ADK passes no invocation id to the script, so one edit_place call cannot be told from the
+     next.
+- Fixes:
+  - any coordinator call to step.py closes the open editor; a place it left undecided keeps its code (skipped, its
+    sentence says why);
+  - `_coordinator_choice`: in D3/D4 the coordinator may name a listed place (planned, next) or other code (chosen as
+    at the choose step);
+  - a coordinator asking to see code gets "This call was not run: the code of X is read by its editor …" instead of
+    the same status again (F7, P3);
+  - a read-only range outside the editor's place is labelled with its file, not with the editor's place.

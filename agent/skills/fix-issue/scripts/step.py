@@ -2045,6 +2045,28 @@ def _coordinator_status(root, state):
             'not edit for the coordinator).')
 
 
+def _coordinator_choice(root, state, item):
+    """The coordinator names code after the choose step (its instruction: when an editor says the change belongs to
+    other code, choose that code): a listed place is planned and is next; other code of the repository is chosen as
+    at the choose step. None when the item names no code (a07: the name was answered with the status)."""
+    name = _args.clean(item)
+    if not NAME_LIKE.fullmatch(name) or _is_skip(name) or name.lower() in ('status', 'state', 'next') or \
+            _is_tests(name) or _is_code_to_run(name):
+        return None
+    hit = _match(state.get('places') or [], name, fuzzy=False)
+    if hit is not None:
+        i = _journal.target(state, hit['id'])
+        if state['plan'][i]['status'] != 'done':
+            state['plan'][i]['status'] = 'todo'
+        state['current'], state['step'] = i, 'D3'
+        return f'{hit["handle"]} is planned and is next.\n\n' + _coordinator_status(root, state)
+    found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
+    if not found:
+        return None
+    head, out = _choose_code(root, state, found[0])
+    return head + '\n\n' + out
+
+
 def _editor_gate(root, state, args):
     """In the editor role (edit_place), the calls that concern the editor's own scope, answered before the repeat guard
     so that they never change the shared plan; None for an ordinary call on the editor's own place.
@@ -2110,7 +2132,8 @@ def _editor_gate(root, state, args):
             if a > n:
                 return f'{rel} has {n} lines; lines {a}-{b} do not exist.' + back
             b = min(b, n, a + PLACE_LINES - 1)
-            return _lines_view(root, rel, a, b, f'{label or rel}, read only') + back
+            label = rel if (not label or label == mine_name) else label
+            return _lines_view(root, rel, a, b, f'{label}, read only') + back
     return None
 
 
@@ -2140,10 +2163,17 @@ def main(argv, role=None):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
     argv = _args.split_single_quoted(argv)
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
-    if ROLE != 'editor' and state.get('editor_review'):
-        # the editor replied after an accepted edit (its place stayed open for a correction): the work moves on
+    if ROLE != 'editor' and state.get('editor_place') and not state.get('editor_done'):
+        # the coordinator's call after an edit_place: that editor has replied, so it is closed (the script cannot
+        # tell one edit_place invocation from the next: a07, where an editor still open made the next editor's
+        # opening call read as a read of related code). A place it left undecided keeps its code (its sentence says
+        # why); an accepted edit under review is kept
+        i = _journal.plan_entry(state, state['editor_place'])
+        if i is not None and state['plan'][i]['status'] == 'todo':
+            state['plan'][i]['status'] = 'skipped'
         state['editor_review'], state['editor_done'] = False, True
-        _journal.advance(state)
+        if state['step'] == 'D3':
+            _journal.advance(state)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     state['calls'] = state.get('calls', 0) + 1
     key = _journal._key(state, args)          # the call as it is now, before the step changes the state
@@ -2253,8 +2283,17 @@ def main(argv, role=None):
                 # rich's Console.status in a dry run)
                 scoped = (_coordinator_status(root, state) if ROLE == 'coordinator' and state['step'] == 'D3'
                           else _current_view(root, state))
+            if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and len(items0) == 1 \
+                    and _args.plan(args) != 'back':
+                scoped = _coordinator_choice(root, state, items0[0])
             if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and _args.plan(args) != 'back':
-                scoped = _coordinator_status(root, state)
+                # a04, a05, a07: the coordinator asked to see the code before delegating and got the same status
+                # each time (F7); the answer says why it is not shown (P3: the rule with its reason)
+                left = state['plan'][state['current']]['place'] if state.get('current') is not None else None
+                scoped = ((f'This call was not run: the code of {_name_of(state, left)} is read by its editor. '
+                           'edit_place shows the editor the numbered code, the code it uses and calls, and a test, and '
+                           'the editor decides the change and makes it.\n\n' if left else '')
+                          + _coordinator_status(root, state))
             state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
             seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
             if reread == 'MOVE_ON':
