@@ -1041,3 +1041,12 @@ line; the answer cap is 7,000 characters.
 | B9 | farther (small) | Ranges inside a long place may be used more. Reason as W3; they stay inside the place under decision |
 | W4 | neutral | The forms are the same, on one line; NEXT unchanged |
 | others | neutral | — |
+
+Second cut (same day, after the first rerun of requests_7328 still compacted every 3-4 calls: each window added about
+2,200 tokens, of which about 550 are the model's own kept thoughts; `include_thoughts: false` would turn thinking off
+in the ADK bridge, so the thoughts stay): the window is about 5,000 characters (resolve_redirects 10,211 → 5,015): the
+code whole up to 60 lines, else 40 around the requirements' names; used code and callers one line each with
+location and a short signature (short own members up to 6 lines as code); imported names in one line; the
+statement's behaviour sentences cut at 350 characters and its example dropped (the statement is in the system
+instruction, never compacted); the existing test 6 lines; the forms line says only what NEXT does not. Checklist as
+above (B7, P7 closer; W3 farther, same reason); W4 neutral: NEXT still gives the edit forms in full.

@@ -38,7 +38,7 @@ import _tests  # noqa: E402
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
-EDIT_LINES = 45         # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
+EDIT_LINES = 40         # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
                         # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
@@ -72,7 +72,7 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     def size(a, b):
         return shown[b] - shown[a - 1]
 
-    if size(start, end) <= limit + 30:         # hiding a few lines saves little and hides code
+    if size(start, end) <= limit + 20:         # hiding a few lines saves little and hides code
         return _code.numbered(lines, start, end, collapse=collapse)
     head = min(end, start + 14)
     sig_end = None
@@ -283,10 +283,9 @@ def _window(root, state, i, show=None):
         parts.append('This place was added because it is related to the chosen code: make the same change here if '
                      "it needs it, or send ['skip'] if it needs none.")
     name = p['handle']
-    parts.append(f"Answer with one of: ['{name}', '<the whole new function or class>'] (replaces the definition of "
-                 f"that name; a new name is added after it) | ['{name}', '<first line>', '<last line>', '<new lines>'] "
-                 f"('DELETE' deletes) | ['skip'] | ['back'] | another code name, a text to find, or a file and two "
-                 f"line numbers (inside {name}: shows those lines).")
+    parts.append(f"Besides the two edit forms in NEXT ('DELETE' as the new lines deletes them; a whole definition of a "
+                 f"new name is added after {name}): ['skip'] | ['back'] | another code name, a text to find, or a file "
+                 f"and two line numbers (inside {name}: shows those lines).")
     return '\n'.join(parts)
 
 
@@ -364,9 +363,8 @@ def _imports_view(root, p):
                 bound = (al.asname or al.name).split('.')[0]
                 if bound in used:
                     src = (('.' * imp.level) + (imp.module or '')) if isinstance(imp, ast.ImportFrom) else al.name
-                    names.append(f'{bound} ({src})' if isinstance(imp, ast.ImportFrom) else bound)
-        return (f'Imports {p["handle"]} uses: ' + ', '.join(dict.fromkeys(names)) +
-                f' (the import lines of {p["rel"]} are lines {a}-{b}).')
+                    names.append(bound)
+        return f'Imported names it uses: ' + ', '.join(dict.fromkeys(names)) + f' (imports at lines {a}-{b}).'
     shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
     more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
     return f'The imports of {p["rel"]}:\n{shown}{more}'
@@ -485,14 +483,12 @@ def _context_view(root, p, focus=None):
             if (r, x.name) in seen:
                 continue
             seen.add((r, x.name))
-            if mine and x.end - x.start + 1 <= SHORT_MEMBER:
+            if mine and x.end - x.start + 1 <= 6:
                 # a short member of the same class (a property, a helper): its code, since its name says little
                 text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
-                doc_line = _code.first_doc_line(x)
-                line = f'{r} :: {x.name} ({x.kind}, lines {x.start}-{x.end}) {_short_signature(x)}' + (
-                    f' — {doc_line[:80]}' if doc_line else '')
-                text = '  ' + line
+                sig = _short_signature(x)
+                text = f'  {x.name} ({r}:{x.start}) {sig if len(sig) <= 70 else sig[:67] + "..."}'
             if chars + len(text) > USES_CHARS:
                 break
             uses.append(text)
@@ -514,7 +510,7 @@ def _context_view(root, p, focus=None):
     calls = []
     for r, c, n in callers[:CALLERS]:
         text = _repo.read_lines(root, r)[n - 1].strip()
-        calls.append(f'  {r}:{n} in {c}: {text[:120]}')
+        calls.append(f'  {r}:{n} in {c}: {text[:80]}')
     out = []
     if uses:
         out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
@@ -590,10 +586,10 @@ def _task_view(root, state, p):
     text = st.get('text', '')
     said = _statement.behaviour(text, skip=[r['text'] for r in state['requirements']])
     if said:
-        out.append('  The statement says: ' + ' '.join(said))
-    ex = _statement.example(text)
-    if ex:
-        out.append('  Its example:\n' + '\n'.join('    ' + l for l in ex.split('\n')))
+        # the statement itself is in the system instruction (never compacted); here only its sentences about the
+        # behaviour, cut, so that every window stays small enough for the history (see "Windows that fit")
+        joined = ' '.join(said)
+        out.append('  The statement says: ' + (joined if len(joined) <= 350 else joined[:347] + '...'))
     if p['name'] not in (MODULE, '<exports>'):
         cache = state.setdefault('tests_seen', {})
         key = f'{p["rel"]}::{p["name"]}'
