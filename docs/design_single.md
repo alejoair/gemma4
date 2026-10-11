@@ -911,3 +911,28 @@ Check against `docs/llm_checklist.md`:
 | P9 | neutral | — |
 | P10 | neutral | — |
 | F1–F9 | neutral | Edit feedback unchanged |
+
+### V15 on Kaggle (2026-10-10): what finding instead of reading did
+
+1/10 real (rich_3006). fastapi_14851 counts as resolved with a 663-character patch (APIRouter keeps `on_startup` and
+`on_shutdown` itself instead of passing them to Starlette's Router), but its hidden tests passed with an empty patch in
+V14, so it is not evidence. Row in `VERSIONS.md`. Per-answer counts: `tools/trace_looks.py`.
+
+- **Worked**: no range read in any task (V14: 50); 9 of 10 patches non-empty (V14: 7); 5 searches, each answered
+  with a list; malformed calls 7%.
+- **Did not work: the browsing moved to names**, the risk the checklist table marked under B9 ("closer (partial)").
+  27 choices by name; fastapi_14851 chose code 15 times in a row (APIRouter.__init__ 3 times, APIRouter.on_event 4,
+  `_merge_lifespan_context` 3) and made its one kept edit at 4.5 min; rich_3469 (a statement with no content) 7. A
+  choice replaced the places not edited yet, but that cost nothing the model valued, so it was not a decision: the
+  same code was chosen again a few calls later, which also says the windows are lost to compaction or not read.
+- **Script faults found and fixed**: (1) an edit naming `fastapi/_compat/v1.py top level` was applied to the place
+  `fastapi/_compat/may_v1.py top level` through a near-spelling match: near spellings are now tried only for text that
+  is no path and names no code of its own; (2) a search for `" "` lost its quotes, became empty and matched 39,000
+  lines: a search keeps the model's text when cleaning leaves fewer than 2 letters, and an empty search is refused;
+  (3) `lifespan` chose an example in `docs_src`: a bare name defined only in docs is found, not chosen; (4)
+  `APIRouter.add_event_handler`, inherited from Starlette's Router, was refused: it is now shown as library code,
+  read only, with the current step again.
+- **The run itself took 68 minutes**; Kaggle kept the kernel in "running" for about 8.8 hours before and after it.
+
+Open: re-choosing code already seen. The next step is to find out from the traces why the model chooses the same
+code again (the window compacted away, or a window that does not answer what it looks for) before any change.

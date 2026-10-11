@@ -779,7 +779,7 @@ SEARCH_WORDS = ('search', 'grep', 'find', 'look for', 'search for')
 def _search_query(items):
     """The text of a search the model wrote as one ('search', 'X') or ('search X'), else None."""
     if len(items) == 2 and _args.clean(items[0]).lower().strip(' :') in SEARCH_WORDS:
-        return _args.clean(items[1]).strip('`')
+        return _search_text(items[1])
     if len(items) == 1:
         m = re.match(r'(?i)^\s*(?:search for|search|grep|find|look for)\s*:?\s+(.+)$', items[0].strip())
         if m and '\n' not in m.group(1):
@@ -841,10 +841,19 @@ def _search(root, text, n=N_CANDIDATES, near=(), only=None):
     return out, tests, total
 
 
+def _search_text(raw):
+    """The text to find: the item without the wrapping quotes and backticks, or the item as sent when that leaves
+    fewer than 2 letters or digits (V15 rich_3469: '" "' became an empty search that matched 39,000 lines)."""
+    t = _args.clean(raw or '').strip('`')
+    return t if len(re.sub(r'\W', '', t)) >= 2 else (raw or '').strip()
+
+
 def _search_view(root, state, text, prefer=None):
     """The answer to a search, or None when nothing holds text: the library code a name refers to (read only), the
     code that holds the text as candidates to choose from, and the tests' matching lines. The candidates replace the
     list; the step becomes the choose step."""
+    if len(text.strip()) < 2 or not text.strip():
+        return None
     only = None
     m = re.match(r'^(.+?)\s+in\s+`?([\w./-]+\.py)`?$', text.strip())     # "super().__init__ in fastapi/applications.py"
     if m:
@@ -1027,7 +1036,8 @@ def d1(root, state, args):
                                      'the issue):') + '\n\nChoose the code to change.')
     if not chosen and len(others) == 1 and '\n' not in others[0].strip() and len(others[0]) <= 200:
         # a name the repository does not define, or a text: where the code holds it, to choose from
-        found = _search_view(root, state, others[0])
+        raw = next((a for a in items if _args.clean(a) == others[0]), others[0])
+        found = _search_view(root, state, _search_text(raw))
         if found:
             return found
     if not chosen:
@@ -1130,7 +1140,14 @@ def _is_done(text):
 def _listed_place(state, text):
     """The id of the listed place that text names (its name, or an old id like P2), or None. Only listed places are
     opened here: candidates and other code are chosen after ["back"]."""
-    x = _match(state['places'], text)
+    x = _match(state['places'], text, fuzzy=False)
+    if x is None:
+        # a near spelling only when the text names no code of its own: V15 fastapi_14583 sent an edit of
+        # 'fastapi/_compat/v1.py top level' while 'fastapi/_compat/may_v1.py top level' was the place, and the near
+        # match applied the edit to the wrong file
+        t = _norm_name(text)
+        if t and '/' not in t and '.py' not in t and not _resolve(_repo.repo_root(), [t]):
+            x = _match(state['places'], text)
     return x['id'] if x else None
 
 
@@ -1181,11 +1198,53 @@ def _open_named(root, state, text):
                     + '\n\nChoose the code to change.')
             return None
     found = _resolve(root, [x]) if re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) else []
+    if found and _repo.is_doc_path(found[0]['rel']) and '::' not in x:
+        found = []              # V15 fastapi_14851: 'lifespan' chose an example in docs_src; a bare name is found
+    if not found and '.' in x:
+        inherited = _inherited_library(root, x)
+        if inherited:
+            _state.record({'look': 'library', 'q': x[:120], 'step': state['step']})
+            return inherited + '\n\n' + _current_view(root, state)
     if not found:
-        return _search_view(root, state, x, prefer=here)
+        return _search_view(root, state, _search_text(text), prefer=here)
     _state.record({'look': 'name', 'q': x[:120], 'step': state['step']})
     head, out = _choose_code(root, state, found[0])
     return head + '\n\n' + out
+
+
+def _inherited_library(root, dotted):
+    """'Class.method' where the repository's Class gets the method from a library base class (V15 fastapi_14851:
+    APIRouter.add_event_handler is Starlette's Router.add_event_handler): that library code, read only, else ''."""
+    cls_name, _, attr = dotted.rpartition('.')
+    table = _impact.Table(root, docs=False)
+    hits = [(r, x) for r, x in table.find(cls_name.split('.')[-1]) if x.kind == 'class']
+    for rel, sym in hits[:2]:
+        tree = _code.parse(''.join(_repo.read_lines(root, rel)))
+        names = {}
+        for n in ast.walk(tree) if tree is not None else ():
+            if isinstance(n, ast.ImportFrom) and n.module and not n.level:
+                for al in n.names:
+                    names[al.asname or al.name] = f'{n.module}.{al.name}'
+            elif isinstance(n, ast.Import):
+                for al in n.names:
+                    names[al.asname or al.name.split('.')[0]] = al.name if al.asname else al.name.split('.')[0]
+        for base in getattr(sym.node, 'bases', []):
+            try:
+                parts = ast.unparse(base).split('.')
+            except Exception:       # noqa: BLE001
+                continue
+            if parts[0] not in names:
+                continue
+            try:
+                hit = _library_def(root, '.'.join([names[parts[0]]] + parts[1:] + [attr]))
+            except Exception:       # noqa: BLE001
+                hit = None
+            if hit:
+                path, a, b, qual = hit
+                short = path.split('site-packages/')[-1] if 'site-packages/' in path else os.path.basename(path)
+                return (f'{dotted} is not defined in the repository: {sym.name} inherits it from library code, read '
+                        f'only: {qual} ({short}, lines {a}-{b}).\n' + _code_view(root, path, a, b, limit=LIBRARY_LINES))
+    return ''
 
 
 def _choose_code(root, state, found):
