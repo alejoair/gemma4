@@ -38,8 +38,8 @@ def budget_line(state, now=None):
     """Time and calls used, and when edits close (models cannot see their budget: V10, 6 of 10 runs ended on it). The
     calls are those the script received: malformed ones never reach it, so the real count is higher."""
     used = (now or time.time()) - state['t0']
-    line = (f'Time used: {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min; edits close at {EDIT_STOP / 60:.1f} min, then '
-            f'only submit_patch is left. Calls used: at least {state.get("calls", 0)} of {CALL_LIMIT}.')
+    line = (f'Time {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min (edits close at {EDIT_STOP / 60:.1f}); calls at least '
+            f'{state.get("calls", 0)} of {CALL_LIMIT}.')
     return line
 
 

@@ -38,7 +38,7 @@ import _tests  # noqa: E402
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
-EDIT_LINES = 40         # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
+EDIT_LINES = 32         # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
                         # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
@@ -244,49 +244,80 @@ def _focus(state, entry=None):
 
 
 def _window(root, state, i, show=None):
-    """The place of plan entry i, ready to edit: its code, then what the change must do (the requirements, the
-    statement's sentences about the behaviour, its example, an existing test that uses the code), then how to send
-    the edit. The task is repeated in every window so that it is next to the decision even after the history is
-    compacted."""
+    """The decision window of plan entry i: one line with the place and the goal it serves, the patch's change there,
+    the code, and the related code that shares the issue's words; the forms are in NEXT and in the system instruction.
+
+    Every answer stays in the history until the harness compacts it (14,336 tokens, the last 5 events kept), and a
+    compaction removes the window the model is deciding on: V15 averaged 10-11k prompt tokens per call in the 9 tasks
+    it lost and peaked at 8k in the one it solved. So the window carries only what changes this decision, measured in
+    tokens (docs/design_single.md, "The decision window"): the statement is in the system instruction (never compacted),
+    static forms there too; here the code (numbers cost a third of its tokens, so no padding), the goal and at most 3
+    related names."""
     entry = state['plan'][i]
     p = _place(state, entry['place'])
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
-    head = f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])} to edit)'
+    goal = _goal(state, p)
+    head = f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])}).'
     owner = _owner_class(root, p)
     if owner:
-        head += f'\nIt is a method of {owner}.'
+        head += f' It is a method of {owner}.'
     if p['reason'] != 'chosen':
-        head += f' ({p["reason"]})'
+        head += f" Related to the chosen code ({p['reason']}): change it only if the goal needs it here, else ['skip']."
+    head += f'\nGoal: {goal}'
     if p['name'] == '<exports>':
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES, show=show)
         if re.search(r'\(lines \d+-\d+ not shown\)', body):
-            body += (f'\n{p["handle"]} is longer than the window: rewrite one of its members whole, from its def line '
-                     'to its last line, or change the lines shown here by their numbers.')
+            body += (f'\n(Not all of {p["handle"]} is shown: send it with two line numbers inside it to see other '
+                     'lines; change the lines shown by their numbers, or rewrite a member whole.)')
         elif '(the parameters, lines' in body:
-            body += f'\nThe parameters of {p["handle"]} are not shown: change its body by line numbers.'
+            body += f'\n(The parameters of {p["handle"]} are not shown: change its body by line numbers.)'
         members = _members(root, p)
         if members:
             body = members + '\n' + body
-    parts = [head, _patch_here(root, p), body] if _patch_here(root, p) else [head, body]
-    imports = _imports_view(root, p)
-    if imports:
-        parts.append(imports)
+    here = _patch_here(root, p)
+    parts = [head, here, body] if here else [head, body]
     context = _context_view(root, p, _focus(state, entry))
     if context:
         parts.append(context)
-    parts.append(_task_view(root, state, p))
-    if p['reason'] != 'chosen':
-        parts.append('This place was added because it is related to the chosen code: make the same change here if '
-                     "it needs it, or send ['skip'] if it needs none.")
-    name = p['handle']
-    parts.append(f"Besides the two edit forms in NEXT ('DELETE' as the new lines deletes them; a whole definition of a "
-                 f"new name is added after {name}): ['skip'] | ['back'] | another code name, a text to find, or a file "
-                 f"and two line numbers (inside {name}: shows those lines).")
+    test = _test_once(root, state, p)
+    if test:
+        parts.append(test)
     return '\n'.join(parts)
+
+
+def _goal(state, p):
+    """The requirement this place most likely serves (the most words shared with the place's name and file), cut at
+    200 characters, and how many others there are."""
+    reqs = state['requirements']
+    if not reqs:
+        return '(see the issue)'
+    words = set(_rank.tokens(p['name'].replace('.', '_'))) | set(_rank.tokens(p['rel'].rsplit('/', 1)[-1][:-3]))
+    best = max(reqs, key=lambda r: len(words & {t for w in re.findall(r'[A-Za-z_]\w*', r['text'])
+                                                for t in _rank.tokens(w)}))
+    text = best['text'] if len(best['text']) <= 200 else best['text'][:197] + '...'
+    more = f' ({len(reqs) - 1} more requirement{"s" if len(reqs) > 2 else ""} in the issue)' if len(reqs) > 1 else ''
+    return text + more
+
+
+def _test_once(root, state, p):
+    """An existing test that uses a chosen place, the first time the place is shown (how it is used today); later
+    windows of the same place do not repeat it."""
+    if p['name'] in (MODULE, '<exports>') or p['reason'] != 'chosen':
+        return ''
+    key = f'{p["rel"]}::{p["name"]}'
+    shown = state.setdefault('tests_shown', [])
+    if key in shown:
+        return ''
+    shown.append(key)
+    found = _tests.example(root, p['rel'], p['name'])
+    if not found:
+        return ''
+    rel, lines = found
+    return f'A test that uses it today ({rel}):\n' + '\n'.join('  ' + l for l in lines)
 
 
 def _patch_here(root, p):
@@ -326,50 +357,6 @@ def _owner_class(root, p):
     return f'{_code.signature(cls)} (line {cls.def_line})' if cls else ''
 
 
-IMPORT_LINES = 6
-
-
-def _imports_view(root, p):
-    """The file's import block, numbered (at most IMPORT_LINES lines), so that an import the change needs can be
-    added by line numbers (V10: 'Lines 1-40 are outside P1')."""
-    if p['name'] in (MODULE, '<exports>'):
-        return ''
-    try:
-        lines = _repo.read_lines(root, p['rel'])
-        tree = _code.parse(''.join(lines))
-    except OSError:
-        return ''
-    if tree is None:
-        return ''
-    imps = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-    if not imps:
-        return ''
-    a, b = imps[0].lineno, max(n.end_lineno or n.lineno for n in imps)
-    if b >= p['start']:
-        return ''
-    if b - a + 1 > IMPORT_LINES:
-        # a long block is noise in every window (P7), so only the imports of the names the place uses: where they come
-        # from is what the model searched for by hand (V14 fastapi_14851: "Let's check the imports in fastapi/routing.py")
-        used = set(re.findall(r'[A-Za-z_]\w*', ''.join(lines[p['start'] - 1:p['end']])))
-        mine = [n for n in imps if any((al.asname or al.name).split('.')[0] in used for al in n.names)]
-        if not mine:
-            return f'The imports of {p["rel"]} are at lines {a}-{b}.'
-        # one line: the names the place uses and where they come from (a multi-line import block printed whole took
-        # 30 lines of every window, and every window counts toward the history compaction: V15 averaged 10-11k
-        # prompt tokens per call against a 14,336-token threshold)
-        names = []
-        for imp in mine:
-            for al in imp.names:
-                bound = (al.asname or al.name).split('.')[0]
-                if bound in used:
-                    src = (('.' * imp.level) + (imp.module or '')) if isinstance(imp, ast.ImportFrom) else al.name
-                    names.append(bound)
-        return f'Imported names it uses: ' + ', '.join(dict.fromkeys(names)) + f' (imports at lines {a}-{b}).'
-    shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
-    more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
-    return f'The imports of {p["rel"]}:\n{shown}{more}'
-
-
 def _members(root, p):
     """One line listing the methods of a class place with their lines, so that the window answers which methods
     exist even when only part of the class is shown."""
@@ -386,10 +373,10 @@ def _members(root, p):
     return 'Members: ' + ', '.join(f'{x.name.split(".")[-1]} {x.start}-{x.end}' for x in members) + tail
 
 
-USES = 4        # definitions the place calls or reads
+USES = 3        # definitions the place calls or reads
 USES_CHARS = 900    # their total size
 SHORT_MEMBER = 15   # a member of the place's own class up to this many lines is shown as code
-CALLERS = 2     # code that calls the place, one line each
+CALLERS = 1     # code that calls the place, one line each
 
 
 def _context_view(root, p, focus=None):
@@ -477,7 +464,7 @@ def _context_view(root, p, focus=None):
             continue
         if weight((name, how)) == 0:                    # counted only when it would be shown
             plain += 1
-            if plain > 2:
+            if plain > 0:
                 continue
         for r, x in defs[:2]:
             if (r, x.name) in seen:
@@ -575,32 +562,6 @@ def _library_uses(root, p, tree, used, imported, modules, table, cls):
             d = next((i for i in range(a, b + 1) if re.match(r'\s*(async\s+def|def|class)\s', lines[i - 1])), a)
             out.append(f'  {qual} (library, read only; {short}, lines {a}-{b}): {lines[d - 1].strip()[:140]}')
     return out
-
-
-def _task_view(root, state, p):
-    """What the change must do, for the window of place p."""
-    out = ['What the change must do:']
-    for r in state['requirements']:
-        out.append(f'  - {r["text"][:200]}')
-    st = _state.load('statement', {})
-    text = st.get('text', '')
-    said = _statement.behaviour(text, skip=[r['text'] for r in state['requirements']])
-    if said:
-        # the statement itself is in the system instruction (never compacted); here only its sentences about the
-        # behaviour, cut, so that every window stays small enough for the history (see "Windows that fit")
-        joined = ' '.join(said)
-        out.append('  The statement says: ' + (joined if len(joined) <= 350 else joined[:347] + '...'))
-    if p['name'] not in (MODULE, '<exports>'):
-        cache = state.setdefault('tests_seen', {})
-        key = f'{p["rel"]}::{p["name"]}'
-        if key not in cache:
-            found = _tests.example(root, p['rel'], p['name'])
-            cache[key] = [found[0], found[1]] if found else None
-        if cache[key]:
-            rel, lines = cache[key]
-            out.append(f'An existing test that uses {p["name"].split(".")[-1]} ({rel}), how it is used today:\n'
-                       + '\n'.join('    ' + l for l in lines))
-    return '\n'.join(out)
 
 
 def _requirements_view(state):

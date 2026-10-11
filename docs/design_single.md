@@ -1050,3 +1050,47 @@ location and a short signature (short own members up to 6 lines as code); import
 statement's behaviour sentences cut at 350 characters and its example dropped (the statement is in the system
 instruction, never compacted); the existing test 6 lines; the forms line says only what NEXT does not. Checklist as
 above (B7, P7 closer; W3 farther, same reason); W4 neutral: NEXT still gives the edit forms in full.
+
+### The decision window (2026-10-11): a critical look at what each window costs
+
+Measured with the model's own tokenizer (llama-server `/tokenize`), as the ADK sends it (the answer JSON-encoded):
+the 5,000-character window of `resolve_redirects` was **1,500 tokens**: progress, head and code 806 (the line numbers
+alone 187 of the code's 596: a padded `" 184|"` is about 5 tokens), used code 142, callers 82, imports 66, the task
+91, a test 126, the forms line 79 and NEXT 78. A turn also keeps the model's own thoughts (about 512 tokens with
+`include_thoughts: true`, which must stay: false turns thinking off). With 3,200 tokens of system instruction and task
+message, about 1,000 of summary and the last 5 events kept after each compaction, a turn of about 2,100 tokens meant a
+compaction every 3-4 calls.
+
+What a window is for: one decision, what to write at this place. Three kinds of content were mixed in it: decision
+material (the code, the goal), navigation affordances (used code, callers, imports, forms) and status (progress, the
+patch's change). The principle now: **what does not change goes in the system instruction, which is never compacted;
+each answer carries only what this decision needs, measured in tokens.**
+- Head: the place, and **one goal line**: the requirement that shares the most words with the place (the issue in
+  full is in the system instruction, above every compaction).
+- Code: whole up to 52 lines, else 32 around the requirements' names (a range inside the place shows the rest);
+  numbers without padding (`184|`), which saves about 40 tokens per window.
+- Related code: up to 3 used definitions **that share the issue's words** (none that share none) and 1 caller, one
+  line each.
+- A test that uses it: only for a chosen place and only the first time it is shown.
+- Dropped from every window: the requirement list and the statement's sentences (system instruction), the imports
+  line (adding an import is `<file> top level`, said once in the system instruction), the forms line (NEXT and the
+  system instruction), the "added because it is related" sentence (now part of the head). The budget line is shorter.
+
+Result: `resolve_redirects` **884 tokens** (from about 3,500 this morning), the choose step's answer with the places
+list and the first window 1,189.
+
+| Item | Verdict | Why |
+|---|---|---|
+| B7 | **closer** | Turns of about 1,500 tokens instead of 4,000: the window stays in the history |
+| P6 | neutral | The goal is the second line; NEXT is the last; the full task is in the system instruction |
+| P7 | **closer** | Only context that shares the issue's words is shown |
+| P8 / F5 | **closer** | Fewer compactions, so less state is lost |
+| W1 | neutral | — |
+| W3 | **farther** | Less code and context at once. Reason: a window that is compacted away shows nothing; the rest is one in-place range away |
+| W4 | neutral | NEXT unchanged |
+| W5 | neutral | `184|code` is still the numbered format |
+| W6 | neutral | The goal is the issue's own sentence |
+| B1 | neutral | Line numbers still shown on every code line |
+| B8 | neutral | No form added or removed |
+| B12 | **closer** | The prompt's description of the window matches the window |
+| others | neutral | — |
