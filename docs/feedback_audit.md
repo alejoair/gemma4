@@ -303,3 +303,22 @@ Session.send (system fault).
   still fail with any patch (one TestRequests SSL/proxy test and three connect timeouts, all environment), so
   requests tasks stay unscorable there too. The patch (`resp.history = hist[:-1]` after the append) passes the
   hidden test locally.
+
+**Batch b9 results (2026-10-11, local 26B, agent_tool, commit before open.py): 0/7.**
+- The gateway went down (Cloudflare 530) at the 8th task; rich_3469 and rich_3006 did not run.
+
+| Task | Result | Calls | Time | What happened |
+|---|---|---|---|---|
+| fastapi_14986 | not resolved | 25 | 437 s | the editor rewrote the openapi closure (schema copy with the request's root_path); a second editor of get_swagger_ui_html re-read until moved on |
+| fastapi_14851 | time-out, empty patch | 27 | 447 s | the editor browsed related code (FastAPI, APIRouter.on_event, lifespan_context: Starlette's, not readable then); the same edit was refused 3 times by the unseen-lines guard (collapsed strings, fixed after) |
+| fastapi_14448 | time-out | 30 | 453 s | the right idea (unwrap nested partials in `_unwrapped_call`) and the sibling `is_*_callable` methods, but editors chose and re-chose code |
+| httpx_3672 | time-out | 34 | 427 s | the place was a whole 426-line class; the editor paged through it 60 lines at a time before editing (`keep_alive`, `complete` → `reset`) |
+| fastapi_15800 | time-out | 41 | 457 s | a new feature: the coordinator made 15 searches in the choose step ("does FastAPI inherit mount?"), its history was compacted; the new editor of applications.py got the closed answer of the previous one (the open.py case) |
+| fastapi_14583 | not resolved | 16 | 206 s | a module-level DeprecationWarning in the wrong file |
+| rich_3521 | time-out | 23 | 435 s | the unseen-lines loop on a docstring (fixed after) |
+
+- Time is the binding limit: 5 of 7 tasks ran out of the 7 minutes. Most of the time went to reads in the editors
+  (B9). Open problems:
+  - a large class as one place (it should open by members);
+  - new-feature tasks (no place to choose; the coordinator searches);
+  - inherited library members in searches.
