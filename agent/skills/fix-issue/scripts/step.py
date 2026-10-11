@@ -325,7 +325,10 @@ def _unseen(root, state, rel, start, end):
 
 def _show_unseen(root, state, p, start, end, unseen):
     a, b = unseen[0], min(unseen[-1], unseen[0] + PLACE_LINES - 1)
-    view = _seen_mark(p['rel'], _lines_view(root, p['rel'], a, b, p['handle']))
+    # whole lines, nothing collapsed: b9 refused the same edit 3 times because the unseen lines were long strings
+    # that every view collapsed into '... (N lines of text) ...', so they never counted as shown
+    lines = _repo.read_lines(root, p['rel'])
+    view = _seen_mark(p['rel'], f'Lines {a}-{b} of {p["handle"]}:\n' + _code.numbered(lines, a, b, collapse=[]))
     spans, s0 = [], unseen[0]
     for x, y in zip(unseen, unseen[1:] + [None]):
         if y != x + 1:
@@ -2178,6 +2181,8 @@ def _editor_gate(root, state, args):
     name = _args.clean(items[0]) if items else ''
     hit = _match(places, name, fuzzy=False) if (places and len(items) == 1) else None
     mine = state.get('editor_place')
+    if OPENING and items:
+        return _editor_open(root, state, name, hit)
     own = next((e for e in state.get('plan') or [] if e['place'] == mine), None) if mine else None
     # deciding: its place still to edit, or an accepted edit under review (until the editor replies and the
     # coordinator's next call to the script moves the work on)
@@ -2244,14 +2249,25 @@ def _editor_gate(root, state, args):
     if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and not _is_tests(name) \
             and name.lower() not in ('status', 'state', 'next') and _match(places, name, fuzzy=False) is None \
             and not _is_code_to_run(name):
+        if name.startswith(('self.', 'cls.')):
+            # b9: 'self._unwrapped_call' from the editor of Dependant.is_async_gen_callable: a member of its class
+            own_cls = _place(state, mine)['name'].rsplit('.', 1)[0] if '.' in _place(state, mine)['name'] else ''
+            name = (own_cls + '.' if own_cls else '') + name.split('.', 1)[1]
         found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
         if found:
             return _editor_read(root, state, found[0], mine_name) + back
+        inherited = _inherited_library(root, name) if '.' in name else None
+        if inherited:       # b9: FastAPI.lifespan / on_startup come from Starlette, read only
+            return inherited + back
         return f'Nothing in the repository defines {_said(name)} (library code is not read here).' + back
     if len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3]):
         rel, label = _read_target(root, state, items[0])
         p = _place(state, mine)
         a, b = sorted((int(_args.clean(items[1])), int(_args.clean(items[2]))))
+        if rel == p['rel'] and a <= p['end'] and b >= p['start'] and not (p['start'] <= a and b <= p['end']):
+            # a range that overlaps the editor's own place is read as that place's lines (b9: 1100-1120 around a
+            # nested function of 1107-1113 was shown 'read only' from the file)
+            return _place_lines(root, p, max(a, p['start']), min(b, p['end']))
         if rel and not _repo.is_test_path(rel) and not (rel == p['rel'] and p['start'] <= a and b <= p['end']):
             n = len(_repo.read_lines(root, rel))
             if a > n:
@@ -2260,6 +2276,37 @@ def _editor_gate(root, state, args):
             label = rel if (not label or label == mine_name) else label
             return _seen_mark(rel, _lines_view(root, rel, a, b, f'{label}, read only')) + back
     return None
+
+
+def _editor_open(root, state, name, hit):
+    """open.py: a new editor opens the place of its request. The previous editor has replied (its place, if still
+    undecided, keeps its code); a name off the places is chosen as the coordinator's choice."""
+    prev = state.get('editor_place')
+    if prev and not state.get('editor_done'):
+        j = _journal.plan_entry(state, prev)
+        if j is not None and state['plan'][j]['status'] == 'todo' and (prev != (hit or {}).get('id')):
+            state['plan'][j]['status'] = 'skipped'
+    if hit is None:
+        c = _match(state.get('candidates') or [], name, fuzzy=False)
+        if c is None:
+            found = [x for x in _resolve(root, [name]) if not _repo.is_doc_path(x['rel'])]
+            c = found[0] if found else None
+        if c is None:
+            return (f'Nothing in the repository defines {_said(name)}. Reply with one sentence for the coordinator, '
+                    'without a call, saying so.')
+        if not any((q['rel'], q['name']) == (c['rel'], c['name']) for q in state.get('places') or []):
+            _choose_code(root, state, c)
+        hit = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name'])), None)
+        if hit is None:
+            return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
+    state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
+                 editor_name=hit['handle'])
+    state['recent'], state['repeats'] = [], 0
+    i = _journal.target(state, hit['id'])
+    if state['plan'][i]['status'] == 'skipped':
+        state['plan'][i]['status'] = 'todo'
+    state['current'], state['step'] = i, 'D3'
+    return _window(root, state, i)
 
 
 def _editor_read(root, state, c, mine_name):
@@ -2277,10 +2324,14 @@ def _editor_read(root, state, c, mine_name):
             f'if the change belongs to {label}, reply with one sentence saying so, without a call.\n{body}')
 
 
-def main(argv, role=None):
-    global ROLE
+OPENING = False     # the call came through open.py: an edit_place editor opens the place of its request
+
+
+def main(argv, role=None, opening=False):
+    global ROLE, OPENING
     if role:
         ROLE = role
+    OPENING = opening
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
     _SEEN['state'] = state

@@ -286,3 +286,20 @@ Session.send (system fault).
   `tests/test_requests.py` errors on setup with any patch. Requests dev tasks cannot be scored on either; evals must
   use fastapi/rich/httpx tasks.
 - Editor calls take ~30 s each on the L4s (thinking 1024), so the edit work used 250 of the 352 s.
+
+**Batch b9 (2026-10-11, 9 local tasks, agent_tool) — fixes during the run.**
+- `open.py`: the editor's first call goes through its own entry, `file_path open.py`. ADK passes no invocation id, so
+  a place name sent to edit.py could be a new editor or a read of related code. In b9 (fastapi_14448) the
+  coordinator called edit_place with `Dependant._unwrapped_call` without calling step.py first, and the new editor
+  got a read-only view. With open.py the opening is explicit:
+  - the previous editor's undecided place keeps its code;
+  - a name off the places is chosen as the coordinator's choice;
+  - the editor prompt shows the open.py call form and a read form for related code.
+- The unseen-lines answer shows the lines whole (b9 fastapi_14851 got the same refusal 3 times: the lines were long
+  strings that every view collapsed, so they never counted as shown).
+- Editor reads: inherited library members (`FastAPI.lifespan`, Starlette) are shown read-only; `self.x` is read as
+  a member of the place's class; a range that overlaps the editor's own place is read as that place's lines.
+- Kaggle V16b with the test wheels installed: `tests/test_requests.py` now runs (pytest 8.4.2, httpbin). 4 tests
+  still fail with any patch (one TestRequests SSL/proxy test and three connect timeouts, all environment), so
+  requests tasks stay unscorable there too. The patch (`resp.history = hist[:-1]` after the append) passes the
+  hidden test locally.
