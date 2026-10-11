@@ -240,3 +240,14 @@ Session.send (system fault).
     verified effect, not the editor's sentence);
   - the unseen-lines answer lists the unseen spans ("161-171, 202-281") instead of one false range;
   - the "left" sentence counts the real tries.
+
+**Run a15 (2026-10-11): the right fix, and the local check cannot see it.**
+- The `resolve_redirects` editor read lines 181-185 and replaced them with `resp.history = list(hist)` before
+  `hist.append(resp)`. That is the reference patch (`resp.history = hist[:]` before the append).
+- The coordinator then sent Session.send to an editor twice. The script's guards closed the first editor without a
+  change; the second changed only `[resp for resp in gen]` → `list(gen)`, which is harmless.
+- The harness reported resolved 0. **The local harness cannot resolve requests_7328 with any patch.** It judges by the
+  whole test file (`tests/test_requests.py`), and the local wheels lack `pytest-httpbin`, `httpbin` and `trustme`.
+  With the reference patch the file gives the same 5 failed and 194 errors (fixture 'httpbin') as with ours (checked
+  2026-10-11 in a venv built from `comp/wheels`). So every local "not resolved" on requests tasks says nothing; the
+  patch must be compared with the reference by hand, or the task run on Kaggle.

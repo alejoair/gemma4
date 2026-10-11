@@ -154,6 +154,8 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
+Local runs cannot resolve requests tasks: the local wheels lack `pytest-httpbin`, `httpbin` and `trustme`, so `tests/test_requests.py` errors even with the reference patch (checked 2026-10-11); compare those patches with the reference by hand.
+
 Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
 (vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
 `generation_config.json` sampling defaults (see below); before that its budget was 3072.
