@@ -291,7 +291,39 @@ def _window(root, state, i, show=None):
     test = _test_once(root, state, p)
     if test:
         parts.append(test)
-    return '\n'.join(parts)
+    return _seen_mark(p['rel'], '\n'.join(parts))
+
+
+_SEEN = {}      # the state of this call, for _seen_mark (set by main)
+UNSEEN_OK = 3   # an edit may replace this many non-blank lines that were never shown
+
+
+def _seen_mark(rel, text):
+    """Records the numbered lines of rel shown in text ('184|...'), so that an edit can be checked against what the
+    model has read."""
+    st = _SEEN.get('state')
+    if st is None or not rel:
+        return text
+    seen = set(st.setdefault('seen', {}).get(rel, []))
+    seen.update(int(m) for m in re.findall(r'(?m)^\s*(\d+)\|', text))
+    st['seen'][rel] = sorted(seen)
+    return text
+
+
+def _unseen(root, state, rel, start, end):
+    """The non-blank lines start..end of rel that were never shown (a09: the editor replaced lines 174-281 after
+    reading 174-233, and the tests undid it three times while its reasoning, cut by the budget, never read the rest)."""
+    seen = set((state.get('seen') or {}).get(rel, []))
+    lines = _repo.read_lines(root, rel)
+    return [n for n in range(start, min(end, len(lines)) + 1) if n not in seen and lines[n - 1].strip()]
+
+
+def _show_unseen(root, state, p, start, end, unseen):
+    a, b = unseen[0], min(unseen[-1], unseen[0] + PLACE_LINES - 1)
+    view = _seen_mark(p['rel'], _lines_view(root, p['rel'], a, b, p['handle']))
+    return (f'Not applied yet: lines {a}-{unseen[-1]} are inside the edit\'s range {start}-{end} but were not shown, so '
+            'the edit would replace code not read. Here they are. Send the edit again with new lines for the whole range, '
+            f'or with a smaller range. Nothing was changed.\n{view}')
 
 
 def _goal(state, p):
@@ -1366,6 +1398,12 @@ def _edit_of_other(root, state, args):
     return head + '\n\n' + d3(root, state, args)
 
 
+def _whole_target_is_place(text, p):
+    """True when the new code's first definition has the place's own (last) name: it replaces the place."""
+    m = re.search(r'(?m)^\s*(?:async\s+)?(?:def|class)\s+(\w+)', text)
+    return bool(m) and m.group(1) == p['name'].rsplit('.', 1)[-1]
+
+
 def _whole_args(items):
     """(place id, code) for ["P1", "<whole function or class>"], else None."""
     if len(items) != 2 or not re.fullmatch(r'(?i)\W*P\d+\W*', items[0]) or not DEF_LINE.search(items[1]):
@@ -1536,7 +1574,7 @@ def _place_lines(root, p, a, b):
     lines = _repo.read_lines(root, p['rel'])
     body = _code.numbered(lines, a, b, collapse=_code.long_strings(_code.parse(''.join(lines))))
     more = f' (lines {b + 1}-{p["end"]} follow)' if b < p['end'] else ''
-    return f'Lines {a}-{b} of {p["handle"]}, the open place{more}:\n{body}'
+    return _seen_mark(p['rel'], f'Lines {a}-{b} of {p["handle"]}, the open place{more}:\n{body}')
 
 
 def _range_request(root, state, args):
@@ -1749,6 +1787,9 @@ def d3(root, state, args):
             return ('The first item is not the name of a listed place. Nothing was changed.\nPlaces:\n'
                     + '\n'.join('  ' + _place_line(q) for q in state['places']))
         i = _journal.target(state, pid)
+        unseen = _unseen(root, state, p['rel'], p['start'], p['end']) if p['name'] != MODULE else []
+        if len(unseen) > UNSEEN_OK and _whole_target_is_place(text, p):
+            return _show_unseen(root, state, p, p['start'], p['end'], unseen)
         before = _repo.read_lines(root, p['rel'])
         return _after_edit(root, state, i, p, _whole_edit(root, p, text), before)
     e = _args.edit(args)
@@ -1783,7 +1824,11 @@ def d3(root, state, args):
         state['pending_delete'] = big
         return (f'Nothing was deleted yet: {end - start + 1} lines is a large deletion, so here they are first. To '
                 f"delete them, send the same call again: ['{p['handle']}', '{start}', '{end}', 'DELETE'].\n"
-                + _lines_view(root, p['rel'], start, end, p['handle']))
+                + _seen_mark(p['rel'], _lines_view(root, p['rel'], start, end, p['handle'])))
+    if text.strip() != 'DELETE':
+        unseen = _unseen(root, state, p['rel'], start, end)
+        if len(unseen) > UNSEEN_OK:
+            return _show_unseen(root, state, p, start, end, unseen)
     state.pop('pending_delete', None)
     i = _journal.target(state, pid)
     before = _repo.read_lines(root, p['rel'])
@@ -1839,6 +1884,7 @@ def _after_edit(root, state, i, p, r, before):
                        f'Send {p["handle"]} again with a change that keeps {"these tests" if n > 1 else "this test"} '
                        'passing.', 'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
+    (state.get('seen') or {}).pop(p['rel'], None)      # the numbers moved: the next window shows the code again
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
@@ -2104,7 +2150,7 @@ def _editor_gate(root, state, args):
     if hit is not None and state['step'] in ('D3', 'D4') and (hit['id'] != mine or state.get('editor_done')) \
             and not deciding:
         # a new editor opens its place (its first call names it, often the coordinator's last call word for word)
-        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[])
+        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={})
         state['recent'], state['repeats'] = [], 0
         i = _journal.target(state, hit['id'])
         if state['plan'][i]['status'] == 'skipped':
@@ -2147,7 +2193,7 @@ def _editor_gate(root, state, args):
                 return f'{rel} has {n} lines; lines {a}-{b} do not exist.' + back
             b = min(b, n, a + PLACE_LINES - 1)
             label = rel if (not label or label == mine_name) else label
-            return _lines_view(root, rel, a, b, f'{label}, read only') + back
+            return _seen_mark(rel, _lines_view(root, rel, a, b, f'{label}, read only')) + back
     return None
 
 
@@ -2172,6 +2218,7 @@ def main(argv, role=None):
         ROLE = role
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
+    _SEEN['state'] = state
     argv = list(argv)
     while len(argv) > 1 and argv[-1].strip().lower() in ('false', 'true', 'none'):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items

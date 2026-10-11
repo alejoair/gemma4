@@ -122,3 +122,18 @@ line numbers from before its own edit. Two failures there closed the editor befo
 Session.send (system fault).
 - Fix: in the editor role, a failure or an accepted edit at a place that is not the editor's own returns to the
   editor's own place ("Back to X" with its window) while that place is still to decide.
+
+**Run a09 (2026-10-11): the flow ran end to end with no system fault.** Not resolved: 15 tool calls, 244 s,
+881-character patch.
+- The coordinator chose `resolve_redirects` in the edit step (the `_coordinator_choice` fix).
+- The editor replaced lines 174-281 of `resolve_redirects` after reading only 174-233. The tests undid it (11
+  failures), and it sent the same text three times, its reasoning cut by the budget each time before it read the rest.
+- It then made a line edit that was accepted: it drops `resp.history = hist[1:]` and checks `len(hist)`.
+- The rewrite of Session.send lost the `allow_redirects` line it had not seen and was undone.
+- The patch takes the statement's "ideally remove … entirely" (a change the statement defers) instead of the immediate
+  fix (`resp.history = hist[:]` before the append). This is a model reading error; the statement cleaner already
+  drops "ideally … later" sentences only in some forms (checklist W6).
+- Fix (B16, B11 closer): a line edit or whole-definition edit whose range holds more than 3 non-blank lines never
+  shown in this editor (or session) is not applied. The answer shows those lines ("Not applied yet: lines a-b are
+  inside the edit's range but were not shown …"). The shown lines are tracked from every numbered view and reset
+  after a kept edit and for each new editor.
