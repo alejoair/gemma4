@@ -43,6 +43,12 @@ def clean(text):
     text = re.sub(r'(?<![\w.])#\d+\b', 'the linked issue', text)
     text = re.sub(r'(?im)^\s*(should fix|fixes|closes|related to|related|see also|follow[- ]up to)\b[\s/:,a-z]*$', '',
                   text)
+    # what the PR author did, not what the code must do: "Also added the sample code as a test." became a requirement
+    # and the model spent its calls trying to write a test (local run of rich_3006); test changes never count
+    # (the verb must be about the test itself: 'adds a clearer error message ... and updates tests' is kept)
+    text = re.sub(r'(?i)(?<![^\s.!?])[^.!?\n]*\b(added|adds|add|wrote|written|included|includes)\s+(\w+\s+){0,4}?'
+                  r'(tests?|test cases?)\b[^.!?\n]*([.!?]|$)', '', text)
+    text = re.sub(r'(?i)(?<![^\s.!?])\s*with the suggested (change|fix)\s*[.!?]?', ' ', text)
     text = re.sub(r'\(\s*\)', '', text)                                         # parentheses left empty
     text = re.sub(r'(?<![\w.])@[\w-]+', '', text)
     text = re.sub(r'(?<![\w`]):[a-z_+-]+:(?![\w`])', '', text)                  # emoji shortcodes

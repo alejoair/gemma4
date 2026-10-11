@@ -985,3 +985,14 @@ the repository holds X (library and standard-library code is not searched)", in 
 choose step are searched in turn. Checklist: F9 closer (a fact instead of advice), B12 closer (no answer that reads as
 a wrong form), B5 farther (small): the answer names the text searched; reason: without it the answer does not say what
 was not found, and it is a fact about the repository, not a quote of a failed form.
+
+L3 (same task): the tests note never reached the model at the finish step: `d4` passed a test path to `d3` and then
+overwrote its answer with "Nothing left to do in this step"; the model asked for `tests`, `tests/test_repr.py`,
+`test_repr`, `tests/test_pretty.py` and looped on the last until the budget. And the cause of the test-writing was the
+script's own requirement: the copied statement's sentence "Also added the sample code as a test." (what the PR author
+did) was a requirement shown in every window. Fixes: `d4` keeps `d3`'s answer when nothing is opened; the statement
+cleaning drops sentences where the author says they added or wrote tests (in the 129 dev statements this removes only
+such remarks: "I added a test case which reproduced …", "Adds some additional tests …"; a sentence that adds behaviour
+and also updates tests, fastapi_14479, is kept), and "with the suggested change". Checklist: B12 closer (no
+requirement asks for what can never count), P7 closer (no window repeats a remark that bears on no decision), F9
+neutral.

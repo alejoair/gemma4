@@ -1876,9 +1876,8 @@ def d4(root, state, args):
         state['step'] = 'D3'
         out = d3(root, state, args)
         if state['step'] == 'D3' and state['current'] is None:
-            state['step'] = 'D4'
-            return 'Nothing left to do in this step. ' + _finish_view(root, state)
-        return out
+            state['step'] = 'D4'        # nothing was opened: d3's answer stands (the tests note, a search that found
+        return out                      # nothing), and the step stays the finish
     return 'Nothing left to do in this step. ' + _finish_view(root, state)
 
 
