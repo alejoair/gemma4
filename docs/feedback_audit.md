@@ -190,3 +190,23 @@ Session.send (system fault).
   - for a generator it shows what it yields ("it yields: yield req (line 264); yield resp (line 281)") (W3 closer);
   - the closed-editor answer ends with a ready sentence the editor can return as is (W4 closer: a filled next action);
   - the editor's place name is kept in the state, since a skip of the only place sends the plan back to choosing.
+
+**Run a12 (2026-10-11): repetition loops at temperature 0.2 (checklist B14).**
+- What worked:
+  - the coordinator delegated at once;
+  - the third identical range read got the "decide" answer and the editor moved to an edit;
+  - the window showed "it yields: yield req; yield resp".
+- What went wrong: the closed editor of Session.send sent the same two calls 7 times. Its thinking repeated one
+  sentence until the budget ("I'll use `Session.send` line numbers to see other lines." × n), and the ready sentence
+  did not stop it.
+- The same degenerate repetition appeared in a06, a11 and a12. The script cannot end an agent_tool sub-agent; only
+  the model's own text reply does.
+- B14 says near-greedy decoding causes endless repetition (Qwen3 card), and Gemma's card gives 1.0 / 0.95 / 64 "across
+  all use cases".
+- Change (one variable): the editor sub-agent samples with temperature 1.0, top_k 64, top_p 0.95. The coordinator
+  stays at 0.2 for this measurement.
+
+| Item | Effect | Why |
+|---|---|---|
+| B14 | closer | the vendor's settings for the agent that loops |
+| F7 | closer (expected) | sampling variation is what lets a loop end |

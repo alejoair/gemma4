@@ -1,4 +1,5 @@
-temperature: 0.2
+temperature: 1.0
+top_k: 64
 top_p: 0.95
 max_output_tokens: 4096
 thinking_config:
