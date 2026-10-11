@@ -76,3 +76,25 @@ In short: one binary word (the binary signal carries most of the gain: FeedbackE
 - The OpenAI "intern test" is again only in third-party copies. OpenAI's official error-return guidance was not found.
 - No controlled evidence on praise or positive messages alone.
 - FlipFlop's direction of flips (right→wrong vs wrong→right): the search summaries contradicted each other, so only the 46% and −17% are cited.
+
+## 2026-10-11 additions (literature search for the feedback audit, `docs/feedback_audit.md`)
+
+Verified on the source page unless marked (abs) = abstract only, (sum) = search summary only.
+- CriticTool, arXiv 2506.13977 (B): open models detect a failed call far more often than they classify it (Qwen2.5-72B 86.1 vs 52.8; Qwen2.5-7B 82.9 vs 44.2); retry after external errors 17.9–63.1; missed errors are retried more than three times.
+- ToolMaze "When Tools Fail", arXiv 2606.05806 (B): transient faults recovered 81.4%, permanent 38.1%, implicit permanent < 20%; fault recovery grows 4.9 pp per 10x parameters.
+- Verified Tool Calls, arXiv 2608.02645 (C, one model): postcondition checks raised success ~58 → 80%, duplicates ~42 → 20%.
+- Repair Economics, zenodo 23117824 (C weak): a multi-step recipe in an error message was half-followed (6 duplicate writes vs 3 with no warning).
+- Vendors: Anthropic "instructive error messages: what went wrong and what to try next" (V); OpenAI "don't make the model fill arguments you already know", no error guidance (V); Gemma docs: nothing on errors (V); MCP 2025-06-18: execution errors in the result with isError (V).
+- Zheng et al., arXiv 2410.08105 (C): on CodeContests simple feedback suffices; debugger-style (LDB) detail is worst (Llama 3.1 70B 26.5 vs failed-tests 29.5; 8B: every feedback ≤ single-turn); 3 turns compute-optimal.
+- RLEF, arXiv 2410.02089 (C): untrained instruct models barely use inline feedback and resubmit the same code; format: failed test, input, expected, observed.
+- Counterexamples as Feedback, arXiv 2609.02892 (C, one model, n=30): counterexamples 90% vs failure count 23%.
+- Self-Correction as Feedback Control, arXiv 2604.22273 (C, abs): iterate only while the error-introduction rate stays < ~0.5%.
+- Obey, Diverge, Collapse, arXiv 2607.04537 (C): wrong repair instructions followed in 15–44% of cases even when the model flags them; damage mostly not repaired; most recoverable fixes in the first 2 passes.
+- The Self-Correction Illusion, arXiv 2606.05976 (C): the same wrong claim is corrected +23 to +93 pp more often when framed as external (user, tool) than as the model's own thought; self-distrust prompts 0–23%.
+- Self-Correction Bench, arXiv 2507.02778 (C, abs): 64.5% blind spot for the model's own errors over 14 open models; appending "Wait" cut it 89.3%.
+- SycEval, arXiv 2502.08177 (C, sum): 14.7% regressive flips after rebuttals; 78.5% persistence.
+- SWE-Gym, arXiv 2412.21139 (B): "stuck in loop" (same action 3 times) for Qwen2.5-Coder in OpenHands: 7B 39.6%, 14B 32.1%, 32B 29.4%.
+- Failures in automated issue solving, arXiv 2509.13941 (B): flawed reasoning ~65% of failures; non-progressive loops of near-identical patches; output misread as success.
+- AgentDebug, arXiv 2509.25370 (C, abs): feedback on the root-cause step, up to +26% relative.
+- The Unreliable Progress Bar, arXiv 2609.08589 (B, abs): self-reported progress is unreliable mid-task.
+- Gap: no study varies only the wording of a tool error and measures recovery; no Gemma-specific evidence.
