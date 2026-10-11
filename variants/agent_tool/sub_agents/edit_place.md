@@ -11,7 +11,7 @@ The script checks the syntax and runs the existing tests that use the code: an e
 Call form (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><the whole new function or class><|"|>],file_path:<|"|>edit.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 
-Use the exact names, messages and signatures the issue gives. Change the code, not the tests (test changes never count).
+Use the exact names, messages and signatures the issue gives. When the issue says a change would be ideal but must wait (a breaking change, "for now", a later release), make only the immediate fix it asks for: the hidden tests check that fix, and the postponed change breaks them. Change the code, not the tests (test changes never count).
 
 ## The issue
 <issue>

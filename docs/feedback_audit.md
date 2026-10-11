@@ -153,3 +153,25 @@ Session.send (system fault).
 | R7 / F4 | neutral | the line is a quote of the issue plus a label read from its own words, not a heuristic instruction |
 | B7 / P6 | closer | what the change must not do is next to the goal, at the top of each window |
 | P7 | neutral | absent on 128 of 129 tasks |
+
+**Run a10 (2026-10-11).**
+- Result: the same 881-character patch as a09, not resolved.
+- Why the "left for later" line never appeared: the coordinator copied only the title and its search terms, so the
+  script never saw the "Ideally …" sentence. The script knows the statement only from the model's copy.
+- Other things seen:
+  - the coordinator asked to read code 3 times before delegating; the new explanation got it to delegate on the
+    third;
+  - the editor sent `'174,281,<code>'` in one item;
+  - after the finish view, a second review editor ran away to the 4,096-token limit.
+- Fixes:
+  - (prompt) a general rule, with its reason, in the editor's instruction and in the single agent's: "When the issue
+    says a change would be ideal but must wait (a breaking change, 'for now', a later release), make only the
+    immediate fix it asks for: the hidden tests check that fix, and the postponed change breaks them". This works
+    without the copy, because the issue is in the system instruction.
+  - (script) `'<a>,<b>,<code>'` in one item is read as a line edit.
+
+| Item | Effect | Why |
+|---|---|---|
+| P3 | closer | a positive rule with its reason |
+| B8 | farther (one rule more) | a09 and a10 lost the task to the postponed change; the rule is one sentence |
+| B4 | closer | one more common call shape read instead of refused |

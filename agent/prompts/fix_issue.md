@@ -22,6 +22,7 @@ The values in angle brackets are placeholders; write the real ones.
 
 ## Good to know
 - Think before each call, and put only the decision in args (names, line numbers and code): the script reads every item literally.
+- When the issue says a change would be ideal but must wait (a breaking change, "for now", a later release), make only the immediate fix it asks for: the hidden tests check that fix, and the postponed change breaks them.
 - Use the exact names, messages, exception types and signatures the issue gives, and create each new public name exactly as the issue writes it: the hidden tests call them by those names.
 - Change the code, not the tests: the hidden tests replace the test files.
 - args is always a list of strings; short_options and positional_args are not used.

@@ -2257,6 +2257,12 @@ def main(argv, role=None):
     if state['step'] in ('D3', 'D4'):
         # a range in one item ('722,735', '722-735', run a04: 5 refusals) is the two line numbers
         flat = [x for x in args if x and x.strip()]
+        joined = re.fullmatch(r'\s*(\d+)\s*[,-]\s*(\d+)\s*,(.+)', str(flat[1]), re.S) if len(flat) == 2 else None
+        if joined:
+            # a10: ['<place>', '174,281,<new code>'], the range and the code in one item
+            args = [flat[0], joined.group(1), joined.group(2), joined.group(3).lstrip('\n')]
+            key = _journal._key(state, args)
+            flat = []
         if len(flat) == 2:
             m = re.fullmatch(r'\s*(\d+)\s*(?:,|-|:|\.\.|–|to)\s*(\d+)\s*', _args.clean(str(flat[1])))
             if m:
