@@ -274,3 +274,15 @@ Session.send (system fault).
 | B12 | closer | the prompt now answers the task message's contrary instructions |
 | B16 / B9 | closer | no number in the coordinator's view invites a read |
 | W1 | neutral | the candidates keep their evidence lines (the text), without numbers |
+
+**V16 on Kaggle (2026-10-11): the 31B with the agent_tool variant, requests_7328 alone.**
+- Clean run: 11 tool calls, no malformed call, no code read by the coordinator, no loop; 352 s.
+- Flow: coordinator S0 → choose Session.send and resolve_redirects → edit_place Session.send. That editor read
+  resolve_redirects read-only, made two edits (one undone by tests, one kept) and replied. Then status →
+  edit_place resolve_redirects; that editor made one edit and replied. Then status → submit_patch.
+- Patch: `resp.history = hist[:-1]` after the append (the reference fix), plus `resp.history = history[:i]` for the
+  intermediate responses in Session.send (consistent with the hidden test).
+- Resolved 0 is not a measurement: the Kaggle sandbox, like the local one before today, has no `pytest-httpbin`, and
+  `tests/test_requests.py` errors on setup with any patch. Requests dev tasks cannot be scored on either; evals must
+  use fastapi/rich/httpx tasks.
+- Editor calls take ~30 s each on the L4s (thinking 1024), so the edit work used 250 of the 352 s.
