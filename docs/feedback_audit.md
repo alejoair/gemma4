@@ -175,3 +175,18 @@ Session.send (system fault).
 | P3 | closer | a positive rule with its reason |
 | B8 | farther (one rule more) | a09 and a10 lost the task to the postponed change; the rule is one sentence |
 | B4 | closer | one more common call shape read instead of refused |
+
+**Run a11 (2026-10-11).**
+- What worked: the coordinator copied the whole issue and delegated at once, and the "Left for later" line reached
+  the window.
+- What went wrong:
+  - the Session.send editor took `resolve_redirects` to yield the first response too;
+  - its edits built on that were undone;
+  - closed, it kept sending the same edit, its reasoning ("I am repeating myself again") cut before it replied.
+- Fixes:
+  - the window's "Code that X uses" now finds methods inherited from a base class
+    (`self.resolve_redirects` → `SessionRedirectMixin.resolve_redirects`);
+  - it ranks the members the place uses by the requirement's words;
+  - for a generator it shows what it yields ("it yields: yield req (line 264); yield resp (line 281)") (W3 closer);
+  - the closed-editor answer ends with a ready sentence the editor can return as is (W4 closer: a filled next action);
+  - the editor's place name is kept in the state, since a skip of the only place sends the plan back to choosing.

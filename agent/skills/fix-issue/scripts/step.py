@@ -469,7 +469,12 @@ def _context_view(root, p, focus=None):
     def resolve(name, how):
         found = table.find(name)
         if how == 'self':
-            return [(r, x) for r, x in found if r == p['rel'] and cls and x.name == f'{cls}.{name}']
+            own_cls = [(r, x) for r, x in found if r == p['rel'] and cls and x.name == f'{cls}.{name}']
+            if own_cls or not cls:
+                return own_cls
+            # a11: self.resolve_redirects in Session.send is defined in its base SessionRedirectMixin
+            return [(r, x) for r, x in found if x.name.endswith('.' + name) and x.kind == 'def'][:1] \
+                if len([1 for _, x in found if x.name.endswith('.' + name)]) <= 2 else []
         if how == 'name':
             if name in here:
                 return [(r, x) for r, x in found if r == p['rel'] and x.name == name]
@@ -487,9 +492,10 @@ def _context_view(root, p, focus=None):
 
     def weight(item):
         name, how = item
+        shared = sum(focus.get(t, 0) for t in _rank.tokens(name))
         if how in ('self', 'attr'):
-            return 10                       # members and properties the place reads: its direct dependencies
-        return sum(focus.get(t, 0) for t in _rank.tokens(name))
+            return 10 + shared              # members and properties the place reads: its direct dependencies
+        return shared
 
     # code that shares words with the requirements first; at most 2 that share none (near-miss context costs more than
     # it gives: Chroma, P7)
@@ -515,6 +521,12 @@ def _context_view(root, p, focus=None):
             else:
                 sig = _short_signature(x)
                 text = f'  {x.name} ({r}:{x.start}) {sig if len(sig) <= 70 else sig[:67] + "..."}'
+                body = _repo.read_lines(root, r)[x.start - 1:x.end]
+                ys = [(x.start + k, l.strip()) for k, l in enumerate(body) if re.match(r'\s*yield\b', l)]
+                if ys:
+                    # a11: the editor of Session.send took resolve_redirects to yield the first response too and lost
+                    # the place on that; what a generator yields is not in its signature (W3)
+                    text += '\n      it yields: ' + '; '.join(f'{c[:60]} (line {n})' for n, c in ys[:2])
             if chars + len(text) > USES_CHARS:
                 break
             uses.append(text)
@@ -1933,7 +1945,8 @@ def _remember_failed(state, p, r, failures):
 EDITOR_DONE = ('The work on {name} is finished here. Reply with one sentence for the coordinator, without a call: '
                'what changed at {name}, or why nothing did (name other code if the change belongs there).')
 EDITOR_CLOSED = ('Edits of {name} are closed, so this call was not run, and no further call runs in this editor. The '
-                 'coordinator waits for one sentence: what changed at {name}, or why nothing did.')
+                 'coordinator waits for one sentence: what changed at {name}, or why nothing did. If you have nothing '
+                 'to add, reply with this sentence: "{done}"')
 
 
 def _editor_done(state, head, name):
@@ -2159,16 +2172,25 @@ def _editor_gate(root, state, args):
     if hit is not None and state['step'] in ('D3', 'D4') and (hit['id'] != mine or state.get('editor_done')) \
             and not deciding:
         # a new editor opens its place (its first call names it, often the coordinator's last call word for word)
-        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={})
+        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
+                     editor_name=hit['handle'])
         state['recent'], state['repeats'] = [], 0
         i = _journal.target(state, hit['id'])
         if state['plan'][i]['status'] == 'skipped':
             state['plan'][i]['status'] = 'todo'
         state['current'], state['step'] = i, 'D3'
         return _window(root, state, i)
-    mine_name = _name_of(state, mine) if mine else ''
+    # (the name is kept: a skip of the only place sends the plan back to choosing and the places are gone)
+    mine_name = state.get('editor_name') or (_name_of(state, mine) if mine else '')
     if state.get('editor_done'):
-        return EDITOR_CLOSED.format(name=mine_name or 'this place')
+        nm = mine_name or 'this place'
+        q = _place(state, mine) if mine else None
+        q = q if q and q.get('handle') == mine_name else None
+        changed = q is not None and any(rel_ == q['rel'] and (own_ == q['name'] or own_.startswith(q['name'] + '.'))
+                                        for rel_, own_, _, _ in _status.summary(root))
+        done = (f'{nm}: the patch changes it as shown before; a later edit was undone.' if changed else
+                f'{nm} keeps its code; the change belongs elsewhere or is not needed.')
+        return EDITOR_CLOSED.format(name=nm, done=done)
     if mine is None or own is None or state['step'] not in ('D3', 'D4'):
         if not places or state['step'] not in ('D3', 'D4'):
             return ('No place is open for this editor: choosing code is the coordinator\'s step. Reply with one sentence '
