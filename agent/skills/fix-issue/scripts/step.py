@@ -2185,6 +2185,16 @@ def main(argv, role=None):
             # context is fresh; the agent_tool trace of requests_7328 found the bug on the fourth read)
             reread = (f'Lines {nums[1]}-{nums[2]} were shown a few calls ago and have not changed since: edit them, '
                       'or send [\'skip\'] if this place needs no change.')
+        elif ROLE == 'editor' and state['step'] == 'D3' and seen[-6:].count(key) >= 2:
+            # a06: the editor of Session.send asked for the same 14 lines again and again ("I'm repeating myself"),
+            # each time cut by the thinking budget before deciding; a re-read is still how a cut reasoning goes on,
+            # but the third identical one gets a different answer and the fourth moves the work on (F7)
+            mine = _name_of(state, state.get('editor_place')) if state.get('editor_place') else 'this place'
+            if seen[-6:].count(key) >= 3:
+                reread = 'MOVE_ON'
+            else:
+                reread = (f'Lines {nums[1]}-{nums[2]} were shown in the last answers and have not changed. Decide with '
+                          f'what they show: edit them, or send [\'skip\'] if {mine} needs no change.')
         range_key = key
     if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
         e = _args.edit(_place_args(state, args))
@@ -2247,7 +2257,10 @@ def main(argv, role=None):
                 scoped = _coordinator_status(root, state)
             state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
             seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
-            if reread is not None and state['step'] in ('D3', 'D4'):
+            if reread == 'MOVE_ON':
+                read = _move_on(root, state).replace('The same call came three times', 'The same lines were asked for '
+                                                     'four times')
+            elif reread is not None and state['step'] in ('D3', 'D4'):
                 read = reread
             elif scoped is not None:
                 read = scoped

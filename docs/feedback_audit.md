@@ -85,3 +85,15 @@ All 17 findings fixed in one round:
 | B9 | farther (small) | the editor can read related code; bounded: each piece once ("shown above" after), read only, and the answer ends with "Back to X" |
 | B11 | closer | dropped places are said; the finish view no longer lists a changed class as not changed |
 | P4 | closer | pressure words removed |
+
+**Run a06 (2026-10-11, after the fixes):**
+- What worked:
+  - the coordinator delegated at once, with no wasted reads;
+  - the first editor read `resolve_redirects` to its `yield`, edited, got the review, and replied in one sentence;
+  - the coordinator called `status` and moved on;
+  - the one-item range `673,748` was read.
+- New loop: the Session.send editor asked for the same lines 721-734 again and again. Its thinking, cut at the
+  budget each time, re-derived the same trace ("I'm repeating myself") and never reached a decision.
+- Fix: in the editor role, the third identical range gets "were shown in the last answers and have not changed.
+  Decide with what they show …", and the fourth moves the work on (F7, B9 closer). The first two reads stay free:
+  a re-read is still how a cut reasoning continues.
