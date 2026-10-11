@@ -270,6 +270,8 @@ def _window(root, state, i, show=None):
     if p['reason'] != 'chosen':
         head += f" Related to the chosen code ({p['reason']}): change it only if the goal needs it here, else ['skip']."
     head += f'\nGoal: {goal}'
+    for line in _deferred_lines(state):
+        head += f'\n{line}'
     if p['name'] == '<exports>':
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
@@ -606,7 +608,13 @@ def _requirements_view(state):
     for r in state['requirements']:
         kind = r['type'] if r['type'] != 'new' else 'new: ' + ', '.join(f'`{n}`' for n in r['names'])
         out.append(f'  - [{kind}] {r["text"]}')
+    out.extend(_deferred_lines(state))
     return '\n'.join(out)
+
+
+def _deferred_lines(state):
+    """What the issue itself leaves for later, in its own words (not part of this fix)."""
+    return [f'Left for later by the issue (not part of this fix): {d}' for d in state.get('deferred') or []]
 
 
 def _candidates_view(state, title='Candidates (the code most related to the statement):'):
@@ -752,6 +760,7 @@ def s0(root, state, args):
     extra = [t.strip() for a in items[1:] for t in re.split(r'[\n,;]', a) if t.strip()]
     text = _statement.clean(statement) or statement
     _state.save('statement', {'text': text, 'terms': extra})
+    state['deferred'] = _statement.deferred(statement)
     reqs = []
     index = _rank.Index(root)
     for i, r in enumerate(_statement.requirements(text) or [text[:300]], 1):

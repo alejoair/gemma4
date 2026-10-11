@@ -137,3 +137,19 @@ Session.send (system fault).
   shown in this editor (or session) is not applied. The answer shows those lines ("Not applied yet: lines a-b are
   inside the edit's range but were not shown …"). The shown lines are tracked from every numbered view and reset
   after a kept edit and for each new editor.
+
+**What the issue leaves for later (2026-10-11, after a09).**
+- Problem: the model followed the issue's "Ideally, we should remove intermediate `.history` assignment entirely",
+  which the issue itself postpones ("a breaking change we'll have to wait on … this should fix the immediate issue for
+  now").
+- Fix: `_statement.deferred` finds an "ideally / eventually / in a future PR" sentence, but only when the issue also
+  says it must wait ("breaking change", "for now", "later", "separate PR"). That sentence is shown, in the issue's
+  own words, under the requirements and under the Goal line of every window: "Left for later by the issue (not part
+  of this fix): …".
+- Over the 129 dev tasks it fires once (requests_7328), with no false positive.
+
+| Item | Effect | Why |
+|---|---|---|
+| R7 / F4 | neutral | the line is a quote of the issue plus a label read from its own words, not a heuristic instruction |
+| B7 / P6 | closer | what the change must not do is next to the goal, at the top of each window |
+| P7 | neutral | absent on 128 of 129 tasks |

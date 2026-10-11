@@ -161,6 +161,26 @@ META = re.compile(r"(?i)\b(this (pr|pull request)|the (new )?tests? (created|wri
                   r"in a (future|follow[- ]up)|for now|will be deprecated|later removed|once there's)\b")
 
 
+IDEAL = re.compile(r"(?i)\b(ideally|in an ideal world|eventually|in the long run|in a (future|follow[- ]up)( pr| release| version)?)\b")
+POSTPONED = re.compile(r"(?i)\b(breaking change|have to wait|we'll have to wait|for now|later|in a (future|follow[- ]up)|"
+                       r"not (in|for) this (pr|pull request)|separate (pr|pull request|issue))\b")
+
+
+def deferred(text):
+    """The changes the issue itself leaves for later: a sentence that says what would ideally be done, when the issue
+    also says it must wait ("breaking change", "for now", "later"). a09: the model removed the assignment the issue
+    calls ideal but postponed, instead of the immediate fix. Read from the issue's own words, at most 2."""
+    flat = re.sub(r'```.*?(```|\Z)', '', text, flags=re.S)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', re.sub(r'\s+', ' ', flat)) if s.strip()]
+    if not any(POSTPONED.search(s) for s in sentences):
+        return []
+    out = []
+    for s in sentences:
+        if IDEAL.search(s) and len(s) > 20:
+            out.append(s if len(s) <= 200 else s[:197] + '...')
+    return out[:2]
+
+
 def requirements(text):
     """The requests of a cleaned statement, at most MAX_REQUIREMENTS: the title, every bullet item, and the body
     sentences that name code (in backticks or in a code shape). Code blocks are left out (they show, they do not
