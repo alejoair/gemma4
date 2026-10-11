@@ -210,3 +210,14 @@ Session.send (system fault).
 |---|---|---|
 | B14 | closer | the vendor's settings for the agent that loops |
 | F7 | closer (expected) | sampling variation is what lets a loop end |
+
+**Run a13 (2026-10-11), the editor at temperature 1.0.**
+- No repetition loop this time (one run, not yet a measurement).
+- Three system faults, fixed:
+  1. an internal `IndexError` in `_failed` (the editor branch read the plan after a second failure had emptied it);
+  2. `['src/requests/sessions.py:160', '160', '285']` was refused as a form never accepted. A `file.py:N` item before
+     two numbers, or `file.py:a-b` alone, is now a range;
+  3. the plan went back to choosing and the coordinator called edit_place with other code, so the editor could not
+     open it (D1) and looped. In D1, the editor's request naming code is now taken as the coordinator's choice: it
+     is chosen and opened.
+- The model still misreads what the redirect generator yields; that is the model, not the system.

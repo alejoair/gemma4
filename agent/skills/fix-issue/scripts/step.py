@@ -1959,6 +1959,7 @@ def _editor_done(state, head, name):
 
 def _failed(root, state, i, message, error):
     name = _name_of(state, state['plan'][i]['place'])  # before the plan may be emptied
+    failed_place = state['plan'][i]['place']
     move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
@@ -1967,7 +1968,7 @@ def _failed(root, state, i, message, error):
     left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
     if ROLE == 'editor':
         mine = state.get('editor_place')
-        if mine and state['plan'][i]['place'] != mine:
+        if mine and failed_place != mine and _journal.plan_entry(state, mine) is not None:
             # a08: the editor of Session.send edited resolve_redirects (done by an earlier editor) and failed twice;
             # that closed the editor before it decided anything on its own place. Its own place stays open
             j = _journal.target(state, mine)
@@ -2182,6 +2183,23 @@ def _editor_gate(root, state, args):
         return _window(root, state, i)
     # (the name is kept: a skip of the only place sends the plan back to choosing and the places are gone)
     mine_name = state.get('editor_name') or (_name_of(state, mine) if mine else '')
+    if state['step'] == 'D1' and len(items) == 1 and NAME_LIKE.fullmatch(name):
+        # a13: the plan went back to choosing (the only place failed twice) and the coordinator called edit_place
+        # with other code; the request is the coordinator's choice, so it is chosen here and its editor opens it
+        c = _match(state.get('candidates') or [], name, fuzzy=False)
+        if c is None:
+            found = [x for x in _resolve(root, [name]) if not _repo.is_doc_path(x['rel'])]
+            c = found[0] if found else None
+        if c is not None:
+            _choose_code(root, state, c)
+            hit = _match(state.get('places') or [], c.get('handle') or c['name'], fuzzy=False)
+            if hit is not None:
+                state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
+                             editor_name=hit['handle'])
+                state['recent'], state['repeats'] = [], 0
+                i = _journal.target(state, hit['id'])
+                state['current'], state['step'] = i, 'D3'
+                return _window(root, state, i)
     if state.get('editor_done'):
         nm = mine_name or 'this place'
         q = _place(state, mine) if mine else None
@@ -2276,6 +2294,15 @@ def main(argv, role=None):
         skip = target is not None and target != state['plan'][state['current']]['place']
     if any(re.sub(r'[\W_]', '', _args.clean(x).lower()) in ('submitpatch', 'submit') for x in args if x):
         skip = True
+    if args and re.fullmatch(r'\s*[\w./-]+\.py:\d+(-\d+)?\s*', str(args[0] or '')):
+        # 'src/requests/sessions.py:160' followed by two numbers, or 'file.py:676-751' alone (a13, a10): a range
+        m = re.fullmatch(r'\s*([\w./-]+\.py):(\d+)(?:-(\d+))?\s*', str(args[0]))
+        rest = [x for x in args[1:] if x and str(x).strip()]
+        if len(rest) >= 2:
+            args = [m.group(1)] + list(args[1:])
+        elif not rest and m.group(3):
+            args = [m.group(1), m.group(2), m.group(3)]
+        key = _journal._key(state, args)
     if state['step'] in ('D3', 'D4'):
         # a range in one item ('722,735', '722-735', run a04: 5 refusals) is the two line numbers
         flat = [x for x in args if x and x.strip()]
