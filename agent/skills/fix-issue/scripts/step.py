@@ -271,7 +271,7 @@ def _window(root, state, i, show=None):
         members = _members(root, p)
         if members:
             body = members + '\n' + body
-    parts = [head, body]
+    parts = [head, _patch_here(root, p), body] if _patch_here(root, p) else [head, body]
     imports = _imports_view(root, p)
     if imports:
         parts.append(imports)
@@ -293,6 +293,31 @@ def _window(root, state, i, show=None):
                  f"related code replace the places not edited yet; the edits made stay). A file name, a text to find "
                  f"or a file with two line numbers gives the functions and classes there, to choose from.")
     return '\n'.join(parts)
+
+
+def _patch_here(root, p):
+    """The patch's change inside place p, as git diff hunks, or ''. A place opened again after an edit shows the code as
+    it is now; without its diff the model took the new code for the old and edited again (local run of rich_3006 with
+    the 26B: "I haven't actually applied the fix yet ... the code already has `is`", 20 calls after the right edit)."""
+    if p['name'] == '<exports>':
+        return ''
+    diff = _repo.git(root, 'diff', '-U1', '--', p['rel']) or ''
+    hunks, cur = [], None
+    for line in diff.splitlines():
+        m = re.match(r'@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+        if m:
+            a = int(m.group(1))
+            b = a + max(int(m.group(2) if m.group(2) is not None else 1), 1) - 1
+            cur = [line] if a <= p['end'] and p['start'] <= b else None
+            if cur is not None:
+                hunks.append(cur)
+        elif cur is not None and line[:1] in ' +-':
+            cur.append(line)
+    if not hunks:
+        return ''
+    body = '\n'.join(l for h in hunks for l in h[1:])
+    return (f'Your patch already changes {p["handle"]} (the numbered code below is the code now, with this change):\n'
+            f'{body}')
 
 
 def _owner_class(root, p):
@@ -776,10 +801,28 @@ SEARCH_LINES = 3    # matching lines shown under one candidate (as grep would sh
 SEARCH_WORDS = ('search', 'grep', 'find', 'look for', 'search for')
 
 
+def _is_tests(text):
+    """A test directory or test file named without line numbers ('tests/', 'tests/test_repr.py')."""
+    t = _args.clean(text or '').strip('/')
+    return bool(t) and '\n' not in t and (t in _repo.TEST_DIRS or _repo.is_test_path(t if t.endswith('.py') else
+                                                                                       t + '/x.py'))
+
+
+TESTS_NOTE = ('Test files are not changed here: the hidden tests replace them, and the tests the issue mentions are '
+              'written by its authors. Every edit is checked by running the existing tests that use the changed code '
+              '("Kept and checked" means they passed); to see how a test uses some code, send the test file with two '
+              'line numbers.')
+
+
 def _search_query(items):
     """The text of a search the model wrote as one ('search', 'X') or ('search X'), else None."""
     if len(items) == 2 and _args.clean(items[0]).lower().strip(' :') in SEARCH_WORDS:
         return _search_text(items[1])
+    if len(items) == 2 and re.fullmatch(r'[\w./-]+\.py', _args.clean(items[0]).strip('/')) and \
+            not DEF_LINE.search(items[1]) and '\n' not in items[1].strip() and \
+            not _args.clean(items[1]).isdigit():
+        # ['rich/repr.py', 'param.empty']: the text in that file (local run of rich_3006: 6 such calls)
+        return f'{_search_text(items[1])} in {_args.clean(items[0]).strip("/")}'
     if len(items) == 1:
         m = re.match(r'(?i)^\s*(?:search for|search|grep|find|look for)\s*:?\s+(.+)$', items[0].strip())
         if m and '\n' not in m.group(1):
@@ -992,6 +1035,9 @@ def d1(root, state, args):
         return ('In this step code is chosen; nothing is open to skip or finish. ' + _candidates_view(state)
                 + '\n\nChoose the code to change.')
     items = [a for a in args if a and a.strip()]
+    if len(items) == 1 and _is_tests(items[0]):
+        _state.record({'look': 'tests', 'q': items[0][:120], 'step': state['step']})
+        return TESTS_NOTE + '\n\n' + _candidates_view(state) + '\n\nChoose the code to change.'
     edited = _edit_of_other(root, state, args)
     if edited is not None:
         return edited
@@ -1618,6 +1664,9 @@ def d3(root, state, args):
         if move == 'back':
             return head + ' Nothing was changed, so choose again.\n\n' + _candidates_view(state)
         return head + '\n\n' + _finish_view(root, state)
+    if single and _is_tests(single):
+        _state.record({'look': 'tests', 'q': single[:120], 'step': state['step']})
+        return TESTS_NOTE + '\n\n' + (_window(root, state, cur) if cur is not None else _finish_view(root, state))
     query = _search_query(items)
     if query:
         here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None else None

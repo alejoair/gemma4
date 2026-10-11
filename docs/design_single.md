@@ -936,3 +936,41 @@ V14, so it is not evidence. Row in `VERSIONS.md`. Per-answer counts: `tools/trac
 
 Open: re-choosing code already seen. The next step is to find out from the traces why the model chooses the same
 code again (the window compacted away, or a window that does not answer what it looks for) before any change.
+
+### Local run L1 (2026-10-11): rich_3006 with the 26B A4B, monitored call by call
+
+`tools/local_eval.py` (new): the competition harness (swegemma 0.2.11, subprocess sandbox, the same compaction and
+budgets as `tools/kaggle_eval.py`) with the model served by the gateway (`gemma-26b`, reasoning budget 512, MTP on).
+
+Result: **resolved** (the right edit, `==` → `is`, at 28 s; submit_patch at 56 s), but the agent went on for 27 more
+calls until the 30-call budget. Every call was read; the faults of the system:
+1. **The model did not know its edit was made.** It opened the place again after submitting, saw `is` in the code and
+   wrote "I haven't actually applied the fix yet" and "the code already has `is` … maybe the issue was already fixed";
+   20 calls of doubt and one more edit followed. The window showed the code as it is now, with nothing saying what the
+   patch changed there (the progress line says only "+1 -1"). → A place the patch changes shows that change, as git
+   diff lines, before its numbered code (`_patch_here`).
+2. **It wanted to see or add tests** ("Also added the sample code as a test" in the statement): `tests/` and
+   `tests/test_repr.py` were answered "Nothing left to do in this step", 6 calls. → A test directory or test file
+   without line numbers is answered with the facts: test files are not changed (the hidden tests replace them), every
+   edit was checked with the existing tests that use the changed code, and a test file with two line numbers shows a
+   test (`TESTS_NOTE`).
+3. **A search inside a file**, `['rich/repr.py', 'param.empty']` (6 calls), was taken as the file name alone. → `[file,
+   text]` is the text searched in that file.
+4. It called step.py after submit_patch (the harness does not end the task there; only the last submission counts).
+   Mostly a consequence of 1; not changed.
+
+Check against `docs/llm_checklist.md`:
+
+| Item | Verdict | Why |
+|---|---|---|
+| W3 | **closer** | The window shows what the patch already changed in the place |
+| W5 | **closer** | The change is shown as git diff lines |
+| W6 | **closer** | `[file, text]` is read as the model meant it |
+| B4 | **closer** | One more natural spelling of a search is understood instead of refused |
+| B7 | farther (small) | A changed place's window grows by its diff lines. Reason: without them the model edited again |
+| B9 | **closer** | 'tests/' gets a fact and the current step, not a dead end that invites more tries |
+| B11 | **closer** | What is done is stated from git, not left to the model's memory |
+| B12 | **closer** | "Nothing left to do" no longer answers a request the model can rephrase forever |
+| F5 | **closer** | Knowing what is done: the place's own diff |
+| F9 | neutral | The tests note is facts plus one form |
+| others | neutral | No new form; the edit and choose forms are unchanged |
