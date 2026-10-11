@@ -1003,3 +1003,14 @@ the sample code as a test." (5 words between "added" and "test"; the filter allo
 dev statements still removes only the authors' remarks about tests. Also seen: 2 calls whose args mixed JSON and the
 answer forms' single quotes (`"auto.do_replace.auto_rich_repr', '        def ..."`) and were rejected by the ADK
 before reaching the script ("Argument 'skill_name' is required"): a B4/B15 cost of the single-quoted forms, to watch.
+
+L5 (same task): the requirement is clean now; resolved, submit_patch at 45 s. Two more needs seen in every local run:
+(1) **args packed with the forms' single quotes** (`"Name', '<code>"`, one string): split into the intended items
+(`_args.split_single_quoted`; a line edit `"Name', '79', '79', '<lines>"` too); (2) **code to run** (a reproduction
+starting with imports, `python -c …`, `pytest …`, `ls`): answered with the facts (no shell or Python command here; the
+existing tests that use the changed code ran after the edit; the hidden tests with the issue's example run after
+submit_patch) and the current step, instead of an echo of the code ("Nothing in the repository holds import inspect
+…") or "Nothing left to do". Checklist: B4 closer (a natural mis-quoting is repaired), B5 closer (no failed input is
+quoted back), B12 closer, F9 neutral (facts), W3 neutral. Open, for the design: the model wants to run the issue's
+example after an edit (all five runs); the script could run the statement's example itself after an edit and report
+it (F2: expected vs actual) — to be weighed against the D3 redesign's removal of `python -c` (it was used to explore).

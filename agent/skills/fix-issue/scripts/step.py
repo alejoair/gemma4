@@ -815,6 +815,22 @@ TESTS_NOTE = ('Test files are not changed here: the harness removes every change
               'file with two line numbers.')
 
 
+RUN_NOTE = ('Code is not run here: there is no shell and no Python command. The check of a change is the existing '
+            'tests that use the changed code, run after every edit ("Kept and checked" means they passed); the hidden '
+            'tests, with the issue\'s own example, run after submit_patch.')
+
+
+def _is_code_to_run(text):
+    """A command or a script the model wants to run to check its change ('python -c ...', 'pytest ...', a reproduction
+    starting with imports), seen in every local run of rich_3006 with the 26B."""
+    t = (text or '').strip().strip('`').strip()
+    first = t.split('\n', 1)[0].strip()
+    if re.match(r'(?i)(python3?|pytest|pip|bash|sh|ls|cat)(\s|$)', first):
+        return True
+    # a script: it starts with imports (a definition sent as an edit starts with its def, class or decorator)
+    return '\n' in t and re.match(r'(import \w|from [\w.]+ import )', first) is not None
+
+
 def _search_query(items):
     """The text of a search the model wrote as one ('search', 'X') or ('search X'), else None."""
     if len(items) == 2 and _args.clean(items[0]).lower().strip(' :') in SEARCH_WORDS:
@@ -1950,6 +1966,7 @@ def main(argv):
     argv = list(argv)
     while len(argv) > 1 and argv[-1].strip().lower() in ('false', 'true', 'none'):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
+    argv = _args.split_single_quoted(argv)
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     state['calls'] = state.get('calls', 0) + 1
@@ -1999,7 +2016,13 @@ def main(argv):
                    + (f'; its answer began: {before[:160].rstrip(".")}' if before else '') + '.\n\n' + _current_view(root, state))
     else:
         try:
-            read = _range_request(root, state, args) if state['step'] in ('D1', 'D3', 'D4') else None
+            items0 = [a for a in args if a and a.strip()]
+            if state['step'] in ('D1', 'D3', 'D4') and len(items0) == 1 and _is_code_to_run(items0[0]):
+                _state.record({'look': 'run', 'q': items0[0][:120], 'step': state['step']})
+                out = RUN_NOTE + '\n\n' + _current_view(root, state)
+                read = out
+            else:
+                read = _range_request(root, state, args) if state['step'] in ('D1', 'D3', 'D4') else None
             out = read if read is not None else STEPS[state['step']](root, state, args)
         except Exception as e:      # never a traceback for the model: say what happened and the call to make
             _state.record({'error': f'{type(e).__name__}: {e}'})

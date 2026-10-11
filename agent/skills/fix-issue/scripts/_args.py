@@ -49,6 +49,24 @@ def unpack(args):
     return args
 
 
+def split_single_quoted(args):
+    """One item that holds a list written with the answer forms' single quotes ("Name', '<code>" or "Name', '79', '79',
+    '<lines>"): the separate items. The ADK passes it as one string when the model mixes those quotes into JSON (local
+    run of rich_3006 with the 26B: "auto.do_replace.auto_rich_repr', '        def auto_rich_repr(...)..."). Other
+    arguments are returned as they are."""
+    args = [a for a in args if a is not None]
+    if len(args) != 1 or not re.match(r"\s*\[?\s*'?[\w./:<>-]{1,200}?'\s*,\s*'", args[0]):
+        return args
+    raw = args[0].strip().lstrip('[').strip().lstrip("'")
+    parts = re.split(r"'\s*,\s*'", raw, maxsplit=3)
+    parts[-1] = re.sub(r"'\s*\]?\s*$", '', parts[-1])
+    if '\n' not in parts[-1] and '\\n' in parts[-1]:
+        parts[-1] = parts[-1].replace('\\n', '\n').replace('\\"', '"')
+    if len(parts) == 4 and not (parts[1].strip().isdigit() and parts[2].strip().isdigit()):
+        return args
+    return parts
+
+
 def split_escaped(args):
     """One item that holds a whole argument list (quotes escaped or not), as the model writes it after the history is
     compacted ('P3\\", \\"378\\", \\"399\\", \\"<code>'): the separate items. Other arguments are returned as they
