@@ -153,7 +153,7 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
-Local runs are not Kaggle runs: the model is the 12B, not the 31B, and llama.cpp applies `min_p 0.05` by default
+Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
 (vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
 `generation_config.json` sampling defaults (see below); before that its budget was 3072.
 
@@ -176,11 +176,17 @@ Local runs are not Kaggle runs: the model is the 12B, not the 31B, and llama.cpp
 
 A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
 virtual con CLI", via Remote Control) runs the local infrastructure:
-- `https://llm.rayflow.dev`: llama.cpp `llama-server` with `gemma-12b` (google/gemma-4-12b-qat Q4_0 GGUF, context
-  32768, parallel 1, RTX 3090). Since 2026-10-10 23:21 UTC: `-c 32768 -ngl 99 --parallel 1 --jinja
+- `https://llm.rayflow.dev`: llama.cpp `llama-server`. **Since 2026-10-11 the model is `gemma-26b`** (Gemma 4 26B A4B
+  QAT Q4_0, MoE with 3.8B active parameters; the 12B, `gemma-12b`, until then). llama-server does not check the
+  `model` field: send `gemma-26b` so results are not mixed up. Options: `-c 32768 -ngl 99 --parallel 1 --jinja
   --reasoning-budget 512 --temp 1.0 --top-k 64 --top-p 0.95 -fa on` (Kaggle's thinking budget and the model's
-  defaults for unset parameters; 8.9 GB VRAM). The budget is global: thinking can be turned off per request but a
-  per-request budget is ignored. It can restart the server with other options or models.
+  defaults for unset parameters) plus MTP speculative decoding (`--spec-type draft-mtp`, unsloth's
+  `mtp-gemma-4-26B-A4B-it.gguf`, `--spec-draft-n-max 3`). Measured by the peer: 16.3 GB VRAM; generation 126 tok/s
+  without MTP, 142-173 with it; prompt 3,800 tok/s without MTP, 3,455 with it (the 12B: 54-65 and 2,700). With MTP
+  the outputs differ from those without it, even at temperature 0: compare runs only within one configuration. The
+  12B configs are kept on the gateway (`llama-12b.json`, `watchdog-12b.json`). The reasoning budget is global:
+  thinking can be turned off per request but a per-request budget is ignored. The peer can restart the server with
+  other options or models.
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
 
