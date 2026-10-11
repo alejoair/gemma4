@@ -46,7 +46,7 @@ def clean(text):
     # what the PR author did, not what the code must do: "Also added the sample code as a test." became a requirement
     # and the model spent its calls trying to write a test (local run of rich_3006); test changes never count
     # (the verb must be about the test itself: 'adds a clearer error message ... and updates tests' is kept)
-    text = re.sub(r'(?i)(?<![^\s.!?])[^.!?\n]*\b(added|adds|add|wrote|written|included|includes)\s+(\w+\s+){0,4}?'
+    text = re.sub(r'(?i)(?<![^\s.!?])[^.!?\n]*\b(added|adds|add|wrote|written|included|includes)\s+(\w+\s+){0,6}?'
                   r'(tests?|test cases?)\b[^.!?\n]*([.!?]|$)', '', text)
     text = re.sub(r'(?i)(?<![^\s.!?])\s*with the suggested (change|fix)\s*[.!?]?', ' ', text)
     text = re.sub(r'\(\s*\)', '', text)                                         # parentheses left empty

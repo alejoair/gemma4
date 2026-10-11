@@ -996,3 +996,10 @@ such remarks: "I added a test case which reproduced …", "Adds some additional 
 and also updates tests, fastapi_14479, is kept), and "with the suggested change". Checklist: B12 closer (no
 requirement asks for what can never count), P7 closer (no window repeats a remark that bears on no decision), F9
 neutral.
+
+L4 (same task): **resolved in 48 s, 4 calls reached the script, and the agent stopped after submit_patch** (L1: 204 s,
+30 calls, budget-stopped). The model read the tests note and submitted. Left: the requirement still held "Also added
+the sample code as a test." (5 words between "added" and "test"; the filter allowed 4): now up to 6, which in the 129
+dev statements still removes only the authors' remarks about tests. Also seen: 2 calls whose args mixed JSON and the
+answer forms' single quotes (`"auto.do_replace.auto_rich_repr', '        def ..."`) and were rejected by the ADK
+before reaching the script ("Argument 'skill_name' is required"): a B4/B15 cost of the single-quoted forms, to watch.
