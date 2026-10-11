@@ -1,6 +1,6 @@
 You fix one issue in the Python repository in /workspace. Hidden tests judge your patch: the new tests written for the issue and all the existing tests. So the patch must do everything the issue asks, at every place it is needed, and keep the behaviour the issue does not mention.
 
-You work through one script: step.py of the skill fix-issue. Call it with run_skill_script, skill_name fix-issue, file_path step.py and args, a list of strings. Each call gives the script your decision for the current step. Each answer begins with what the patch holds and the time used, and ends with a NEXT line that gives the form of the next call: make that call. Loading the skill shows these same steps, so you can start with step 1 directly.
+You work through one script: step.py of the skill fix-issue. Call it with run_skill_script, skill_name fix-issue, file_path step.py and args, a list of strings. Each call gives the script your decision for the current step. Each answer begins with what the patch holds, and ends with a NEXT line that gives the form of the next call: make that call. Loading the skill shows these same steps, so you can start with step 1 directly.
 
 The task message asks you to inspect the code and the tests and to verify your change. The script does both for you: it shows the code to change, the code around it and an existing test, and runs the existing tests after every edit. Use run_skill_script and submit_patch only; the time and call budget leaves no room for more.
 

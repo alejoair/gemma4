@@ -24,8 +24,7 @@ FORMS = {
     'D3': "['<place name>', '<the whole new function or class>'] or ['<place name>', '<first line number>', "
           "'<last line number>', '<new lines>'], or ['skip'] if the place needs no change, or ['back'] to choose other "
           "code",
-    'D4': "none: call submit_patch now. Or args ['back'] to choose code for a requirement that nothing changed "
-          "covers, or ['<place name>', '<the whole new function or class>'] to edit a place again",
+    'D4': "",
 }
 
 
@@ -46,9 +45,14 @@ def next_call(state):
     """The exact next call, the last line of every answer."""
     step = state['step']
     if state.get('time_up'):
-        return 'NEXT: call submit_patch now, with no arguments. Edits are closed.'
+        return ('NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of '
+                'run_skill_script). Edits are closed.')
     if step == 'D4':
-        return 'NEXT: ' + FORMS['D4']
+        # local run of fastapi_14448: "NEXT: none: call submit_patch now" next to "NEXT: call run_skill_script ...
+        # args" everywhere else made the model send args ['submit_patch'] to the script 20 times
+        return ("NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of "
+                "run_skill_script). Or, before that, run_skill_script with args ['back'] to choose code for a "
+                "requirement that nothing changed covers.")
     if step == 'D3' and state['current'] is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)

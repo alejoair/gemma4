@@ -48,6 +48,19 @@ def main() -> None:
 
     litellm.drop_params = True
     install_litellm_reasoning_patch()
+    dump = os.environ.get('SWE_DUMP_REQUESTS')
+    if dump:
+        # every request as sent to the model (messages and tools), one JSON line each: what the model really reads
+        import json
+        from litellm.integrations.custom_logger import CustomLogger
+
+        class _Dump(CustomLogger):
+            def log_pre_api_call(self, model, messages, kwargs):
+                extra = kwargs.get('optional_params') or {}
+                with open(dump, 'a', encoding='utf-8') as fh:
+                    fh.write(json.dumps({'messages': messages, 'tools': extra.get('tools')}, default=str) + '\n')
+
+        litellm.callbacks = [_Dump()]
     args.out.mkdir(parents=True, exist_ok=True)
     agent_dir = args.out / 'agent'
     if agent_dir.exists():

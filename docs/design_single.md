@@ -1134,3 +1134,16 @@ Then (the user's point): a call cap only ends a run before its time; time alone 
 budget; a call count against a cap that never binds is noise). Also: `<file> top level` (how the system instruction
 says to add an import) was answered "Nothing in the repository holds …" in the edit step (the name pattern refused the
 space), and choosing it replaced the plan: the top level of a file the plan works in now joins the plan.
+
+fastapi_14448 (local batch, task 4): at the finish step the model sent args `['submit_patch']` to the script 20 times:
+the D4 NEXT read "NEXT: none: call submit_patch now" while every other NEXT reads "call run_skill_script … args", and
+the script answered each repeat with "call submit_patch", which the model took as what it was doing. The D4 and
+time-up NEXT lines now say "call the tool submit_patch, with no arguments (it is its own tool, not an argument of
+run_skill_script)", and args naming submit_patch are answered with that fact (never counted as a repeat). Checklist:
+W4 closer (an unambiguous next call), B12 closer, F7 closer (the loop ends with the right call). Also: code in a file
+the plan works in joins the plan instead of replacing it (the model chose four `Dependant` members in turn, each
+dropping the others), and the budget line is gone from the answers (the user's decision: the script closes edits at
+5.7 min and the harness keeps the diff, so the model does not manage time; B10 is now met by the script, not by the
+model). `tools/local_eval.py` can dump every request as sent (`SWE_DUMP_REQUESTS`): the fixed part of each request is
+about 4,075 tokens (our prompt ~1,500, ADK's skill text ~450, the task message ~1,470 with a 700-token directory tree,
+tool definitions 646), 28% of the compaction threshold.

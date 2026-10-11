@@ -1239,12 +1239,14 @@ def _open_named(root, state, text):
         return _search_view(root, state, _search_text(text), prefer=here)
     _state.record({'look': 'name', 'q': x[:120], 'step': state['step']})
     c = found[0]
-    if c['name'] == MODULE and any(_place(state, e['place'])['rel'] == c['rel'] for e in state.get('plan') or []):
-        # the top level of a file the plan works in (its imports, a constant): it joins the plan, which stays (the
-        # system instruction says to add an import this way; replacing the plan lost the places left)
-        old = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], MODULE)), None)
+    if any(_place(state, e['place'])['rel'] == c['rel'] for e in state.get('plan') or []):
+        # code of a file the plan works in (its top level, a sibling method) joins the plan, which stays: the system
+        # instruction says to add an import this way, and replacing the plan made the model ping-pong between members
+        # of one class, each choice dropping the other (local run of fastapi_14448: Dependant._unwrapped_call and
+        # Dependant.is_coroutine_callable chosen in turn). Code elsewhere still replaces the places not edited yet.
+        old = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name'])), None)
         if old is None:
-            old = {'rel': c['rel'], 'name': MODULE, 'start': c['start'], 'end': c['end'], 'reason': 'chosen',
+            old = {'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'], 'reason': 'chosen',
                    'id': f'P{len(state["places"]) + 1}'}
             state['places'].append(old)
             _set_handles(state['places'])
@@ -1954,7 +1956,7 @@ def _progress(root, state):
     elif state['step'] == 'D4':
         now = 'finishing'
     try:
-        return _status.progress_line(root, now, left) + '\n' + _journal.budget_line(state)
+        return _status.progress_line(root, now, left)
     except Exception as e:      # the recap must never cost the answer
         _state.record({'error': f'progress: {type(e).__name__}: {e}'})
         return ''
@@ -1984,6 +1986,8 @@ def main(argv):
         # opening another listed place is a move, not a repeat
         target = _listed_place(state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
+    if any(re.sub(r'[\W_]', '', _args.clean(x).lower()) in ('submitpatch', 'submit') for x in args if x):
+        skip = True
     nums = [x for x in args if x and x.strip()]
     if len(nums) == 3 and all(_args.clean(str(x)).isdigit() for x in nums[1:3]):
         # a range read again is not a loop: the lines may have been compacted away, and the answer is short. The
@@ -2033,7 +2037,14 @@ def main(argv):
             items0 = [a for a in args if a and a.strip()]
             state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
             seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
-            if seen_fail and state['step'] in ('D1', 'D3', 'D4'):
+            if items0 and all(re.sub(r'[\W_]', '', _args.clean(a).lower()) in ('submitpatch', 'submit', 'submitpatchtool')
+                              for a in items0):
+                read = ('submit_patch is a tool of its own, not an argument of this script, so nothing was done. To '
+                        'submit, call the tool submit_patch with no arguments, instead of run_skill_script.\n\n'
+                        + _finish_view(root, state))
+                if state['step'] == 'D3' and state.get('current') is not None:
+                    read = read.replace(_finish_view(root, state), _window(root, state, state['current']))
+            elif seen_fail and state['step'] in ('D1', 'D3', 'D4'):
                 # local run of requests_7328: the same failing edit was sent 5 times, each one run with its tests
                 # (about 20 s) and undone by the same 3 failures (F6: a third try of the same thing gains nothing)
                 handle, fails = seen_fail
