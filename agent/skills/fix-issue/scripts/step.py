@@ -1842,6 +1842,12 @@ def _after_edit(root, state, i, p, r, before):
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
+    if ROLE == 'editor' and state.get('editor_place') and state['plan'][i]['place'] != state['editor_place']:
+        j = _journal.target(state, state['editor_place'])
+        if state['plan'][j]['status'] == 'todo':
+            # an edit of other code by this editor is kept; its own place is still to decide
+            state['current'], state['step'] = j, 'D3'
+            return head + f'\n\nBack to {_name_of(state, state["editor_place"])}:\n\n' + _window(root, state, j)
     if ROLE == 'editor':
         # the place stays open with the diff: run a04 (requests_7328) saw its own wrong deletion in this diff and
         # sent the right fix, which a closed editor refused 5 times (F1: told where, it corrects well)
@@ -1892,6 +1898,14 @@ def _failed(root, state, i, message, error):
     message = re.sub(r'\nSend \S+ again with a change that keeps (these tests|this test) passing\.', '', message)
     left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
     if ROLE == 'editor':
+        mine = state.get('editor_place')
+        if mine and state['plan'][i]['place'] != mine:
+            # a08: the editor of Session.send edited resolve_redirects (done by an earlier editor) and failed twice;
+            # that closed the editor before it decided anything on its own place. Its own place stays open
+            j = _journal.target(state, mine)
+            if state['plan'][j]['status'] != 'done' or state.get('editor_review'):
+                state['current'], state['step'] = j, 'D3'
+                return f'{message}\n{left}\n\nBack to {_name_of(state, mine)}:\n\n' + _window(root, state, j)
         return _editor_done(state, f'{message}\n{left}', name)
     if state['step'] == 'D3':
         return f'{message}\n{left}\n\n' + _window(root, state, state['current'])

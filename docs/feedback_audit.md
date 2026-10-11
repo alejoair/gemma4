@@ -115,3 +115,10 @@ All 17 findings fixed in one round:
   - a coordinator asking to see code gets "This call was not run: the code of X is read by its editor …" instead of
     the same status again (F7, P3);
   - a read-only range outside the editor's place is labelled with its file, not with the editor's place.
+
+**Run a08 (2026-10-11):** the coordinator delegated at once. The first editor edited `resolve_redirects`
+(accepted, 140 tests) and named Session.send, which opened it. It then went back to edit `resolve_redirects` with
+line numbers from before its own edit. Two failures there closed the editor before it decided anything on
+Session.send (system fault).
+- Fix: in the editor role, a failure or an accepted edit at a place that is not the editor's own returns to the
+  editor's own place ("Back to X" with its window) while that place is still to decide.
