@@ -1185,3 +1185,42 @@ the cut JSON made the harness end the task ("Sandbox execution error: Expecting 
 tools each agent can call are fixed by its definition (no shell in either); the `python3 -c` text was args to
 run_skill_script, which the script answers with the facts (RUN_NOTE), but the reply was cut before it arrived. So no
 prompt sentence about it (the user's point: tool limits belong to the agent definition, not the prompt).
+
+### Run a04 (2026-10-11): requests_7328 with the agent_tool variant, read text by text
+
+Commit 02581ca, local 26B A4B, reasoning budget 1,024. Result: not resolved, 41 tool calls, 50 model calls, 430 s;
+the patch only deletes `hist.append(resp)` and `resp.history = hist[1:]` (the reference keeps the append and assigns
+`resp.history = hist[:]` before it). All 50 requests were read in full from `/_monitor/conversation`.
+
+**What the model did well (keep it):**
+- Coordinator S0 → D1 in 2 calls: it copied the statement, chose `SessionRedirectMixin.resolve_redirects` from the 10
+  names, with the evidence lines `184: resp.history = hist[1:]` (W1, W6).
+- Editor, first window (1,458 → 2,665 tokens of prompt): it read the numbered code and traced the loop by hand
+  (R1, R2, R3 and `hist[1:]`), the right lines (W3, W5).
+- After seeing its own diff it found its error at once: "Wait, I just deleted `hist.append(resp)` … `hist` will
+  always be empty" and sent `hist.append(resp); resp.history = hist[:-1]`, which is equivalent to the reference fix
+  (F1: the -/+ diff shows where the error is).
+- With a failing test it read the names and changed the edit (F2).
+- Coordinator replies were short and followed NEXT when NEXT was a single call (W4).
+
+**What went wrong, and whose fault it is:**
+
+| # | Text the model saw / wrote | Cause | Checklist |
+|---|---|---|---|
+| 1 | Editor thinking cut mid-trace ("So `R3.history` is `[R2`") and then the call `183,184,DELETE` | the thinking budget ended in the middle of the simulation; the call came from the half-done reasoning | W7, P5 |
+| 2 | "Your work on SessionRedirectMixin.resolve_redirects is finished. Reply now" right after the first accepted edit; the correct fix sent next was refused 5 times with the same text | **system**: the editor closes on the first accepted edit; it cannot correct what it sees in its own diff | F1, F6, B12 |
+| 3 | "Your work on  is finished … what changed at ," (empty name) | **system bug**: the name of the editor's place is empty after the edit | B12 |
+| 4 | Coordinator: "I need to see the code … I'll try `src/requests/sessions.py:160-281`" (2 wasted calls) | the coordinator prompt still describes the "look elsewhere" forms of the single agent; it wants to understand before delegating | B9, B12 |
+| 5 | Session.send editor sent `SessionRedirectMixin.resolve_redirects` and the script reopened that other place | **system**: `_editor_scope` treats any one-item place name as "a new editor opens its place" | B12, P8 |
+| 6 | `['Session.send','722,735']` answered "The edit was not read: it has 2 items" (5 times) | **system**: a range in one item with a comma is not read as a range; and the open place was the wrong one (#5) | B4, B1 |
+| 7 | "The same call came three times, so SessionRedirectMixin.resolve_redirects keeps its code" while "Open now: Session.send" | **system**: contradictory state lines | B12 |
+| 8 | Thinking degenerated into "I'll try to use `Session.send` with the first line number and the last line number." repeated tens of times, then `finish_reason=length` at 4,096 tokens | loop after 10 identical answers that contradicted its request | B5, F7, B14 |
+| 9 | Second Session.send editor: a correct-looking edit was undone by 4 tests, then "Time for edits is over" at 340 s | the time had gone in #2–#8 | B10 (not shown to the model, by design) |
+| 10 | Coordinator summary "The issue was fixed by moving the fix…" accepted; then submit_patch | it believes the editor's sentence (the status shows the real diff, but it did not doubt it) | B11 |
+
+**Conclusions.** The model's reasoning about the code was right twice (it found the bug and the equivalent fix); the
+task was lost by the interface: an editor that closes before the model can correct its edit (#2), the wrong place
+reopened (#5), a range form not read (#6) and contradictory status lines (#3, #7). Those produced the loop (#8) and ate
+the time (#9). Fixes to make: keep the place open after an accepted edit, with the diff, until the model replies or
+skips; a one-item name of another place in the editor role gets "Only X is edited here"; read `a,b` / `a-b` in one
+item as a range; never print an empty name; the coordinator prompt without the choose-step forms.
