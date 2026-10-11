@@ -103,7 +103,7 @@ def select(root, changed):
 COMMON_IN_TESTS = 12     # a name used in more test files than this says little: only its own test file is searched
 
 
-def example(root, rel, name, max_lines=14):
+def example(root, rel, name, max_lines=8):
     """(test file, its lines) of the shortest existing test that uses the place's name (a call, an attribute or a
     decorator): the module's own test file first, then tests in files that also name the owner class. A name used in
     many test files is looked up only in the module's own test file. None when no test uses it, and for functions

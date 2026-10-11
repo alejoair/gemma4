@@ -234,7 +234,7 @@ def behaviour(text, skip=(), limit=700):
     return [x for i, (_, x) in enumerate(sentences) if i in keep]
 
 
-def example(text, max_lines=14):
+def example(text, max_lines=8):
     """The first code block of the statement (a reproduction or an expected use), at most max_lines lines."""
     m = re.search(r'```[\w+-]*\n(.*?)(```|\Z)', text, flags=re.S)
     if not m:

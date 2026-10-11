@@ -38,11 +38,11 @@ import _tests  # noqa: E402
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
-EDIT_LINES = 100        # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
+EDIT_LINES = 45         # the edit window: a place up to EDIT_LINES + 30 lines is shown whole, a longer one
                         # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
-MAX_CHARS = 10000       # a cap on one answer (about 2,900 tokens) against context growth; the end with NEXT is kept
+MAX_CHARS = 7000        # a cap on one answer (about 2,000 tokens) against context growth; the end with NEXT is kept
 
 
 # ---------------------------------------------------------------------------------------------------------- views
@@ -283,15 +283,10 @@ def _window(root, state, i, show=None):
         parts.append('This place was added because it is related to the chosen code: make the same change here if '
                      "it needs it, or send ['skip'] if it needs none.")
     name = p['handle']
-    parts.append(f'Answer with one of:\n'
-                 f"  ['{name}', '<the whole new function or class>']: it replaces the definition of the same name (a new "
-                 f"name is added after {name}); write it whole, from its def or class line to its last line.\n"
-                 f"  ['{name}', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with "
-                 f"their full indentation ('DELETE' deletes them).\n"
-                 f"  ['skip'] if {name} needs no change, or ['back'] to choose again.\n"
-                 f"  To change other code: a listed place's name opens it; the name of other code chooses it (it and its "
-                 f"related code replace the places not edited yet; the edits made stay). A file name, a text to find "
-                 f"or a file with two line numbers gives the functions and classes there, to choose from.")
+    parts.append(f"Answer with one of: ['{name}', '<the whole new function or class>'] (replaces the definition of "
+                 f"that name; a new name is added after it) | ['{name}', '<first line>', '<last line>', '<new lines>'] "
+                 f"('DELETE' deletes) | ['skip'] | ['back'] | another code name, a text to find, or a file and two "
+                 f"line numbers (inside {name}: shows those lines).")
     return '\n'.join(parts)
 
 
@@ -332,7 +327,7 @@ def _owner_class(root, p):
     return f'{_code.signature(cls)} (line {cls.def_line})' if cls else ''
 
 
-IMPORT_LINES = 15
+IMPORT_LINES = 6
 
 
 def _imports_view(root, p):
@@ -360,8 +355,18 @@ def _imports_view(root, p):
         mine = [n for n in imps if any((al.asname or al.name).split('.')[0] in used for al in n.names)]
         if not mine:
             return f'The imports of {p["rel"]} are at lines {a}-{b}.'
-        shown = '\n'.join(_code.numbered(lines, n.lineno, n.end_lineno or n.lineno, collapse=[]) for n in mine)
-        return f'The imports of {p["rel"]} that {p["handle"]} uses (all imports: lines {a}-{b}):\n{shown}'
+        # one line: the names the place uses and where they come from (a multi-line import block printed whole took
+        # 30 lines of every window, and every window counts toward the history compaction: V15 averaged 10-11k
+        # prompt tokens per call against a 14,336-token threshold)
+        names = []
+        for imp in mine:
+            for al in imp.names:
+                bound = (al.asname or al.name).split('.')[0]
+                if bound in used:
+                    src = (('.' * imp.level) + (imp.module or '')) if isinstance(imp, ast.ImportFrom) else al.name
+                    names.append(f'{bound} ({src})' if isinstance(imp, ast.ImportFrom) else bound)
+        return (f'Imports {p["handle"]} uses: ' + ', '.join(dict.fromkeys(names)) +
+                f' (the import lines of {p["rel"]} are lines {a}-{b}).')
     shown = _code.numbered(lines, a, min(b, a + IMPORT_LINES - 1), collapse=[])
     more = f'\n      ... (imports up to line {b}) ...' if b > a + IMPORT_LINES - 1 else ''
     return f'The imports of {p["rel"]}:\n{shown}{more}'
@@ -383,10 +388,10 @@ def _members(root, p):
     return 'Members: ' + ', '.join(f'{x.name.split(".")[-1]} {x.start}-{x.end}' for x in members) + tail
 
 
-USES = 8        # definitions the place calls or reads
-USES_CHARS = 2500   # their total size
+USES = 4        # definitions the place calls or reads
+USES_CHARS = 900    # their total size
 SHORT_MEMBER = 15   # a member of the place's own class up to this many lines is shown as code
-CALLERS = 3     # code that calls the place, one line each
+CALLERS = 2     # code that calls the place, one line each
 
 
 def _context_view(root, p, focus=None):
@@ -519,7 +524,7 @@ def _context_view(root, p, focus=None):
     return '\n'.join(out)
 
 
-LIBRARY_USES = 4   # library definitions shown in one window
+LIBRARY_USES = 2   # library definitions shown in one window
 
 
 def _library_uses(root, p, tree, used, imported, modules, table, cls):

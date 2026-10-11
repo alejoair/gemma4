@@ -1014,3 +1014,30 @@ submit_patch) and the current step, instead of an echo of the code ("Nothing in 
 quoted back), B12 closer, F9 neutral (facts), W3 neutral. Open, for the design: the model wants to run the issue's
 example after an edit (all five runs); the script could run the statement's example itself after an edit and report
 it (F2: expected vs actual) — to be weighed against the D3 redesign's removal of `python -c` (it was used to explore).
+
+### Windows that fit the history (2026-10-11): the compaction was erasing every window
+
+Local batch, task 1 (requests_7328, the 26B): the model opened `SessionRedirectMixin.resolve_redirects` 8 times in a
+row and never edited it. The gateway log shows why: prompts of 12,074 → 15,995 tokens, then a compaction summary, then
+10,777 → 14,003 → 17,862 and another summary, every 2-3 calls. A window was about 10,000 characters (3,500 tokens: the
+code 5,785 characters, imports 876, used code 1,026, the task 526, a test 872, the forms 1,126); the harness keeps the
+last 5 events after compacting, so the kept history alone was near the 14,336-token threshold and each new window
+triggered the next compaction, which removed it. The 31B in V15 was in the same state: **mean prompt 10-11k tokens
+and maximum 15.5-17k in 9 of 10 tasks; the one resolved task (rich_3006) peaked at 8k and never compacted.** The
+"browsing by names" of V15 (14851 chose the same code 3-4 times) is the same effect: the window it had chosen was gone.
+
+Fix: every window fits about 6,000 characters (resolve_redirects: 10,211 → 6,061): the code of a long place is 45
+lines around what the requirements name (a place up to 75 lines whole; a range inside the place shows other lines,
+`_range_request`), the imports it uses are one line of names and modules, 4 used definitions in 900 characters (2 of
+them library code), 2 callers, the statement's example and the existing test 8 lines each, the answer forms on one
+line; the answer cap is 7,000 characters.
+
+| Item | Verdict | Why |
+|---|---|---|
+| B7 | **closer** | The history stays under the compaction threshold, so the window the model is deciding on stays in its context |
+| P7 | **closer** | Less of each window is context that bears on no decision (30 import lines, 8 definitions) |
+| P8 / F5 | **closer** | Compaction summaries, which lose the window and the state, happen less often |
+| W3 | **farther** | Less of a long place and of its context is shown at once. Reason: a window that the compaction removes shows nothing; the rest of the place is one range away |
+| B9 | farther (small) | Ranges inside a long place may be used more. Reason as W3; they stay inside the place under decision |
+| W4 | neutral | The forms are the same, on one line; NEXT unchanged |
+| others | neutral | — |
