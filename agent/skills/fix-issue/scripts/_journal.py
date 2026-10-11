@@ -11,7 +11,7 @@ if __name__ == '__main__':
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
 EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
 TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
-CALL_LIMIT = 60      # eval_config.yaml max_tool_calls
+CALL_LIMIT = 200     # eval_config.yaml max_tool_calls (not binding: time is the limit)
 CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
 # The forms use single quotes: every answer reaches the model as JSON, where a double quote reads as \" (B15)
@@ -38,8 +38,7 @@ def budget_line(state, now=None):
     """Time and calls used, and when edits close (models cannot see their budget: V10, 6 of 10 runs ended on it). The
     calls are those the script received: malformed ones never reach it, so the real count is higher."""
     used = (now or time.time()) - state['t0']
-    line = (f'Time {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min (edits close at {EDIT_STOP / 60:.1f}); calls at least '
-            f'{state.get("calls", 0)} of {CALL_LIMIT}.')
+    line = f'Time {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min; edits close at {EDIT_STOP / 60:.1f} min.'
     return line
 
 

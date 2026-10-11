@@ -1128,3 +1128,9 @@ design v1); the harness default is 100 calls and the competition's real limit is
 and 80 turns, 7 min unchanged, so time decides. (Also checked: the competition's compaction uses
 `compaction_interval 5`, ours 15; it counts user invocations, one per task, so the token threshold of 14,336 is the
 trigger in both.)
+
+Then (the user's point): a call cap only ends a run before its time; time alone is the competition's limit. Now
+`max_tool_calls` 200 and `max_turns` 300 (not binding), and the budget line shows only the time (B10: the binding
+budget; a call count against a cap that never binds is noise). Also: `<file> top level` (how the system instruction
+says to add an import) was answered "Nothing in the repository holds …" in the edit step (the name pattern refused the
+space), and choosing it replaced the plan: the top level of a file the plan works in now joins the plan.

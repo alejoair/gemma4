@@ -1226,7 +1226,8 @@ def _open_named(root, state, text):
                     state, title=f'Candidates in {rel} (its functions and classes most related to the issue):')
                     + '\n\nChoose the code to change.')
             return None
-    found = _resolve(root, [x]) if re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) else []
+    named = re.fullmatch(r'([\w./-]+::)?[A-Za-z_][\w.]*(\(\))?', x) or re.fullmatch(r'(?:[\w./-]+::)?[\w./-]+\.py top level', x)
+    found = _resolve(root, [x]) if named else []
     if found and _repo.is_doc_path(found[0]['rel']) and '::' not in x:
         found = []              # V15 fastapi_14851: 'lifespan' chose an example in docs_src; a bare name is found
     if not found and '.' in x:
@@ -1237,7 +1238,22 @@ def _open_named(root, state, text):
     if not found:
         return _search_view(root, state, _search_text(text), prefer=here)
     _state.record({'look': 'name', 'q': x[:120], 'step': state['step']})
-    head, out = _choose_code(root, state, found[0])
+    c = found[0]
+    if c['name'] == MODULE and any(_place(state, e['place'])['rel'] == c['rel'] for e in state.get('plan') or []):
+        # the top level of a file the plan works in (its imports, a constant): it joins the plan, which stays (the
+        # system instruction says to add an import this way; replacing the plan lost the places left)
+        old = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], MODULE)), None)
+        if old is None:
+            old = {'rel': c['rel'], 'name': MODULE, 'start': c['start'], 'end': c['end'], 'reason': 'chosen',
+                   'id': f'P{len(state["places"]) + 1}'}
+            state['places'].append(old)
+            _set_handles(state['places'])
+        i = _journal.target(state, old['id'])
+        if state['plan'][i]['status'] == 'skipped':
+            state['plan'][i]['status'] = 'todo'
+        state['current'], state['step'] = i, 'D3'
+        return f'{old["handle"]} joins the places and is open now; the other places stay.\n\n' + _window(root, state, i)
+    head, out = _choose_code(root, state, c)
     return head + '\n\n' + out
 
 
