@@ -142,6 +142,9 @@ def _outline(root, rel, sym):
 def _place_line(p):
     if p['name'] == '<exports>':
         return f'{p["handle"]} — {p["reason"]}'
+    if ROLE == 'coordinator':
+        # the coordinator never reads code: line numbers invited 'file.py:676-751' reads (a10, a04)
+        return f'{p["handle"]} ({p["rel"]}) — {p["reason"]}'
     return f'{p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}) — {p["reason"]}'
 
 
@@ -637,6 +640,11 @@ def _deferred_lines(state):
 def _candidates_view(state, title='Candidates (the code most related to the statement):'):
     out = [title]
     for c in state['candidates']:
+        if ROLE == 'coordinator':
+            # no line numbers for the coordinator, which never reads code (they invited 'file.py:a-b' reads)
+            out.append(f'  {c["handle"]}  ' + re.sub(r', lines \d+-\d+', '', c['line']))
+            out.extend('      ' + re.sub(r'^\d+:\s*', '', e) for e in c.get('evidence', []))
+            continue
         out.append(f'  {c["handle"]}  {c["line"]}')
         out.extend(f'      {e}' for e in c.get('evidence', []))
     if not state['candidates']:

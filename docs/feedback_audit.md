@@ -251,3 +251,26 @@ Session.send (system fault).
   With the reference patch the file gives the same 5 failed and 194 errors (fixture 'httpbin') as with ours (checked
   2026-10-11 in a venv built from `comp/wheels`). So every local "not resolved" on requests tasks says nothing; the
   patch must be compared with the reference by hand, or the task run on Kaggle.
+
+**Why the coordinator tries to read code (a16, the full requests dumped, 2026-10-11).**
+- The coordinator's requests hold three texts that ask it to read, and its own instruction neutralised none of them.
+  The single agent's prompt does say "the script does both for you".
+- Sources, with the citations counted in the coordinator's reasoning over a04-a16:
+  1. **Our own instruction**, step 2: "send … a file with two line numbers: you get the code that holds it" (cited 11
+     times, in a04 and a07). The line ranges in the candidate and place lists gave it the numbers
+     (a10: `src/requests/sessions.py:676-751`).
+  2. **The ADK skills text**: "Use `load_skill_resource` to view script content first if needed", plus the
+     `load_skill_resource` tool (cited in a04, a05 and a12; a05 called it on `src/requests/sessions.py`).
+  3. **The harness task message**: "2. Inspect existing codebase conventions and test files before making edits", "3.
+     Verify your implementation using targeted tests …", and the directory tree.
+- Fixes:
+  - the coordinator instruction says the task message's inspect/verify is done by the editors and the script, and
+    that load_skill_resource shows only the skill's files;
+  - the choose-step find form no longer offers "a file with two line numbers";
+  - in the coordinator role, candidates and places carry no line numbers.
+
+| Item | Effect | Why |
+|---|---|---|
+| B12 | closer | the prompt now answers the task message's contrary instructions |
+| B16 / B9 | closer | no number in the coordinator's view invites a read |
+| W1 | neutral | the candidates keep their evidence lines (the text), without numbers |
