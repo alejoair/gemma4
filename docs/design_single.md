@@ -1182,4 +1182,6 @@ itself to resolve_redirects and removed `resp.history = hist[1:]` (the reference
 `resp.history = hist[:]` before the append; removing it breaks `len(resp.history) >= max_redirects`): not resolved,
 but at the right place. The coordinator then wrote a `python3 -c "…"` call that ran to the 4,096-token output limit;
 the cut JSON made the harness end the task ("Sandbox execution error: Expecting value") with the patch kept. The
-coordinator's prompt now says there is no shell or Python command and that the checks are the tests the script ran.
+tools each agent can call are fixed by its definition (no shell in either); the `python3 -c` text was args to
+run_skill_script, which the script answers with the facts (RUN_NOTE), but the reply was cut before it arrived. So no
+prompt sentence about it (the user's point: tool limits belong to the agent definition, not the prompt).
