@@ -8,7 +8,9 @@ if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
     raise SystemExit(0)
 
-MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
+MAX_FAILS = 2        # edits of one place undone by the tests (or refused) before it is left at its last verified state
+MAX_SLIPS = 4        # edits that did not compile: a typo is a slip, not a wrong change (a14: the third, correct
+                     # version of a one-line edit was never run after two typos closed the place)
 CALL_LIMIT = 200     # eval_config.yaml max_tool_calls (not binding: time is the limit)
 CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
@@ -150,9 +152,12 @@ def edit_failed(state, i, error):
     """A failed edit of plan entry i. Returns 'retry' (same place again) or 'skipped' (the place stays at its last
     verified state and the next place comes) after MAX_FAILS failures or the same error three times."""
     e = state['plan'][i]
-    e['fails'] += 1
     e['errors'].append(error)
-    if e['fails'] >= MAX_FAILS or e['errors'][-3:].count(error) >= 3:
+    if 'compile' in error:
+        e['slips'] = e.get('slips', 0) + 1
+    else:
+        e['fails'] += 1
+    if e['fails'] >= MAX_FAILS or e.get('slips', 0) >= MAX_SLIPS or e['errors'][-3:].count(error) >= 3:
         if e['status'] != 'done':                     # a done place keeps its verified edit
             e['status'] = 'skipped'
         advance(state)

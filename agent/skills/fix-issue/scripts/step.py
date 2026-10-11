@@ -323,7 +323,12 @@ def _unseen(root, state, rel, start, end):
 def _show_unseen(root, state, p, start, end, unseen):
     a, b = unseen[0], min(unseen[-1], unseen[0] + PLACE_LINES - 1)
     view = _seen_mark(p['rel'], _lines_view(root, p['rel'], a, b, p['handle']))
-    return (f'Not applied yet: lines {a}-{unseen[-1]} are inside the edit\'s range {start}-{end} but were not shown, so '
+    spans, s0 = [], unseen[0]
+    for x, y in zip(unseen, unseen[1:] + [None]):
+        if y != x + 1:
+            spans.append(f'{s0}-{x}' if x != s0 else str(s0))
+            s0 = y
+    return (f'Not applied yet: lines {", ".join(spans[:4])} are inside the edit\'s range {start}-{end} but were not shown, so '
             'the edit would replace code not read. Here they are. Send the edit again with new lines for the whole range, '
             f'or with a smaller range. Nothing was changed.\n{view}')
 
@@ -1960,12 +1965,13 @@ def _editor_done(state, head, name):
 def _failed(root, state, i, message, error):
     name = _name_of(state, state['plan'][i]['place'])  # before the plan may be emptied
     failed_place = state['plan'][i]['place']
+    n_tries = len(state['plan'][i]['errors']) + 1
     move = _journal.edit_failed(state, i, error)       # may empty the plan (back to choosing)
     if move == 'retry':
         return message + '\n\n' + _window(root, state, i)
     # the place is left: the sentence asking to send it again would contradict NEXT (docs/feedback_audit.md #4)
     message = re.sub(r'\nSend \S+ again with a change that keeps (these tests|this test) passing\.', '', message)
-    left = f'{name} failed {_journal.MAX_FAILS} times, so it keeps its last checked code.'
+    left = f'{name} was not changed after {n_tries} tries, so it keeps its last checked code.'
     if ROLE == 'editor':
         mine = state.get('editor_place')
         if mine and failed_place != mine and _journal.plan_entry(state, mine) is not None:
@@ -2009,7 +2015,9 @@ def _finish_view(root, state):
 
     def touched(q):             # a class place counts as changed when one of its members changed
         return any(rel == q['rel'] and (name == q['name'] or name.startswith(q['name'] + '.')) for rel, name in changed)
-    left = [_place(state, e['place'])['handle'] for e in state['plan'] if not touched(_place(state, e['place']))]
+    left = [_place(state, e['place'])['handle'] + (f' ({len(e["errors"])} edits there were refused or undone)'
+                                                   if e.get('errors') else '')
+            for e in state['plan'] if not touched(_place(state, e['place']))]
     if left:
         out.append('Looked at and not changed: ' + ', '.join(left) + '.')
     out.append('The requirements, with what the code shows:')

@@ -221,3 +221,22 @@ Session.send (system fault).
      open it (D1) and looped. In D1, the editor's request naming code is now taken as the coordinator's choice: it
      is chosen and opened.
 - The model still misreads what the redirect generator yields; that is the model, not the system.
+
+**Run a14 (2026-10-11).**
+- Result: not resolved, the same 881-character patch.
+- What worked:
+  - the Session.send editor read `resolve_redirects` read-only, understood what it yields, and reached a real
+    idea (filter `r` out of the history);
+  - the unseen-lines guard stopped a whole-function rewrite of `resolve_redirects` and turned it into a range edit.
+- What went wrong:
+  - two typos (a stray quote, then a missing `]`) closed Session.send before the third, correct version ran;
+  - the editor then told the coordinator "I have updated Session.send", which was false;
+  - the coordinator believed it ("The editor said it did that"), although the finish view said "Looked at and not
+    changed: Session.send" (B11).
+- Fixes:
+  - edits that do not compile count as slips, up to 4 (`MAX_SLIPS`); edits undone by tests or refused stay at 2
+    (F6: the literature's 2 rounds are about wrong changes, not typos);
+  - the finish view says, for each place not changed, how many of its edits were refused or undone (B11, R4: the
+    verified effect, not the editor's sentence);
+  - the unseen-lines answer lists the unseen spans ("161-171, 202-281") instead of one false range;
+  - the "left" sentence counts the real tries.
