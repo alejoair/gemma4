@@ -974,3 +974,14 @@ Check against `docs/llm_checklist.md`:
 | F5 | **closer** | Knowing what is done: the place's own diff |
 | F9 | neutral | The tests note is facts plus one form |
 | others | neutral | No new form; the edit and choose forms are unchanged |
+
+L2 (same task, after the fixes above): resolved, submit_patch after 11 calls (L1: 30); after reopening the place the
+model wrote "the change is already in the buffer" (the diff note worked). It still went on after submitting, set on
+adding a test ("Also added the sample code as a test" in the statement), and searches for text that nothing holds
+(`inspect.Parameter.empty`) were answered "Not run: this step edits the open place" or "not a name from the candidate
+list", which read as wrong forms. Fixes: the tests note states the decisive fact (the harness removes every change to
+a test file from the patch, so a test written here never counts); a name or text nothing holds is answered "Nothing in
+the repository holds X (library and standard-library code is not searched)", in every step; several texts at the
+choose step are searched in turn. Checklist: F9 closer (a fact instead of advice), B12 closer (no answer that reads as
+a wrong form), B5 farther (small): the answer names the text searched; reason: without it the answer does not say what
+was not found, and it is a fact about the repository, not a quote of a failed form.

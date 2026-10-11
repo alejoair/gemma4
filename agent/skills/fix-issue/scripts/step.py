@@ -808,10 +808,11 @@ def _is_tests(text):
                                                                                        t + '/x.py'))
 
 
-TESTS_NOTE = ('Test files are not changed here: the hidden tests replace them, and the tests the issue mentions are '
-              'written by its authors. Every edit is checked by running the existing tests that use the changed code '
-              '("Kept and checked" means they passed); to see how a test uses some code, send the test file with two '
-              'line numbers.')
+TESTS_NOTE = ('Test files are not changed here: the harness removes every change to a test file from the patch, and '
+              'the hidden tests, written by the issue\'s authors (with the test the issue mentions), replace them. So a '
+              'test written here never counts. Every edit is checked by running the existing tests that use the '
+              'changed code ("Kept and checked" means they passed); to see how a test uses some code, send the test '
+              'file with two line numbers.')
 
 
 def _search_query(items):
@@ -1080,15 +1081,19 @@ def d1(root, state, args):
             state['candidates'] = cands
             return (_candidates_view(state, title=f'Candidates in {rel} (its functions and classes most related to '
                                      'the issue):') + '\n\nChoose the code to change.')
-    if not chosen and len(others) == 1 and '\n' not in others[0].strip() and len(others[0]) <= 200:
-        # a name the repository does not define, or a text: where the code holds it, to choose from
-        raw = next((a for a in items if _args.clean(a) == others[0]), others[0])
-        found = _search_view(root, state, _search_text(raw))
-        if found:
-            return found
     if not chosen:
-        msg = ('That is not a name from the candidate list, and the code has no function or class of that name. '
-               if others else 'No candidate was chosen. ')
+        # a name the repository does not define, or a text: where the code holds it, to choose from (the first of
+        # several that something holds: the local run sent ['param.empty', 'Parameter.empty'])
+        for o in others[:3]:
+            if '\n' in o.strip() or len(o) > 200:
+                continue
+            raw = next((a for a in items if _args.clean(a) == o), o)
+            found = _search_view(root, state, _search_text(raw))
+            if found:
+                return found
+    if not chosen:
+        msg = (f'Nothing in the repository holds {", ".join(_search_text(o) for o in others[:3])} (library and '
+               'standard-library code is not searched). ' if others else 'No candidate was chosen. ')
         return msg + 'Nothing was opened.\n\n' + _candidates_view(state)
     table = _impact.Table(root, docs=True)
     places = []
@@ -1686,6 +1691,12 @@ def d3(root, state, args):
         opened = _open_named(root, state, single)
         if opened:
             return opened
+        if not DEF_LINE.search(single):
+            # V15 and the local run: 'inspect.Parameter.empty' was answered "Not run: this step edits ...", which
+            # reads as a wrong form; it is a search that found nothing
+            return (f'Nothing in the repository holds {_search_text(single)} (library and standard-library code is '
+                    'not searched). Nothing was changed.' + ('\n\n' + _window(root, state, cur) if cur is not None
+                                                            else '\n\n' + _finish_view(root, state)))
     if not re.fullmatch(r'(?i)\W*P\d+\W*', items[0] if items else ''):
         edited = _edit_of_other(root, state, raw)
         if edited is not None:
