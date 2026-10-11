@@ -1478,6 +1478,22 @@ def _test_view(root, state, rel, a, b):
             + '\n\n'.join(shown) + '\n\n' + _current_view(root, state))
 
 
+PLACE_LINES = 60    # lines of the open place shown for one range
+
+
+def _place_lines(root, p, a, b):
+    """Lines a..b of the place p, which is open: only those lines (at most PLACE_LINES, inside the place), not the
+    window again. Local run of requests_7328 with the decision window: the model read Session.send in 6 ranges and each
+    answer repeated the whole window (about 1,400 tokens), so the history reached the compaction again."""
+    a, b = max(a, p['start']), min(b, p['end'])
+    if b - a + 1 > PLACE_LINES:
+        b = a + PLACE_LINES - 1
+    lines = _repo.read_lines(root, p['rel'])
+    body = _code.numbered(lines, a, b, collapse=_code.long_strings(_code.parse(''.join(lines))))
+    more = f' (lines {b + 1}-{p["end"]} follow)' if b < p['end'] else ''
+    return f'Lines {a}-{b} of {p["handle"]}, the open place{more}:\n{body}'
+
+
 def _range_request(root, state, args):
     """The answer to ['<file or name>', '<first line>', '<last line>'], or None when args are not one. At the choose
     4-item call is one only when it names a file that is not a place (the model's ['fastapi/routing.py', 1, 50,
@@ -1509,8 +1525,7 @@ def _range_request(root, state, args):
                 state['step'], state['current'] = 'D3', i
                 if state['plan'][i]['status'] == 'skipped':
                     state['plan'][i]['status'] = 'todo'
-                return (f'Lines {a}-{b} are in {p["handle"]}: here is its window with them in view.\n\n'
-                        + _window(root, state, i, show=(a, b)))
+                return _place_lines(root, p, a, b)
         for p in state['places']:
             if p['rel'] == rel and p['name'] != '<exports>' and p['start'] <= a and b <= p['end']:
                 i = _journal.target(state, p['id'])
@@ -1518,8 +1533,7 @@ def _range_request(root, state, args):
                 state['plan'][i]['status'] = 'todo' if state['plan'][i]['status'] == 'skipped' else \
                     state['plan'][i]['status']
                 _state.record({'look': 'range in a place', 'q': f'{rel} {a}-{b}', 'step': state['step']})
-                return (f'Lines {a}-{b} are in {p["handle"]}: here is its window with them in view.\n\n'
-                        + _window(root, state, i, show=(a, b)))
+                return _place_lines(root, p, a, b)
     if _repo.is_test_path(rel):
         return _test_view(root, state, rel, a, b)
     cands = _owner_candidates(root, state, rel, a, b)

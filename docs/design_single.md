@@ -1094,3 +1094,9 @@ list and the first window 1,189.
 | B8 | neutral | No form added or removed |
 | B12 | **closer** | The prompt's description of the window matches the window |
 | others | neutral | — |
+
+First run with the decision window (requests_7328): prompts grew 1,400-1,500 tokens per call instead of 2,200, but the
+model read `Session.send` (76 lines, 32 shown) in 6 ranges, and each range answer repeated the whole window. A range
+inside the open place now answers only those lines (at most 60, inside the place) and NEXT (`_place_lines`).
+Checklist: B7 closer (no repeated window), W3 closer (the lines asked for, at once), B9 neutral (the reads stay inside
+the place under decision; still counted in the `look` log).
