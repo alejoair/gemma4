@@ -6,7 +6,7 @@ Then one of:
 - ['<place name>', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with their full indentation ('DELETE' deletes them; to add an import, the place is '<file> top level');
 - ['skip'] if this place needs no change;
 - ['<place name>', '<first line number>', '<last line number>'] to see other lines of the place.
-The script checks the syntax and runs the existing tests that use the code: an edit that breaks them is undone, and you see which test failed and how; send a different change. When the place is done, the script says so: then reply with one sentence for the coordinator (what changed, or why nothing did; if the change belongs to other code, name it) and make no more calls.
+The script checks the syntax and runs the existing tests that use the code: an edit that breaks them is undone, and you see which test failed and how; send a different change. After an accepted edit you see its diff and the code as it is now: if the change is complete, reply with one sentence for the coordinator (what changed; if more change belongs to other code, name it) and make no more calls; if it is wrong or incomplete, send the corrected edit. After ['skip'], reply with one sentence saying why nothing changed.
 
 Call form (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><the whole new function or class><|"|>],file_path:<|"|>edit.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>

@@ -71,8 +71,8 @@ sentences about the behaviour, its example, an existing test that uses the code)
 Questions are not answered in the edit step. Code is named by its qualified name; old ids (C2, P1) are still read.
 
 **Budget and generation:** `eval_config.yaml` 240 s per command / 7 min; tool calls 200 and turns 300, not binding (since
-10-11, the user's: time is the competition's only real limit, 12 h for about 120 tasks); edits stop at
-340 s (`_journal.EDIT_STOP`). `configs/sampling.yaml`: temperature 0.2, top_p 0.95, max_output_tokens 4096,
+10-11, the user's: time is the competition's only real limit, 12 h for about 120 tasks); no limit of our own
+inside the script (the 340 s edit stop was removed on 10-11 at the user's request; the harness's 7 min stays). `configs/sampling.yaml`: temperature 0.2, top_p 0.95, max_output_tokens 4096,
 thinking_budget 512, include_thoughts true. Answers are capped at 10,000 characters.
 
 **Decisions (newest last; the reasons are in `docs/design_single.md` and the commit messages):**

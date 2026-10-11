@@ -1224,3 +1224,26 @@ reopened (#5), a range form not read (#6) and contradictory status lines (#3, #7
 the time (#9). Fixes to make: keep the place open after an accepted edit, with the diff, until the model replies or
 skips; a one-item name of another place in the editor role gets "Only X is edited here"; read `a,b` / `a-b` in one
 item as a range; never print an empty name; the coordinator prompt without the choose-step forms.
+
+**Fixes after a04 (2026-10-11)** and their check against `docs/llm_checklist.md`:
+1. Editor role: an accepted edit keeps the place open, with its diff and the code as it is now; the editor replies
+   when the change is complete or sends a corrected edit. The coordinator's next call moves the work on.
+2. Editor role: another place's name, while the editor's own place is undecided, answers "Only X is edited here"
+   with the own window; it no longer reopens the other place.
+3. A range in one item (`722,735`, `722-735`, `722:735`, `722..735`, `722 to 735`) is read as two line numbers.
+4. The editor's first call (often the coordinator's last call word for word) is never answered as a repeat, so the
+   editor always gets its place; an empty place name prints "this place".
+5. Coordinator prompt: it does not see or write the places' code; the find forms are only for choosing.
+6. (The user's) **No time limit inside the script**: `EDIT_STOP` (340 s) and the "Time for edits is over" answer were
+   removed; in a04 it refused the second editor's edits at 350 s. The harness's own 7 min budget stays.
+
+| Item | Effect | Why |
+|---|---|---|
+| F1 | closer | the diff shows where the error is and the model may act on it (a04: it found its own deletion) |
+| F6 | neutral | a correction is a new edit; the failed-edit memory and the three-repeat move-on still apply |
+| B12 | closer | no "finished" next to "send an edit", no other place opened, no empty names |
+| B4, B1 | closer | a common range spelling is accepted instead of refused |
+| W4 | farther | NEXT after an accepted edit offers two outcomes (reply or correct): the reason is F1, the correction is the case a04 lost |
+| B9 | farther (small) | the editor can keep editing an accepted place; bounded by the repeat guard and the harness's time |
+| B10 | neutral | the model never saw the time; the harness still ends the run at 7 min |
+| P5 | closer | the coordinator prompt no longer offers find forms in the edit step |

@@ -2,7 +2,7 @@ You fix one issue in the Python repository in /workspace. Hidden tests judge you
 
 You work through one script: step.py of the skill fix-issue. Call it with run_skill_script, skill_name fix-issue, file_path step.py and args, a list of strings. Each call gives the script your decision for the current step. Each answer begins with what the patch holds, and ends with a NEXT line that gives the form of the next call: make that call. Loading the skill shows these same steps, so you can start with step 1 directly.
 
-The task message asks you to inspect the code and the tests and to verify your change. The script does both for you: it shows the code to change, the code around it and an existing test, and runs the existing tests after every edit. Use run_skill_script and submit_patch only; the time and call budget leaves no room for more.
+The task message asks you to inspect the code and the tests and to verify your change. The script does both for you: it shows the code to change, the code around it and an existing test, and runs the existing tests after every edit. Use run_skill_script and submit_patch only: the script already does what those instructions ask.
 
 ## The steps
 1. Start. args: the whole issue statement as the first item, every line of it (its first 40 lines if it is longer; the title alone is not enough, the requirements are read from the text), then search terms, one per item: the identifiers, file paths and error messages in the issue, and the names of the functions, classes, modules or parameters that probably implement the behaviour it describes. You get the requirements and up to 10 candidates: functions and classes, each shown by its name (for example Session.send).

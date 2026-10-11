@@ -1818,7 +1818,12 @@ def _after_edit(root, state, i, p, r, before):
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
     if ROLE == 'editor':
-        return _editor_done(state, head, p['handle'])
+        # the place stays open with the diff: run a04 (requests_7328) saw its own wrong deletion in this diff and
+        # sent the right fix, which a closed editor refused 5 times (F1: told where, it corrects well)
+        state['current'], state['step'], state['editor_review'] = i, 'D3', True
+        return (head + f'\n\nIf this is the whole change {p["handle"]} needs, reply now with one sentence for the '
+                'coordinator, without a call. If it is wrong or incomplete, send the corrected edit of the code '
+                'below (the code as it is now).\n\n' + _window(root, state, i))
     if move == 'next':
         return head + '\n\n' + _window(root, state, state['current'])
     return head + '\n\n' + _finish_view(root, state)
@@ -1846,7 +1851,8 @@ EDITOR_DONE = ('Your work on {name} is finished. Reply now, without any call, wi
 def _editor_done(state, head, name):
     """In the editor role (edit_place), the place is decided: the editor ends with one sentence, and the coordinator,
     whose history holds only that sentence, hands the next place to a fresh editor (no window is ever compacted)."""
-    state['editor_done'] = True
+    name = name or 'this place'
+    state['editor_done'], state['editor_review'] = True, False
     return head + '\n\n' + EDITOR_DONE.format(name=name)
 
 
@@ -2013,17 +2019,25 @@ def _editor_scope(root, state, args):
         return None
     name = _args.clean(items[0])
     hit = _match(state['places'], name, fuzzy=False)
-    if len(items) == 1 and hit is not None and (state.get('editor_done') or state.get('editor_place') is None
-                                                 or state.get('editor_place') != hit['id']):
+    mine = state.get('editor_place')
+    open_mine = next((e for e in state['plan'] if e['place'] == mine), None) if mine else None
+    if (len(items) == 1 and hit is not None and mine is not None and hit['id'] != mine and not state.get('editor_done')
+            and open_mine is not None and open_mine['status'] == 'todo'):
+        # run a04: the editor of Session.send named resolve_redirects and the script opened that place instead; an
+        # editor works on its own place until it is decided (a new editor starts once it is edited or skipped)
+        return (f'Only {_name_of(state, mine)} is edited here. If the change belongs to {hit["handle"]}, reply now with '
+                'one sentence saying so, without a call: the coordinator will open it.\n\n'
+                + _window(root, state, _journal.target(state, mine)))
+    if len(items) == 1 and hit is not None and (state.get('editor_done') or mine is None or mine != hit['id']):
         # a new editor opens its place
-        state['editor_done'], state['editor_place'] = False, hit['id']
+        state['editor_done'], state['editor_place'], state['editor_review'] = False, hit['id'], False
         i = _journal.target(state, hit['id'])
         if state['plan'][i]['status'] == 'skipped':
             state['plan'][i]['status'] = 'todo'
         state['current'], state['step'] = i, 'D3'
         return _window(root, state, i)
     if state.get('editor_done'):
-        return EDITOR_DONE.format(name=_name_of(state, state.get('editor_place') or ''))
+        return EDITOR_DONE.format(name=_name_of(state, state.get('editor_place') or '') or 'this place')
     mine = state.get('editor_place')
     if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and \
             _args.plan(args) != 'back' and not _is_tests(name):
@@ -2044,6 +2058,10 @@ def main(argv, role=None):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
     argv = _args.split_single_quoted(argv)
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
+    if ROLE != 'editor' and state.get('editor_review'):
+        # the editor replied after an accepted edit (its place stayed open for a correction): the work moves on
+        state['editor_review'], state['editor_done'] = False, True
+        _journal.advance(state)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
     state['calls'] = state.get('calls', 0) + 1
     key = _journal._key(state, args)          # the call as it is now, before the step changes the state
@@ -2054,6 +2072,20 @@ def main(argv, role=None):
         skip = target is not None and target != state['plan'][state['current']]['place']
     if any(re.sub(r'[\W_]', '', _args.clean(x).lower()) in ('submitpatch', 'submit') for x in args if x):
         skip = True
+    if state['step'] in ('D3', 'D4'):
+        # a range in one item ('722,735', '722-735', run a04: 5 refusals) is the two line numbers
+        flat = [x for x in args if x and x.strip()]
+        if len(flat) == 2:
+            m = re.fullmatch(r'\s*(\d+)\s*(?:,|-|:|\.\.|–|to)\s*(\d+)\s*', _args.clean(str(flat[1])))
+            if m:
+                args = [flat[0], m.group(1), m.group(2)]
+                key = _journal._key(state, args)
+    if ROLE == 'editor' and len([x for x in args if x and x.strip()]) == 1 and state.get('places'):
+        # an editor's first call names its place, often the coordinator's last call word for word (run a04: it was
+        # answered as a repeat, so the editor never got its place and its name printed empty)
+        hit = _match(state['places'], _args.clean(args[0]), fuzzy=False)
+        if hit is not None and (state.get('editor_done') or state.get('editor_place') != hit['id']):
+            skip = True
     nums = [x for x in args if x and x.strip()]
     reread = None
     if len(nums) == 3 and all(_args.clean(str(x)).isdigit() for x in nums[1:3]):
@@ -2075,14 +2107,7 @@ def main(argv, role=None):
         skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation
     restate = _more_statement(state, args)
     resent = state['step'] != 'S0' and not restate and _is_statement_again(args)
-    if state['step'] in ('D1', 'D2', 'D3', 'D4') and _journal.time_is_up(state):
-        # time for edits is over: the call is not run, and the only next call is submit_patch (V10: "TIME IS UP"
-        # while NEXT still offered edits, and the model lost its last turns)
-        first = not state.get('time_up')
-        state['time_up'], state['step'], state['current'] = True, 'D4', None
-        out = (('Time for edits is over, so this call was not run. ' if first else
-                'Edits are closed, so this call was not run. ') + _finish_view(root, state))
-    elif restate:
+    if restate:
         st = _state.load('statement', {})
         known, sent = st.get('text', ''), args[0]
         norm = lambda t: re.sub(r'\W+', ' ', t).strip().lower()

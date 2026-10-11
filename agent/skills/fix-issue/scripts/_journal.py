@@ -9,8 +9,6 @@ if __name__ == '__main__':
     raise SystemExit(0)
 
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
-EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
-TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
 CALL_LIMIT = 200     # eval_config.yaml max_tool_calls (not binding: time is the limit)
 CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
@@ -33,34 +31,27 @@ def new(now=None):
             'current': None, 'last': None, 'repeats': 0, 'edited': []}
 
 
-def budget_line(state, now=None):
-    """Time and calls used, and when edits close (models cannot see their budget: V10, 6 of 10 runs ended on it). The
-    calls are those the script received: malformed ones never reach it, so the real count is higher."""
-    used = (now or time.time()) - state['t0']
-    line = f'Time {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min; edits close at {EDIT_STOP / 60:.1f} min.'
-    return line
-
-
 def next_call(state, role='single'):
     """The exact next call, the last line of every answer. role: 'single' (one agent does everything), 'coordinator'
     (chooses, then hands each place to the edit_place tool) or 'editor' (edit_place: one place, then one sentence)."""
     step = state['step']
     if role == 'editor':
-        if state.get('editor_done') or state.get('time_up') or step != 'D3' or state.get('current') is None:
+        if state.get('editor_done') or step != 'D3' or state.get('current') is None:
             return ('NEXT: no call: reply now with one sentence for the coordinator (what changed at the place, or why '
                     'nothing did, naming other code if the change belongs there).')
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
         call = CALL.replace('file_path step.py', 'file_path edit.py')
+        if state.get('editor_review'):
+            return (f"NEXT: if the change at {pid} is complete, no call: reply with one sentence for the coordinator. "
+                    f"Otherwise call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', "
+                    "'<first line number>', '<last line number>', '<new lines>'].")
         return (f"NEXT: call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
                 f"'<last line number>', '<new lines>'], or ['skip']")
-    if role == 'coordinator' and step == 'D3' and state.get('current') is not None and not state.get('time_up'):
+    if role == 'coordinator' and step == 'D3' and state.get('current') is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
         return f"NEXT: call the tool edit_place with request '{pid}' (it opens that place and edits it)."
-    if state.get('time_up'):
-        return ('NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of '
-                'run_skill_script). Edits are closed.')
     if step == 'D4':
         # local run of fastapi_14448: "NEXT: none: call submit_patch now" next to "NEXT: call run_skill_script ...
         # args" everywhere else made the model send args ['submit_patch'] to the script 20 times
@@ -103,10 +94,6 @@ def remember(state, key, answer):
     answers[repr(key)] = answer
     for k in list(answers)[:-6]:
         del answers[k]
-
-
-def time_is_up(state, now=None):
-    return (now or time.time()) - state['t0'] > EDIT_STOP
 
 
 def start(state, requirements, candidates):
