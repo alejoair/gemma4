@@ -1106,3 +1106,18 @@ which marks the open place skipped; Session.send and then resolve_redirects were
 back to choosing. A range read is now never a repeat (its answer is short, and the lines may have been compacted
 away). Checklist: F7 neutral (loops of edits and choices are still moved on), B12 closer (a read never changes the
 plan).
+
+Same run, end: the model sent the same failing edit of Session.send 5 times, alternating with re-choosing it, so the
+repeat guard (last 3 calls) never saw a repeat; each try ran the tests again (about 20 s) and was undone by the same 3
+failures. An edit the tests undid is now remembered (place, the tests it broke); the same edit sent again is answered
+at once with those facts and the current step, without running it (F6 closer: no third try of the same thing; F9
+neutral: facts; B5 farther (small): the answer names the failing tests again; reason: they are the fact that makes a
+different change necessary). The run ended with an empty patch: the model localized the change in Session.send while
+the fix is in resolve_redirects (the place it had lost to the repeat-guard skip, fixed above).
+
+Question raised by the user: would ADK sub-agents avoid the compaction? Recorded options: `agent_tool` (a sub-agent in
+a fresh session; only its final text reaches the parent; its calls count against the 30-call budget) as an editor per
+place would start every window with a clean context, and the procedure's state already lives in step.py's journal, not
+in the history; a `SequentialAgent` does not help (each stage accumulates its own history; V5 used one and failed for
+browsing, not for the architecture). Decision: first measure the decision window; if tasks still compact, try an
+`agent_tool` editor per place locally.

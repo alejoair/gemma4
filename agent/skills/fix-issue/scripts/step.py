@@ -1776,6 +1776,7 @@ def _after_edit(root, state, i, p, r, before):
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
     shown = _changed_view(before, _repo.read_lines(root, p['rel']), p['rel'])
     if verdict == 'BROKEN':
+        _remember_failed(state, p, r, new_failures)
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
         n = len(new_failures)
@@ -1790,6 +1791,21 @@ def _after_edit(root, state, i, p, r, before):
     if move == 'next':
         return head + '\n\n' + _window(root, state, state['current'])
     return head + '\n\n' + _finish_view(root, state)
+
+
+def _edit_key(args):
+    """The identity of an edit: its items without spacing differences."""
+    return '\x00'.join(re.sub(r'\s+', ' ', str(a)).strip() for a in args if a is not None and str(a).strip())
+
+
+def _remember_failed(state, p, r, failures):
+    """An edit the tests undid, kept with the tests it broke, so that the same edit sent again is answered at once."""
+    key = state.get('edit_key')
+    if key:
+        failed = state.setdefault('failed_edits', {})
+        failed[key] = [p['handle'], failures[:3]]
+        for k in list(failed)[:-8]:
+            del failed[k]
 
 
 def _failed(root, state, i, message, error):
@@ -1999,7 +2015,16 @@ def main(argv):
     else:
         try:
             items0 = [a for a in args if a and a.strip()]
-            if state['step'] in ('D1', 'D3', 'D4') and len(items0) == 1 and _is_code_to_run(items0[0]):
+            state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
+            seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
+            if seen_fail and state['step'] in ('D1', 'D3', 'D4'):
+                # local run of requests_7328: the same failing edit was sent 5 times, each one run with its tests
+                # (about 20 s) and undone by the same 3 failures (F6: a third try of the same thing gains nothing)
+                handle, fails = seen_fail
+                read = (f'This exact edit of {handle} was made before and undone: these existing tests failed after it: '
+                        f'{", ".join(fails) or "(see before)"}. It was not run again. A different change is needed, '
+                        f'at {handle} or at another place.\n\n' + _current_view(root, state))
+            elif state['step'] in ('D1', 'D3', 'D4') and len(items0) == 1 and _is_code_to_run(items0[0]):
                 _state.record({'look': 'run', 'q': items0[0][:120], 'step': state['step']})
                 out = RUN_NOTE + '\n\n' + _current_view(root, state)
                 read = out
