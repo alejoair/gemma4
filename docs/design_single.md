@@ -1176,3 +1176,10 @@ First runs (26B, local):
 Checklist: B7 closer (no history reaches the threshold), W7 closer (room to think where the decision is made), P7
 closer (each editor sees its place only), B4 and B8 farther (one more tool and one more script name; reason: the only
 way to give a clean context from a declarative config), W4 neutral (both roles end every answer with their own NEXT).
+
+requests_7328 with the variant, end: the editor (after 14 thinking re-reads) kept an edit of Session.send, went on by
+itself to resolve_redirects and removed `resp.history = hist[1:]` (the reference replaces it with
+`resp.history = hist[:]` before the append; removing it breaks `len(resp.history) >= max_redirects`): not resolved,
+but at the right place. The coordinator then wrote a `python3 -c "…"` call that ran to the 4,096-token output limit;
+the cut JSON made the harness end the task ("Sandbox execution error: Expecting value") with the patch kept. The
+coordinator's prompt now says there is no shell or Python command and that the checks are the tests the script ran.
