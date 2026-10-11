@@ -1121,3 +1121,10 @@ place would start every window with a clean context, and the procedure's state a
 in the history; a `SequentialAgent` does not help (each stage accumulates its own history; V5 used one and failed for
 browsing, not for the architecture). Decision: first measure the decision window; if tasks still compact, try an
 `agent_tool` editor per place locally.
+
+Budget (2026-10-11, the user's question): `max_tool_calls` 30 and `max_turns` 40 were ours (a safety net,
+design v1); the harness default is 100 calls and the competition's real limit is time (12 h for about 120 tasks, about
+6 min each). With a faster model the call cap ended runs before the time did (L1: 30 calls at 3.2 min). Now 60 calls
+and 80 turns, 7 min unchanged, so time decides. (Also checked: the competition's compaction uses
+`compaction_interval 5`, ours 15; it counts user invocations, one per task, so the token threshold of 14,336 is the
+trigger in both.)

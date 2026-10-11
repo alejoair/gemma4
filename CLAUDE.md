@@ -70,7 +70,8 @@ its own class as code) and the code that calls it, then what the change must do 
 sentences about the behaviour, its example, an existing test that uses the code), then the answer forms and NEXT.
 Questions are not answered in the edit step. Code is named by its qualified name; old ids (C2, P1) are still read.
 
-**Budget and generation:** `eval_config.yaml` 240 s per command / 30 tool calls / 7 min / 40 turns; edits stop at
+**Budget and generation:** `eval_config.yaml` 240 s per command / 60 tool calls / 7 min / 80 turns (since 10-11; time is the
+competition's real limit, 12 h for about 120 tasks; the harness default is 100 calls); edits stop at
 340 s (`_journal.EDIT_STOP`). `configs/sampling.yaml`: temperature 0.2, top_p 0.95, max_output_tokens 4096,
 thinking_budget 512, include_thoughts true. Answers are capped at 10,000 characters.
 

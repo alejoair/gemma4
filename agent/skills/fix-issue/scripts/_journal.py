@@ -11,7 +11,7 @@ if __name__ == '__main__':
 MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
 EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
 TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
-CALL_LIMIT = 30      # eval_config.yaml max_tool_calls
+CALL_LIMIT = 60      # eval_config.yaml max_tool_calls
 CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
 # The forms use single quotes: every answer reaches the model as JSON, where a double quote reads as \" (B15)
