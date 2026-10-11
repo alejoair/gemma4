@@ -153,8 +153,9 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
-Local runs are not Kaggle runs: llama-server's reasoning budget is 3072 tokens (Kaggle: 512) and a 12B call can take
-60 s. A faithful local loop needs `--reasoning-budget 512` on the server (ask the peer session).
+Local runs are not Kaggle runs: the model is the 12B, not the 31B, and llama.cpp applies `min_p 0.05` by default
+(vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
+`generation_config.json` sampling defaults (see below); before that its budget was 3072.
 
 ## Harness essentials (swegemma 0.2.11; details in `docs/adk_harness.md`)
 
@@ -176,7 +177,9 @@ Local runs are not Kaggle runs: llama-server's reasoning budget is 3072 tokens (
 A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
 virtual con CLI", via Remote Control) runs the local infrastructure:
 - `https://llm.rayflow.dev`: llama.cpp `llama-server` with `gemma-12b` (google/gemma-4-12b-qat Q4_0 GGUF, context
-  32768, parallel 1, RTX 3090), global `--reasoning-budget 3072`; thinking can be turned off per request but a
+  32768, parallel 1, RTX 3090). Since 2026-10-10 23:21 UTC: `-c 32768 -ngl 99 --parallel 1 --jinja
+  --reasoning-budget 512 --temp 1.0 --top-k 64 --top-p 0.95 -fa on` (Kaggle's thinking budget and the model's
+  defaults for unset parameters; 8.9 GB VRAM). The budget is global: thinking can be turned off per request but a
   per-request budget is ignored. It can restart the server with other options or models.
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
