@@ -1952,6 +1952,12 @@ def main(argv):
         # opening another listed place is a move, not a repeat
         target = _listed_place(state, args[0])
         skip = target is not None and target != state['plan'][state['current']]['place']
+    nums = [x for x in args if x and x.strip()]
+    if len(nums) == 3 and all(_args.clean(str(x)).isdigit() for x in nums[1:3]):
+        # a range read again is not a loop: the lines may have been compacted away, and the answer is short. The
+        # third repeat used to move on and mark the open place skipped (local run of requests_7328: Session.send and
+        # resolve_redirects were both skipped this way, undecided)
+        skip = True
     if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
         e = _args.edit(_place_args(state, args))
         skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation

@@ -1100,3 +1100,9 @@ model read `Session.send` (76 lines, 32 shown) in 6 ranges, and each range answe
 inside the open place now answers only those lines (at most 60, inside the place) and NEXT (`_place_lines`).
 Checklist: B7 closer (no repeated window), W3 closer (the lines asked for, at once), B9 neutral (the reads stay inside
 the place under decision; still counted in the `look` log).
+
+Same run: the repeat guard took a range read three times (`['Session.send', 732, 737]`) as a loop and moved on,
+which marks the open place skipped; Session.send and then resolve_redirects were skipped undecided and the plan went
+back to choosing. A range read is now never a repeat (its answer is short, and the lines may have been compacted
+away). Checklist: F7 neutral (loops of edits and choices are still moved on), B12 closer (a read never changes the
+plan).
