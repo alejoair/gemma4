@@ -382,3 +382,32 @@ Session.send (system fault).
     - (b) incomplete coverage: the reference changes 3-8 functions (fastapi_14448: 6, httpx_3672: 8,
       fastapi_14986: 3) and the agent changes 1-2;
     - (c) time-outs while editing (5 of 7 in b9).
+
+**Fixes for the edit stage (2026-10-12).**
+- **Same-pattern siblings join the plan** (`_impact.same_pattern`):
+  - the functions next to the chosen one (same class or the file's top level, up to 60 lines, not dunders) whose body
+    repeats its logic (token similarity ≥ 0.7, at most 3) become planned places, "same pattern as X";
+  - fastapi_14448: choosing `Dependant.is_async_gen_callable` now plans `is_gen_callable` (0.93) and
+    `is_coroutine_callable` (0.73); before, only the chosen one was planned and the other two were never opened.
+- **A chosen class over 90 lines is planned by its members** (`_big_class_members`):
+  - its members that match the statement's words (at most 2) replace it; a class with none stays whole;
+  - httpx_3672: `HTTPParser` (340 lines) becomes `HTTPParser.complete` and `HTTPParser.__init__`, plus their copies
+    in `src/ahttpx` (4 planned places);
+  - before, the editor got an outline and spent its calls reading ranges until the time ran out;
+  - a new member (`keep_alive`) is added after the open member by the whole-definition edit.
+- **Editor thinking budget 1024 → 2048** (`variants/agent_tool/sub_agents/sampling.yaml`):
+  - rich_3521's reasoning was cut mid-analysis;
+  - the editor's context estimate adds half of the extra budget per call (`EDITOR_THINKING`);
+  - cost: editor calls took ~30 s at 1024 on the L4s, so each call may take longer; to measure on the next Kaggle eval.
+
+| Item | Effect | Why |
+|---|---|---|
+| W1 choosing from a short list of names | neutral | the choice is the same; the plan adds names, not a choice |
+| W3 reasoning about code in front of it | closer | a member fits in one window; siblings show the same change where it is needed |
+| W7 better calls after thinking | closer | twice the thinking budget for the step that writes code |
+| B7 the middle of a long context | closer | no 340-line class to page through |
+| B8 many rules or forms | neutral | no new form |
+| B9 reading instead of editing | closer | no outline to read through by ranges |
+| B10 knowing its budget | farther | longer thinking spends more of the 7 min unseen; accepted because coverage and content were the failing stage, member windows cut reads, and the context estimate closes the editor earlier |
+| B13 order in lists | neutral | siblings come after the chosen code, ranked by similarity |
+| P5 small thinking budget on contradictions | closer | more budget |

@@ -16,6 +16,9 @@ if __name__ == '__main__':
 Place = namedtuple('Place', 'rel name start end reason')
 MAX_CALLERS = 5
 MAX_SAME_NAME = 3   # a plain name defined in more places than this (get, __init__) is not a copy
+SAME_PATTERN = 0.7  # a sibling whose body matches this much of the chosen one's (tokens) repeats its logic
+MAX_PATTERN = 3
+PATTERN_LINES = 60  # longer siblings are not compared
 
 
 def _twin_key(qualname):
@@ -73,6 +76,31 @@ class Table:
         return [(rel, c) for (rel, c), bases in self.bases.items() if short in bases]
 
 
+def _body_tokens(sym):
+    text = ast.unparse(sym.node)
+    return re.findall(r'\w+|\S', text.split('\n', 1)[1] if '\n' in text else text)
+
+
+def same_pattern(table, rel, sym):
+    """The functions next to sym (the same class, or the file's top level) whose body repeats its logic: [(rel, Sym)].
+    fastapi_14448 changes is_gen_callable, is_async_gen_callable and is_coroutine_callable the same way (bodies 0.93
+    and 0.73 alike); the agent chose one and changed only that one, because nothing put the others in the plan."""
+    if sym.kind != 'def' or sym.name.split('.')[-1].startswith('__') or sym.end - sym.start >= PATTERN_LINES:
+        return []
+    prefix = sym.name.rsplit('.', 1)[0] + '.' if '.' in sym.name else ''
+    mine = _body_tokens(sym)
+    scored = []
+    for s in table.syms.get(rel, []):
+        short = s.name[len(prefix):]
+        if (s is sym or s.kind != 'def' or not s.name.startswith(prefix) or '.' in short or short.startswith('__')
+                or s.end - s.start >= PATTERN_LINES):
+            continue
+        ratio = difflib.SequenceMatcher(None, mine, _body_tokens(s), autojunk=False).ratio()
+        if ratio >= SAME_PATTERN:
+            scored.append((-ratio, s.start, s))
+    return [(rel, s) for _, _, s in sorted(scored)[:MAX_PATTERN]]
+
+
 def related(table, chosen):
     """The chosen places first, then the places related to them, each once: [Place]. chosen: [(rel, qualname)]."""
     out, seen = [], set()
@@ -106,6 +134,8 @@ def related(table, chosen):
             for base in table.bases.get((rel, cls), []):
                 for r, s in table.find(f'{base}.{method}'):
                     put(r, s, f'version in base class {base}')
+        for r, s in same_pattern(table, rel, sym):
+            put(r, s, f'same pattern as {short}')
         plain = [(r, s) for r, s in same if not short.startswith('__')]
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:

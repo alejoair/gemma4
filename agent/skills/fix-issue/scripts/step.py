@@ -731,7 +731,7 @@ def _candidate(index, doc, matched, note=None, root=None, literals=(), toks=None
     return {'rel': doc.rel, 'name': doc.name, 'start': doc.start, 'end': doc.end, 'line': line, 'evidence': ev}
 
 
-def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only_rel=None):
+def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only_rel=None, within=None):
     index = _rank.Index(root)
     terms = _statement.terms(text)
     mt, mpaths = _statement.model_terms(extra_items)
@@ -746,7 +746,7 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only
             for t in _rank.tokens(ident):
                 if len(t) >= 4 and t not in _statement.STOP:
                     toks[t] = max(toks.get(t, 0), 1 if w < 2 else 2)
-    for r in requirements:
+    for r in requirements if within is None else ():
         if r['type'] != 'new':
             continue
         for name in r['names']:
@@ -762,7 +762,7 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only
                                           literals=literals, toks=toks))
     ranked = index.rank(terms, _statement.paths(text) + mpaths, n=len(index.docs) if only_rel else n + len(out))
     for _, doc, matched in ranked:
-        if only_rel and doc.rel != only_rel:
+        if only_rel and doc.rel != only_rel or within and not doc.name.startswith(within + '.'):
             continue
         if (doc.rel, doc.name) not in seen and len(out) < n:
             seen.add((doc.rel, doc.name))
@@ -1165,6 +1165,7 @@ def d1(root, state, args):
         msg = (f'Nothing in the repository holds {_said(", ".join(_search_text(o) for o in others[:3]), "the names or text sent")} (library and '
                'standard-library code is not searched). ' if others else 'No candidate was chosen. ')
         return msg + 'Nothing was opened.\n\n' + _candidates_view(state)
+    chosen = _big_class_members(root, state, chosen)
     table = _impact.Table(root, docs=True)
     places = []
     syms_chosen = [(c['rel'], c['name']) for c in chosen if c['name'] != MODULE]
@@ -1198,7 +1199,7 @@ def d1(root, state, args):
     # in its own window. Other related places are opened by their name.
     bases = {c['rel'].split('/')[-1] for c in chosen}
     planned = [p['id'] for p in places if p['reason'] == 'chosen'
-               or p['reason'].startswith('async/sync twin')
+               or p['reason'].startswith('async/sync twin') or p['reason'].startswith('same pattern')
                or (p['reason'].startswith('same definition') and p['rel'].split('/')[-1] in bases)]
     if not planned:
         _journal.back(state)
@@ -1215,6 +1216,33 @@ def d1(root, state, args):
                f'They are edited one at a time, starting with {first}. A related place outside the plan needs an '
                f'edit only when the change must be made there too: send its name to open it.')
     return '\n\n'.join(out + [_window(root, state, state['current'])])
+
+
+BIG_CLASS_MEMBERS = 2   # members of a chosen class over CLASS_OUTLINE_AT lines that become its places
+
+
+def _big_class_members(root, state, chosen):
+    """A chosen class longer than CLASS_OUTLINE_AT lines is replaced by its members most related to the issue (at most
+    BIG_CLASS_MEMBERS, those that match the statement's words). httpx_3672 chose HTTPParser (340 lines): the window
+    showed an outline and the editor spent its calls reading ranges of it and ran out of time. A member fits in one
+    window; a new member is added after it (_whole_edit), the class is still opened by its name. A class with no
+    matching member stays whole."""
+    out = []
+    st = _state.load('statement', {})
+    for c in chosen:
+        if c['name'] == MODULE or c['end'] - c['start'] + 1 <= CLASS_OUTLINE_AT:
+            out.append(c)
+            continue
+        sym = next((s for s in _code.symbols(_code.parse(_repo.read_text(root, c['rel']))) if s.name == c['name']),
+                   None)
+        if sym is None or sym.kind != 'class':
+            out.append(c)
+            continue
+        members, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'],
+                                      n=BIG_CLASS_MEMBERS, only_rel=c['rel'], within=c['name'])
+        members = [m for m in members if '[matches:' in m['line']]
+        out += [m for m in members if (m['rel'], m['name']) not in {(x['rel'], x['name']) for x in out}] or [c]
+    return out[:3 + BIG_CLASS_MEMBERS]
 
 
 def d2(root, state, args):
@@ -2294,6 +2322,7 @@ def _editor_gate(root, state, args):
 CONTEXT_TOKENS = 32768      # the model's context; an agent_tool sub-agent's history is never compacted
 EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code is shown to the editor
 EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requests would not fit)
+EDITOR_THINKING = 2048      # the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml)
 
 
 def _editor_tokens(state):
@@ -2302,7 +2331,8 @@ def _editor_tokens(state):
     b10-b11, where an editor reached 31,900 prompt tokens after 40 calls)."""
     # calibrated on nl5 (dumped requests against the server's prompt tokens): the history grows by ~1,450 tokens a
     # call, mostly the model's own thoughts (~3,500 characters a call), the script's answers adding little
-    return 1600 + state.get('editor_calls', 0) * 1450
+    # a larger thinking budget adds to each call: half of the extra budget (thoughts rarely use all of it)
+    return 1600 + state.get('editor_calls', 0) * (1450 + (EDITOR_THINKING - 512) // 2)
 
 
 def _editor_open(root, state, name, hit):
