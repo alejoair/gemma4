@@ -1552,6 +1552,7 @@ LIBRARY_LINES = 60
 def _read_target(root, state, text):
     """(rel, label) of the file a range names: a file path, a listed place or candidate, or code of the repository."""
     x = _args.clean(text or '').strip('/')
+    x = re.sub(r'\s+top level$', '', x)        # 'file.py top level' with two numbers is a range of that file (b11)
     if re.fullmatch(r'[\w./-]+\.py', x):
         rel = next((r for r in _repo.iter_py(root, tests=True, docs=True) if _rank.names_file(x, r)), None)
         return (rel, rel) if rel else (None, None)
@@ -2238,6 +2239,16 @@ def _editor_gate(root, state, args):
                     'for the coordinator, without a call, saying what the change needs.')
         return ('This editor opens its place first: send the place name from the request, alone. The places: '
                 + ', '.join(q['handle'] for q in places) + '.')
+    used = _editor_tokens(state)
+    if used > EDITOR_CLOSE_AT:
+        return _editor_done(state, f'This editor\'s history is near the model\'s context limit ({CONTEXT_TOKENS} '
+                            'tokens), so no further call can be answered here.', mine_name)
+    is_read = (len(items) == 1 and NAME_LIKE.fullmatch(name) and not _is_skip(name) and hit is None or
+               (hit is not None and hit['id'] != mine)) or \
+        (len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3]))
+    if used > EDITOR_READS_UNTIL and is_read:
+        return (f'No more code is shown in this editor: its history is near the model\'s context limit. Edit '
+                f'{mine_name} with what was shown, or send [\'skip\'] if it needs no change.')
     i_mine = _journal.target(state, mine)
     if state['step'] == 'D3' and state.get('current') != i_mine:
         state['current'] = i_mine           # the editor's calls act on its own place only
@@ -2280,6 +2291,18 @@ def _editor_gate(root, state, args):
     return None
 
 
+CONTEXT_TOKENS = 32768      # the model's context; an agent_tool sub-agent's history is never compacted
+EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code is shown to the editor
+EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requests would not fit)
+
+
+def _editor_tokens(state):
+    """The editor's history, estimated: its instruction, every answer of the script (about 3.2 characters a token for
+    code) and every reply of the model with its thoughts (kept in the history; about 700 tokens a call measured in
+    b10-b11, where an editor reached 31,900 prompt tokens after 40 calls)."""
+    return 1600 + state.get('editor_chars', 0) / 3.2 + state.get('editor_calls', 0) * 700
+
+
 def _editor_open(root, state, name, hit):
     """open.py: a new editor opens the place of its request. The previous editor has replied (its place, if still
     undecided, keeps its code); a name off the places is chosen as the coordinator's choice."""
@@ -2299,7 +2322,7 @@ def _editor_open(root, state, name, hit):
         if hit is None:
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
     state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
-                 editor_name=hit['handle'])
+                 editor_name=hit['handle'], editor_chars=0, editor_calls=0)
     state['recent'], state['repeats'] = [], 0
     i = _journal.target(state, hit['id'])
     if state['plan'][i]['status'] == 'skipped':
@@ -2397,8 +2420,10 @@ def main(argv, role=None, opening=False):
         # run of requests_7328), but it is not shown again either: the editor of the agent_tool variant read the same
         # 14 lines of Session.send 4 times in a context of 8k tokens, so the lines were there; the answer says so
         # and asks for the decision (F7: a repeat gets a different answer)
-        skip = True
         seen = state.setdefault('ranges_shown', [])
+        # exempt from the repeat guard only when these lines were really shown before (b11: a range refused as an
+        # unknown form came 5 times, each answered the same, because every range was exempt)
+        skip = key in seen
         # only lines really shown before (not a status, not "do not exist"), only where an edit is the next call
         # (docs/feedback_audit.md #7: the claim was false for the coordinator and contradicted NEXT in D4)
         if key in seen[-6:] and ROLE == 'single' and state['step'] == 'D3':
@@ -2528,6 +2553,9 @@ def main(argv, role=None, opening=False):
         if range_key is not None and out.startswith('Lines ') and ' do not exist' not in out.split('\n')[0]:
             state.setdefault('ranges_shown', []).append(range_key)
             del state['ranges_shown'][:-6]
+    if ROLE == 'editor':
+        state['editor_chars'] = state.get('editor_chars', 0) + len(out) + sum(len(str(a)) for a in args)
+        state['editor_calls'] = state.get('editor_calls', 0) + 1
     _state.save('journal', state)
     out = out.rstrip()
     if state['step'] != 'S0':

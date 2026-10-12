@@ -322,3 +322,26 @@ Session.send (system fault).
   - a large class as one place (it should open by members);
   - new-feature tasks (no place to choose; the coordinator searches);
   - inherited library members in searches.
+
+**b10-b11 (2026-10-12): the editor's history and two loops.**
+- b10 fastapi_14851: the editor looped on a malformed call that ADK refused ("Argument 'skill_name' is required").
+  The script never sees such a call, so both prompts now say what that answer means and give the correct call (F8).
+- b11 fastapi_14448: the editor sent `['fastapi/dependencies/utils.py top level', 1, 1000]` 5 times. A range on
+  "file.py top level" was not read, and every range was exempt from the repeat guard.
+  - A "top level" range is now a range of the file.
+  - Only ranges really shown before are exempt from the repeat guard.
+- The editor's history is never compacted (agent_tool sub-agent) and reached 31,900 tokens of a 32,768 context.
+  - The script estimates it: instruction + answers / 3.2 + 700 per call for the model's replies and thoughts.
+  - Above 22,000 tokens no more code is shown ("edit with what was shown, or skip").
+  - Above 27,000 tokens the place is closed with the ready sentence.
+  - The bound is the model's context, not a chosen number of reads.
+- open.py: it no longer skips the previous editor's place, and it opens only a place (or code, for an editor
+  without one); anything else is answered as edit.py answers it. In b10 an editor used open.py to browse files and
+  `ls -R`.
+
+| Item | Effect | Why |
+|---|---|---|
+| F7 | closer | a refused range repeated now meets the repeat guard |
+| B7 | closer | the editor's history stays inside the context |
+| B9 | closer | reads end before the context is full |
+| F8 | closer | the harness's own error is explained in the prompt |
