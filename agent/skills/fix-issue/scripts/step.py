@@ -2393,6 +2393,18 @@ def _editor_open(root, state, name, hit):
         if hit is None:
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
     new_editor = state.get('editor_done') or not state.get('editor_place')
+    if not new_editor and hit['id'] != state['editor_place']:
+        if hit['handle'] == state.get('requested') and not state.get('requested_used'):
+            new_editor = True       # the place the coordinator was told to hand over: its editor's first call
+        else:
+            # c5: an open editor sent open.py for the other planned places in turn (8 calls, a full window each, no
+            # edit) and every switch reset its context estimate; another place is read like related code, and an
+            # edit of it is kept while the editor's own place stays open
+            mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
+            return _editor_read(root, state, hit, mine_name) + (
+                f"\n\nBack to {mine_name}: send its edit, or ['skip'] if it needs no change.")
+    if new_editor and hit['handle'] == state.get('requested'):
+        state['requested_used'] = True
     if state.get("editor_place"):
         # an editor reopening places to go on thinking (nl3: 14 reopenings, each a full window of ~2,000 tokens)
         used = _editor_tokens(state)

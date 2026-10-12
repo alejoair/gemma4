@@ -55,6 +55,10 @@ def next_call(state, role='single'):
     if role == 'coordinator' and step == 'D3' and state.get('current') is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
+        # the place a new editor will open: an open.py call naming it starts a new editor, another place is a read
+        # (step.py _editor_open)
+        if state.get('requested') != pid:
+            state['requested'], state['requested_used'] = pid, False
         return f"NEXT: call the tool edit_place with request '{pid}' (it opens that place and edits it)."
     if step == 'D4':
         # local run of fastapi_14448: "NEXT: none: call submit_patch now" next to "NEXT: call run_skill_script ...
