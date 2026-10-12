@@ -16,6 +16,7 @@ The model names code by its name; the ids (C2, P1, R1) stay inside the journal a
 import ast
 import collections
 import difflib
+import json
 import os
 import re
 import sys
@@ -2515,19 +2516,7 @@ def _editor_gate(root, state, args):
 
 CONTEXT_TOKENS = 32768      # the model's context; an agent_tool sub-agent's history is never compacted
 EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code is shown to the editor
-EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requests would not fit)
-# the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml); local runs set the server's (c8: the
-# local server's 512 against this 2,048 closed an editor at 18,000 real tokens)
-# (the harness gives scripts a clean environment, so the local runner writes it to a file; Kaggle has none: 2,048)
-def _thinking_budget():
-    try:
-        with open('/tmp/swe_editor_thinking') as f:
-            return int(f.read().strip())
-    except (OSError, ValueError):
-        return 2048
-
-
-EDITOR_THINKING = _thinking_budget()
+EDITOR_CLOSE_AT = 27000     # ... after which no call but an edit, a skip or the reply is answered
 
 
 def _editor_gate_closed(root, state):
@@ -2551,7 +2540,12 @@ def _editor_tokens(state):
     # calibrated on nl5 (dumped requests against the server's prompt tokens): the history grows by ~1,450 tokens a
     # call, mostly the model's own thoughts (~3,500 characters a call), the script's answers adding little
     # a larger thinking budget adds to each call: half of the extra budget (thoughts rarely use all of it)
-    return 1600 + state.get('editor_calls', 0) * (1450 + (EDITOR_THINKING - 512) // 2)
+    # fitted on V18's editor calls (the 31B on Kaggle, 451 prompts against the real prompt_tokens): the answers' and
+    # the calls' characters predict the history (median error 742 tokens) far better than the call count (1,936; the
+    # count refused reads at 6,700 real tokens). The margin is the 90th percentile of the error. The local runner's
+    # smaller thinking budget changes little here (the fit has no per-call term to speak of).
+    return int(2201 + 12 * state.get('editor_calls', 0) + 0.47 * state.get('editor_chars', 0)
+               + 1.106 * state.get('editor_arg_chars', 0)) + 2200
 
 
 def _editor_open(root, state, name, hit):
@@ -2630,7 +2624,7 @@ def _editor_open(root, state, name, hit):
         # 29,800 tokens unbounded and the same lines were asked for again and again)
         # (the lines already shown are kept: c4's editor switched to a helper and back, and its edit of the place it
         # had read was refused as 'not shown')
-        state.update(editor_reads=[], editor_chars=0, editor_calls=0)
+        state.update(editor_reads=[], editor_chars=0, editor_arg_chars=0, editor_calls=0)
         state['recent'], state['repeats'] = [], 0
     state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_name=hit['handle'])
     i = _journal.target(state, hit['id'])
@@ -2733,7 +2727,8 @@ def main(argv, role=None, opening=False):
         if i is not None and state['plan'][i]['status'] == 'todo' and not state.get('editor_done'):
             state['plan'][i]['status'] = 'skipped'
         state['editor_review'], state['editor_done'] = False, True
-        state.update(editor_place=None, editor_reads=[], seen={}, editor_chars=0, editor_calls=0, recent=[], repeats=0)
+        state.update(editor_place=None, editor_reads=[], seen={}, editor_chars=0, editor_arg_chars=0, editor_calls=0,
+                     recent=[], repeats=0)
         if state['step'] == 'D3':
             _journal.advance(state)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
@@ -2921,7 +2916,8 @@ def main(argv, role=None, opening=False):
     if ROLE == 'editor':
         if not OPENING:
             state['reopen'] = 0         # reopenings count only in a row
-        state['editor_chars'] = state.get('editor_chars', 0) + len(out) + sum(len(str(a)) for a in args)
+        state['editor_chars'] = state.get('editor_chars', 0) + len(out)
+        state['editor_arg_chars'] = state.get('editor_arg_chars', 0) + len(json.dumps(list(args)))
         state['editor_calls'] = state.get('editor_calls', 0) + 1
     _state.save('journal', state)
     out = out.rstrip()

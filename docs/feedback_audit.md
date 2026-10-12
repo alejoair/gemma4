@@ -518,3 +518,11 @@ the first system fault.**
 | B9 reading instead of editing | closer | fewer reasons to read |
 | B16 repurposing a form with side effects | closer | no rename by adding a copy |
 | P2 layout changes | neutral | the same sections, one more |
+
+**The "No more code is shown" answer (2026-10-12).** The script cannot see the editor's prompt size and estimated it
+from the call count (1,600 + about 2,200 per call). Against V18's real `prompt_tokens` (451 editor prompts), that
+estimate refused reads at real sizes of 6,700-12,000 tokens (the limit is 32,768), while other editors did reach
+26,000-28,400. A fit on the characters the script knows (its answers and the calls' arguments) gives
+`2201 + 12·calls + 0.47·answer chars + 1.106·argument chars` with a median error of 742 tokens. The call count gave
+1,936. The estimate is now that fit plus a margin of 2,200, the 90th percentile of its error. The
+`/tmp/swe_editor_thinking` hook for local runs is gone: the fit has no per-call thinking term.
