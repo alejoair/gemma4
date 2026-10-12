@@ -1907,6 +1907,14 @@ def d3(root, state, args):
             why = ('the second and third items must be line numbers, like 79 and 82.' if len(items) >= 4 else
                    f'it has {len(items)} items: send the place name and the whole new function or class, or the place '
                    'name, two line numbers and the new lines.')
+            q = _place(state, state['plan'][cur]['place']) if cur is not None else None
+            if q is not None and len(items) == 2 and q['name'] not in (MODULE, '<exports>'):
+                # c15: ['Dependant.is_gen_callable', 'is_gen_callable'] four times against the generic text: the
+                # second item shown filled with the place's own first lines (W4)
+                lines = _repo.read_lines(root, q['rel'])[q['start'] - 1:q['start'] + 1]
+                first = '\n'.join(l.rstrip('\r\n') for l in lines)
+                why = (f'the second item must be the whole new code of {q["handle"]}, starting with its first lines '
+                       f"as they are now: ['{q['handle']}', '{first}\n        <the new body>'].")
             msg = (f'The edit was not read: {why} Nothing was changed, and this form is never read, so sending it '
                    'again gives the same answer.')
         elif ROLE == 'editor':
@@ -2181,7 +2189,10 @@ def _move_on(root, state):
     if state['step'] == 'D3' and state.get('current') is not None:
         name = _name_of(state, state['plan'][state['current']]['place'])
         move = _journal.skip(state, state['current'])
-        head = f'The same call came three times, so {name} keeps its code and the work moves on.'
+        done = state['plan'][state['current']]['status'] == 'done'
+        # (c15: 'keeps its code' after an accepted edit of the place was false)
+        head = (f'The same call came three times, so the work on {name} moves on; '
+                + ('its accepted edit stays in the patch.' if done else 'it keeps its code.'))
         if ROLE == 'editor':
             return _editor_done(state, head, name)
         if move == 'next':
