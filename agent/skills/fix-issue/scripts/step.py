@@ -271,9 +271,17 @@ def _window(root, state, i, show=None):
     owner = _owner_class(root, p)
     if owner:
         head += f' It is a method of {owner}.'
-    if p['reason'] != 'chosen':
+    if p['reason'] != 'chosen' and not (ROLE == 'editor' and _specified(entry)):
         head += f" Related to the chosen code ({p['reason']}): change it only if the goal needs it here, else ['skip']."
     head += f'\nGoal: {goal}'
+    if ROLE == 'editor' and _specified(entry) and entry['intent'] != 'no change':
+        head += f'\nWhat to change here (the specification): {entry["intent"]}'
+        for e2 in state['plan']:
+            q = _place(state, e2['place'])
+            if q and q['id'] != p['id'] and _specified(e2) and e2['intent'] != 'no change' and \
+                    re.search(r'\b' + re.escape(q['name'].split('.')[-1]) + r'\b', entry['intent']):
+                # 'same as is_async_gen_callable': the sentence it refers to (the editor does not see that place)
+                head += f'\n  ({q["handle"]}, named there, is specified: {e2["intent"]})'
     for line in _deferred_lines(state):
         head += f'\n{line}'
     if p['name'] == '<exports>':
@@ -295,7 +303,7 @@ def _window(root, state, i, show=None):
     context = _context_view(root, p, _focus(state, entry))
     if context:
         parts.append(context)
-    if ROLE == 'editor':
+    if ROLE == 'editor' and not _narrow(state):
         others = _plan_view(root, state, p)
         if others:
             parts.append(others)
@@ -469,6 +477,9 @@ EDITOR_USES_CHARS = 2000
 EDITOR_CALLERS = 4
 PLAN_CHARS = 2500        # the other planned places shown in the window
 PLAN_PLACE_LINES = 25    # a planned place up to this many lines is shown as code
+SPEC_USES = 4            # the specifier: the definitions each place uses, and its callers
+SPEC_USES_CHARS = 1500
+SPEC_CALLERS = 3
 
 
 def _context_view(root, p, focus=None):
@@ -542,7 +553,9 @@ def _context_view(root, p, focus=None):
 
     uses, seen, chars = [], set(), 0
     focus = focus or {}
-    n_uses, uses_chars, n_callers = ((EDITOR_USES, EDITOR_USES_CHARS, EDITOR_CALLERS) if ROLE == 'editor'
+    wide = ROLE == 'editor' and not _narrow(_SEEN.get('state') or {})
+    n_uses, uses_chars, n_callers = ((EDITOR_USES, EDITOR_USES_CHARS, EDITOR_CALLERS) if wide
+                                     else (SPEC_USES, SPEC_USES_CHARS, SPEC_CALLERS) if ROLE == 'specifier'
                                      else (USES, USES_CHARS, CALLERS))
 
     def weight(item):
@@ -1292,7 +1305,8 @@ def d1(root, state, args):
     _tests.save_verified(root)
     first = _place(state, planned[0])['handle']
     if ROLE == 'coordinator':
-        out.append(f'Places (the chosen code and the code related to it):\n{places_view}\nEach place is edited by the '
+        out.append(f'Places (the chosen code and the code related to it):\n{places_view}\nNext the tool specify_fix '
+                   f'reads the code of all of them and writes what changes at each; then each place is edited by the '
                    f'tool edit_place, one at a time, starting with {first}.')
         return '\n\n'.join(out)
     out.append(f'Places (the chosen code and the code related to it):\n{places_view}\n'
@@ -2362,6 +2376,9 @@ def _current_view(root, state):
 def _coordinator_status(root, state):
     """The coordinator's answer while places are left: which, and that edit_place edits them."""
     left = [_name_of(state, e['place']) for e in state['plan'] if e['status'] == 'todo']
+    if not state.get('spec_done'):
+        return ('The places are not specified yet: ' + ', '.join(left) + '. The tool specify_fix reads their code and '
+                'writes what changes at each.')
     return ('Places still to edit: ' + ', '.join(left) + '. Each is edited by the tool edit_place (the script does '
             'not edit for the coordinator).')
 
@@ -2474,6 +2491,13 @@ def _editor_gate(root, state, args):
         return ("Choosing other code is the coordinator's step, not this editor's. If the change belongs to other "
                 f"code, reply with one sentence naming it, without a call; if {mine_name} needs no change, send "
                 "['skip'].")
+    if _narrow(state) and not is_edit and not _is_skip(name):
+        p_mine = _place(state, mine)
+        own_range = (len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3])
+                     and _match([p_mine], _args.clean(items[0]), fuzzy=False) is not None)
+        own_name = len(items) == 1 and hit is not None and hit['id'] == mine
+        if (len(items) in (1, 3) or _search_query(items)) and not own_range and not own_name:
+            return _narrow_refusal(mine_name)
     if hit is not None and hit['id'] != mine:
         return _editor_read(root, state, hit, mine_name) + back
     if len(items) == 1 and name.lower().strip('. ') in ('top level', 'imports', 'the imports', 'top-level', 'module'):
@@ -2517,6 +2541,144 @@ def _editor_gate(root, state, args):
 CONTEXT_TOKENS = 32768      # the model's context; an agent_tool sub-agent's history is never compacted
 EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code is shown to the editor
 EDITOR_CLOSE_AT = 27000     # ... after which no call but an edit, a skip or the reply is answered
+
+
+# ------------------------------------------------------------------------------------------------- the specification
+
+# The specify_fix sub-agent (agent_tool variant): a fresh context with a large thinking budget sees the code of every
+# planned place at once and writes, for each, one sentence of what changes there. The editors then each get one
+# specified change and no reading (docs/design_single.md, "Redesign: microtasks"). The sentences are the plan entries'
+# intents, which also choose the part of a long place an editor sees (_focus).
+
+SPEC_CHARS = 24000          # the plan's code shown to the specifier (about 7,000 tokens)
+SPEC_PLACE_LINES = 80       # lines of one place shown
+NO_CHANGE = re.compile(r'(?i)^\W*(no change|none|nothing|skip|no edit|unchanged|keeps? its code)\W*$')
+
+
+def _spec_view(root, state):
+    """Every planned place's numbered code, with the code that calls it and the definitions it uses."""
+    out, room = [], SPEC_CHARS
+    planned = {e['place']: e for e in state['plan']}
+    # the planned places first, then the related ones the plan left out (callers, overrides, exports): c-httpx_3672,
+    # the callers of a renamed method are where the rename must go too
+    order = [(planned[q['id']], q) for q in state['places'] if q['id'] in planned] + \
+            [(None, q) for q in state['places'] if q['id'] not in planned]
+    for e, p in order:
+        if p is None:
+            continue
+        tag = p['reason'] if e is not None else f'{p["reason"]}; not planned: give it a sentence if it must change'
+        head = f'== {p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}; {tag})'
+        if p['name'] == '<exports>':
+            body = _code_view(root, p['rel'], 1, len(_repo.read_lines(root, p['rel'])), _focus(state), limit=40)
+        else:
+            body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, e),
+                              limit=SPEC_PLACE_LINES if e is not None else 30)
+        ctx = _context_view(root, p, _focus(state, e)) if e is not None else ''
+        text = '\n'.join(x for x in (head, body, ctx) if x)
+        if len(text) > room:
+            text = head + ' (its code does not fit here; it is shown to its editor)'
+        _seen_mark(p['rel'], text)
+        out.append(text)
+        room -= len(text)
+    return '\n\n'.join(out)
+
+
+def _specified(e):
+    return bool(e.get('intent')) and e['intent'] not in ('(not in the plan)',)
+
+
+def _narrow(state):
+    """The editor of a specified change: one place, its sentence, no reading (docs/design_single.md, microtasks)."""
+    return ROLE == 'editor' and bool(state.get('spec_done'))
+
+
+def _narrow_refusal(mine_name):
+    # the rule with its reason and the way out (P3): the change is specified, the editor's view is the place
+    return (f'Reading other code is not part of this task: what changes at {mine_name} is specified in its window, '
+            'which shows its code and the definitions it uses. Edit it with what is shown, or send [\'skip\'] if the '
+            'specification asks for no change here. If the change cannot be made without other code, reply with one '
+            'sentence naming that code, without a call.')
+
+
+def _spec_pairs(items):
+    """[(name, sentence)] from ['A', 'what changes', 'B', 'no change'], ['A: what changes', 'B - no change'], or a
+    mix of both."""
+    sep = r'\s*(?:(?<!:):(?!:)|—|–| - )\s*'
+    one = re.compile(r'^\s*([\w./:]+?)(\(\))?' + sep + r'(.+)$', re.S)
+    name_only = re.compile(r'^\s*[\w./:]+(\(\))?\s*$')
+    pairs, i = [], 0
+    while i < len(items):
+        x = items[i]
+        if name_only.match(x) and i + 1 < len(items):
+            pairs.append((x.strip().rstrip('()'), items[i + 1].strip()))
+            i += 2
+            continue
+        m = one.match(x)
+        if m:
+            pairs.append((m.group(1), m.group(3).strip()))
+        i += 1
+    return pairs
+
+
+def _specifier(root, state, args):
+    if state['step'] not in ('D3', 'D4') or not state.get('plan'):
+        return ('No places are chosen yet, so there is nothing to specify. Reply with one sentence for the coordinator, '
+                'without a call, saying so.')
+    items = [_args.clean(a) if len(a) < 200 else a.strip() for a in args if a and a.strip()]
+    plan_names = [_name_of(state, e['place']) for e in state['plan']]
+    form = ("Send one item pair per place: ['<place name>', '<what changes there, in one sentence, or no change>', "
+            "...]. A place the change needs that is not listed: its name and its sentence (it is added).")
+    if not state.get('spec_shown') or not items or (len(items) == 1 and items[0].lower().strip('. ') in (
+            'the plan', 'plan', 'show', 'start', 'places', 'status')):
+        state['spec_shown'] = True
+        return ('The places of the plan, with their code, the code that calls them and the definitions they use. For '
+                'each place write what must change there so that the issue is fixed: one concrete sentence (what to '
+                'add, remove or replace, and with what), or no change. Each place is then edited by its own editor, '
+                'which sees only that place and your sentence, so write each sentence so that it can be done from '
+                'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + form)
+    pairs = _spec_pairs(items)
+    if not pairs:
+        return 'No place and sentence were read. ' + form + '\nThe places: ' + ', '.join(plan_names) + '.'
+    saved, unknown, added = [], [], []
+    for name, sentence in pairs:
+        hit = _match(state['places'], name, fuzzy=False)
+        if hit is None:
+            found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
+            if not found:
+                unknown.append(name)
+                continue
+            _add_place(state, found[0], 'added by the specification')
+            hit = next(q for q in state['places'] if (q['rel'], q['name']) == (found[0]['rel'], found[0]['name']))
+            added.append(hit['handle'])
+        i = _journal.target(state, hit['id'])
+        e = state['plan'][i]
+        if NO_CHANGE.match(sentence):
+            e['intent'] = 'no change'
+            if e['status'] == 'todo':
+                e['status'] = 'skipped'
+        else:
+            e['intent'] = sentence[:600]
+            if e['status'] == 'skipped':
+                e['status'] = 'todo'
+        saved.append(hit['handle'])
+    missing = [_name_of(state, e['place']) for e in state['plan'] if e['status'] == 'todo' and not _specified(e)]
+    out = []
+    if saved:
+        out.append('Saved: ' + ', '.join(saved) + '.')
+    if added:
+        out.append('Added to the plan: ' + ', '.join(added) + '.')
+    if unknown:
+        out.append('Not in the repository (nothing saved for them): ' + ', '.join(unknown) + '.')
+    if missing:
+        out.append('Still without a sentence: ' + ', '.join(missing) + '. ' + form)
+        return '\n'.join(out)
+    state['spec_done'] = True
+    _journal.advance(state)
+    todo = [(_name_of(state, e['place']), e['intent']) for e in state['plan'] if e['status'] == 'todo']
+    out.append('The specification is complete. The places to edit:\n' + '\n'.join(f'  {n}: {t}' for n, t in todo)
+               if todo else 'The specification is complete: no place needs a change.')
+    out.append('Reply with one sentence for the coordinator, without a call.')
+    return '\n'.join(out)
 
 
 def _editor_gate_closed(root, state):
@@ -2593,6 +2755,8 @@ def _editor_open(root, state, name, hit):
             # edit) and every switch reset its context estimate; another place is read like related code, and an
             # edit of it is kept while the editor's own place stays open
             mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
+            if _narrow(state):
+                return _narrow_refusal(mine_name)
             return _editor_read(root, state, hit, mine_name) + (
                 f"\n\nBack to {mine_name}: send its edit, or ['skip'] if it needs no change.")
     if new_editor and hit['handle'] == state.get('requested'):
@@ -2716,6 +2880,20 @@ def main(argv, role=None, opening=False):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
     argv = _args.split_single_quoted(argv)
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
+    if ROLE == 'specifier':
+        try:
+            out = _specifier(root, state, args)
+        except Exception as e:      # never a traceback for the model
+            _state.record({'error': f'spec {type(e).__name__}: {e}'})
+            out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Reply with one sentence '
+                   'for the coordinator, without a call, saying the specification failed.')
+            state['spec_done'] = True
+        _state.save('journal', state)
+        out = out.rstrip()
+        if len(out) > SPEC_CHARS + 3000:
+            out = out[:SPEC_CHARS + 500] + '\n      ... (output cut) ...\n' + out[-2400:]
+        print(out + '\n\n' + _journal.next_call(state, ROLE))
+        return
     if ROLE != 'editor' and state.get('editor_place'):
         # (also after an editor that closed itself: c11's closed editor kept its counts, and the next editor was told
         # 'near the context limit' on its first call)

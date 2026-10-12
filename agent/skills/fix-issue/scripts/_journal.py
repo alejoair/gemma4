@@ -39,6 +39,14 @@ def next_call(state, role='single'):
     """The exact next call, the last line of every answer. role: 'single' (one agent does everything), 'coordinator'
     (chooses, then hands each place to the edit_place tool) or 'editor' (edit_place: one place, then one sentence)."""
     step = state['step']
+    if role == 'specifier':
+        if state.get('spec_done') or step not in ('D3', 'D4'):
+            return 'NEXT: no call: reply with one sentence for the coordinator.'
+        return ("NEXT: call run_skill_script with skill_name fix-issue, file_path spec.py and args ['<place name>', "
+                "'<what changes there, or no change>', ...] (one pair per place)")
+    if role == 'coordinator' and step == 'D3' and not state.get('spec_done'):
+        return ("NEXT: call the tool specify_fix with request 'the plan' (it reads the code of every place and writes "
+                "what changes at each).")
     if role == 'editor':
         if state.get('editor_done') or step != 'D3' or state.get('current') is None:
             return ('NEXT: no call: reply with one sentence for the coordinator (what changed at the place, or why '
@@ -125,6 +133,7 @@ def requirement_back(state, candidates):
 def set_plan(state, entries):
     """entries: [(place id, intent)] already checked against the places."""
     state['plan'] = [{'place': p, 'intent': i, 'status': 'todo', 'fails': 0, 'errors': []} for p, i in entries]
+    state['spec_done'], state['spec_shown'] = False, False      # a new plan is specified again (agent_tool variant)
     state['current'], state['step'] = 0, 'D3'
 
 

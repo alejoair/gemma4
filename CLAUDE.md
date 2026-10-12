@@ -97,6 +97,11 @@ thinking_budget 512, include_thoughts true. Answers are capped at 10,000 charact
   from; naming code chooses it (it replaces the places not edited yet); an edit of code that is not a place chooses
   it; windows show the imports the place uses and the library code it calls. Reasons and checklist table in
   `docs/design_single.md` ("Finding instead of reading").
+- 10-12 (the user's): **microtasks** (agent_tool variant). A `specify_fix` sub-agent (fresh context, thinking 4096,
+  `spec.py`) sees the code of all the plan's places at once and writes one sentence per place. Each `edit_place`
+  editor gets its place, that sentence and the definitions it uses, and no reading. Reason: V18-V19 editors spent
+  88-95% of the time reading to understand the fix. Design, context per role and checklist in `docs/design_single.md`
+  ("Redesign: microtasks").
 
 ## Results so far
 
