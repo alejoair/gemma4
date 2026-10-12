@@ -345,3 +345,24 @@ Session.send (system fault).
 | B7 | closer | the editor's history stays inside the context |
 | B9 | closer | reads end before the context is full |
 | F8 | closer | the harness's own error is explained in the prompt |
+
+**No time limit (2026-10-12, local 26B, 60 min).**
+- fastapi_14851: "resolved" in 353 s. It is not evidence: its hidden tests (tests/test_router_events.py) pass with no
+  patch (9/9, checked).
+- rich_3521 (its hidden tests fail with no patch). Several runs, each stopped at a system fault, then nl6.
+  - The statement is only "Segment.split_cells fix / Fixes <link>" with no hints. The model said so itself: "I don't
+    have the issue description from GitHub, so I have to infer it."
+  - The editor's edits were undone by 13-14 existing tests each time; every reply was cut by the thinking budget
+    (c≈1,065).
+- System faults found and fixed during these runs:
+  - the context count was reset by open.py switches, and inherited across editors when the coordinator skipped
+    status;
+  - the estimate was uncalibrated, now 1,600 + 1,450 per call, measured on the dumped requests;
+  - reopenings now get a short answer.
+- Faults of the model:
+  - no information in the statement;
+  - reasoning cut by the budget, then reopening or re-reading to go on;
+  - an invented `read.py`;
+  - malformed calls;
+  - opening another place than the request named;
+  - empty replies.
