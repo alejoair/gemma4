@@ -279,7 +279,8 @@ def _window(root, state, i, show=None):
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
-        body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry), limit=EDIT_LINES, show=show)
+        body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry),
+                          limit=EDITOR_EDIT_LINES if ROLE == 'editor' else EDIT_LINES, show=show)
         if re.search(r'\(lines \d+-\d+ not shown\)', body):
             body += (f'\n(Not all of {p["handle"]} is shown: send it with two line numbers inside it to see other '
                      'lines; change the lines shown by their numbers, or rewrite a member whole.)')
@@ -293,10 +294,41 @@ def _window(root, state, i, show=None):
     context = _context_view(root, p, _focus(state, entry))
     if context:
         parts.append(context)
+    if ROLE == 'editor':
+        others = _plan_view(root, state, p)
+        if others:
+            parts.append(others)
     test = _test_once(root, state, p)
     if test:
         parts.append(test)
     return _seen_mark(p['rel'], '\n'.join(parts))
+
+
+def _plan_view(root, state, p):
+    """The other places of the plan, for the editor of p: the code of a short one, the signature of a longer one. V18:
+    the editor of is_coroutine_callable opened is_gen_callable, is_async_gen_callable and _unwrapped_call one by one
+    (20 reads) to make the same change there."""
+    out, room = [], PLAN_CHARS
+    for e in state['plan']:
+        q = _place(state, e['place'])
+        if q is None or q['id'] == p['id'] or q['name'] in (MODULE, '<exports>'):
+            continue
+        lines = _repo.read_lines(root, q['rel'])
+        if q['end'] - q['start'] + 1 <= PLAN_PLACE_LINES:
+            code = _code.numbered(lines, q['start'], q['end'], collapse=[])
+            if q['rel'] != p['rel']:
+                _seen_mark(q['rel'], code)      # (the window marks the lines of p's file)
+            text = f"  {q['handle']} ({q['rel']}, {q['reason']}):\n" + code
+        else:
+            text = f"  {q['handle']} ({q['rel']}:{q['start']}-{q['end']}, {q['reason']}): {lines[q['start'] - 1].strip()[:90]}"
+        if len(text) > room:
+            break
+        out.append(text)
+        room -= len(text)
+    if not out:
+        return ''
+    return ('The other places of the plan (each has its editor; if the same change is needed there, you may edit it '
+            'here by its name):\n' + '\n'.join(out))
 
 
 _SEEN = {}      # the state of this call, for _seen_mark (set by main)
@@ -427,6 +459,15 @@ USES = 3        # definitions the place calls or reads
 USES_CHARS = 900    # their total size
 SHORT_MEMBER = 15   # a member of the place's own class up to this many lines is shown as code
 CALLERS = 1     # code that calls the place, one line each
+# The editor (agent_tool variant) works on one place in a fresh 32k context; V18's editors made 289 reads in three
+# tasks (docs/feedback_audit.md, "What the editor reads"): code the place uses (31), code that calls it (33), other
+# planned places (25), ranges of a long place (60). Its window carries more of that from the start.
+EDITOR_EDIT_LINES = 90   # a place up to this + 30 lines is shown whole
+EDITOR_USES = 5
+EDITOR_USES_CHARS = 2000
+EDITOR_CALLERS = 4
+PLAN_CHARS = 2500        # the other planned places shown in the window
+PLAN_PLACE_LINES = 25    # a planned place up to this many lines is shown as code
 
 
 def _context_view(root, p, focus=None):
@@ -500,6 +541,8 @@ def _context_view(root, p, focus=None):
 
     uses, seen, chars = [], set(), 0
     focus = focus or {}
+    n_uses, uses_chars, n_callers = ((EDITOR_USES, EDITOR_USES_CHARS, EDITOR_CALLERS) if ROLE == 'editor'
+                                     else (USES, USES_CHARS, CALLERS))
 
     def weight(item):
         name, how = item
@@ -526,7 +569,7 @@ def _context_view(root, p, focus=None):
             if (r, x.name) in seen:
                 continue
             seen.add((r, x.name))
-            if mine and x.end - x.start + 1 <= 6:
+            if mine and x.end - x.start + 1 <= (SHORT_MEMBER if ROLE == 'editor' else 6):
                 # a short member of the same class (a property, a helper): its code, since its name says little
                 text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
@@ -538,14 +581,14 @@ def _context_view(root, p, focus=None):
                     # a11: the editor of Session.send took resolve_redirects to yield the first response too and lost
                     # the place on that; what a generator yields is not in its signature (W3)
                     text += '\n      it yields: ' + '; '.join(f'{c[:60]} (line {n})' for n, c in ys[:2])
-            if chars + len(text) > USES_CHARS:
+            if chars + len(text) > uses_chars:
                 break
             uses.append(text)
             chars += len(text)
-        if len(uses) >= USES:
+        if len(uses) >= n_uses:
             break
     lib = _library_uses(root, p, tree, used, imported, modules, table, cls)
-    room = USES_CHARS - chars
+    room = uses_chars - chars
     for text in lib:
         if len(text) > room:
             break
@@ -557,14 +600,14 @@ def _context_view(root, p, focus=None):
         and not _repo.is_doc_path(r)]
     callers.sort(key=lambda c: (c[0] != p['rel'], c[0], c[2]))
     calls = []
-    for r, c, n in callers[:CALLERS]:
+    for r, c, n in callers[:n_callers]:
         text = _repo.read_lines(root, r)[n - 1].strip()
         calls.append(f'  {r}:{n} in {c}: {text[:80]}')
     out = []
     if uses:
         out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
     if calls:
-        more = f' ({len(callers)} calls, first {CALLERS})' if len(callers) > CALLERS else ''
+        more = f' ({len(callers)} calls, first {n_callers})' if len(callers) > n_callers else ''
         out.append(f'Code that calls {short}{more}:\n' + '\n'.join(calls))
     return '\n'.join(out)
 
@@ -1593,6 +1636,16 @@ def _whole_edit(root, p, text):
         lines = _repo.read_lines(root, rel)
         syms = _code.symbols(_code.parse(''.join(lines)))
         t = _target(syms, p, d.name)
+        if t is None and len(defs) == 1 and not isinstance(d, ast.ClassDef):
+            own = next((x for x in syms if x.name == p['name'] and x.kind == 'def'), None)
+            if own is not None:
+                old_body = ''.join(lines[own.def_line:own.end])
+                new_body = '\n'.join(src_lines[d.lineno:d.end_lineno])
+                if difflib.SequenceMatcher(None, old_body.split(), new_body.split(), autojunk=False).ratio() >= 0.6:
+                    # a rename (V18, httpx_3672: complete sent back as reset): the place is replaced, not kept beside
+                    # the new copy; the answer lists the code that still uses the old name
+                    t = own
+                    repairs.append(f'{p["name"].split(".")[-1]} renamed to {d.name}')
         if t is not None:
             pad = _indent_of(lines[t.start - 1])
             r = _edit.apply(root, rel, t.start, t.end, textwrap.indent(piece, pad))
@@ -2022,6 +2075,11 @@ def _after_edit(root, state, i, p, r, before):
     shown = _changed_view(before, _repo.read_lines(root, p['rel']), p['rel'])
     if verdict == 'BROKEN':
         _remember_failed(state, p, r, new_failures)
+        gone = _old_name_uses(root, before, _repo.read_lines(root, p['rel']), p['rel'])
+        if gone:
+            # a rename breaks the callers' tests: they are named, to rename together (edit them here by their names)
+            detail += ('\n' + gone + '\nA rename needs these uses renamed too: edit each by the name of the '
+                       'function that holds it, then the place again.')
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
         n = len(new_failures)
@@ -2041,6 +2099,9 @@ def _after_edit(root, state, i, p, r, before):
                                          | set(range(r.start, r.end + 1)))
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
+    gone = _old_name_uses(root, before, _repo.read_lines(root, p['rel']), p['rel'])
+    if gone:
+        head += '\n' + gone
     move = _journal.edit_done(state, i)
     if ROLE == 'editor' and state.get('editor_place') and state['plan'][i]['place'] != state['editor_place']:
         j = _journal.target(state, state['editor_place'])
@@ -2058,6 +2119,43 @@ def _after_edit(root, state, i, p, r, before):
     if move == 'next':
         return head + '\n\n' + _window(root, state, state['current'])
     return head + '\n\n' + _finish_view(root, state)
+
+
+OLD_NAME_USES = 8
+
+
+def _old_name_uses(root, before, after, rel=''):
+    """After an edit that removed or renamed a definition: the lines of the package that still use the old name. V18
+    (httpx_3672): after renaming HTTPParser.complete to reset, the editor read the server and pool files by ranges
+    (50 reads) to find the callers of complete."""
+    def names(lines):
+        t = _code.parse(''.join(lines))
+        return {x.name.split('.')[-1] for x in _code.symbols(t)} if t is not None else set()
+    removed = sorted(n for n in names(before) - names(after) if not n.startswith('__'))
+    if not removed:
+        return ''
+    out = []
+    for name in removed[:2]:
+        # uses as code only: an attribute (.complete), a call (complete(...)); not comments or the word in a text
+        pat = re.compile(r'\.' + re.escape(name) + r'\b|(?<![\w.])' + re.escape(name) + r'\s*\(')
+        hits = []
+        home = rel.split('/')[:-1]
+        for f in sorted(_repo.iter_py(root, docs=False), key=lambda f: f.split('/')[:-1] != home):
+            lines = _repo.read_lines(root, f)
+            owner = None
+            for n, line in enumerate(lines, 1):
+                code = line.split('#', 1)[0]
+                if pat.search(code) and not re.match(r'\s*(async\s+)?def\s', line):
+                    if owner is None:
+                        syms = _code.symbols(_code.parse(''.join(lines)))
+                        owner = _code.owner_map(syms, len(lines))
+                    o = owner[n] if n < len(owner) else None
+                    where = f' in {o.name}' if o is not None else ''
+                    hits.append(f'  {f}:{n}{where}: {line.strip()[:80]}')
+        if hits:
+            more = f' (first {OLD_NAME_USES} of {len(hits)})' if len(hits) > OLD_NAME_USES else ''
+            out.append(f'Code that still uses the old name {name}{more}:\n' + '\n'.join(hits[:OLD_NAME_USES]))
+    return '\n'.join(out)
 
 
 def _edit_key(args):

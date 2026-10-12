@@ -481,3 +481,40 @@ the first system fault.**
   - c16: six calls in a row with the args list broken by a quote, refused by the ADK before the script.
 - Open: the local server still runs a 512 thinking budget (the peer session did not answer two requests for 2,048).
   The editor's behaviour with Kaggle's 2,048 is only measurable there.
+
+**What the editor reads (V18, `tools/editor_reads.py` over the Kaggle traces, 31B).**
+- Time: finding and choosing took under a minute in every task. The editors took 88-95% of the time (37-57 min in
+  the three long tasks), and 60-75% of their calls were reads.
+- The 289 reads of the three long tasks, by what they asked for:
+
+| Asked for | fastapi_14448 | fastapi_14986 | httpx_3672 | Total |
+|---|---|---|---|---|
+| a range of lines (own place or another) | 8 | 31 | 21 | 60 |
+| a file or its top level | 9 | 15 | 29 | 53 |
+| other related code | 20 | 14 | 12 | 46 |
+| code that calls the place | 0 | 10 | 23 | 33 |
+| code the place uses | 12 | 4 | 15 | 31 |
+| another planned place | 20 | 4 | 1 | 25 |
+| its own place again | 2 | 8 | 10 | 20 |
+| names not in the repository | 12 | 3 | 4 | 19 |
+
+  - 46 reads were answered "No more code is shown".
+  - In httpx_3672 most of the reads by file and range were looking for the callers of `HTTPParser.complete` after
+    renaming it to `reset`.
+- Changes (editor role only; the editor has one place and a fresh 32k context):
+  - the place is shown whole up to 120 lines (90 + 30);
+  - up to 5 definitions it uses (2,000 characters), members of its class up to 15 lines as code;
+  - up to 4 lines that call it;
+  - the other places of the plan: the code of each one up to 25 lines, otherwise its first line (2,500 characters);
+  - after an accepted or undone edit that removes or renames a definition: the lines of the package that still use
+    the old name, as code (`.name`, `name(`), each with the function that holds it;
+  - a single whole function sent with a new name and a body like the place's (≥ 0.6) is a rename: it replaces the
+    place instead of being added beside it (V18: `complete` sent back as `reset`).
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 code in front of it | closer | what it read 25-33 times per task is in the window |
+| B7 the middle of a long context | farther | windows grow to about 3,000-4,000 characters; accepted because the editor's context is fresh and holds one place, and each read it replaces cost a 17-20 s call |
+| B9 reading instead of editing | closer | fewer reasons to read |
+| B16 repurposing a form with side effects | closer | no rename by adding a copy |
+| P2 layout changes | neutral | the same sections, one more |
