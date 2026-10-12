@@ -974,6 +974,17 @@ def _search_view(root, state, text, prefer=None):
     out = []
     if lib:
         out.append(lib)
+    if cands and ROLE == 'editor' and state['step'] != 'D1' and state.get('editor_place'):
+        # c9: an editor's open.py ['top level'] was searched, and the search sent the work back to choosing: the plan
+        # lost its three places. An editor's search is a read: where the text is, by name, and the plan stays.
+        mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
+        lines = []
+        for c in cands[:N_CANDIDATES]:
+            label = c.get('handle') or c['name']
+            lines.append(f'  {label} ({c["rel"]})' + ''.join(f'\n      {e}' for e in (c.get('evidence') or [])[:2]))
+        out.append(f'{head} ({total} lines; the functions and classes that hold them, read only):\n' + '\n'.join(lines))
+        return '\n\n'.join(out) + (f"\n\nSend one name to read it. Back to {mine_name}: send its edit, or ['skip'] "
+                                    'if it needs no change.')
     if cands:
         if state['step'] == 'D1':
             state['candidates'] = cands
@@ -2317,6 +2328,9 @@ def _editor_gate(root, state, args):
                 "['skip'].")
     if hit is not None and hit['id'] != mine:
         return _editor_read(root, state, hit, mine_name) + back
+    if len(items) == 1 and name.lower().strip('. ') in ('top level', 'imports', 'the imports', 'top-level', 'module'):
+        # c9: 'top level' from the editor of Dependant.is_gen_callable (searched, it dropped the plan): its file's
+        name = f"{_place(state, mine)['rel']} top level"
     if len(items) == 1 and hit is None and NAME_LIKE.fullmatch(name) and not _is_skip(name) and not _is_tests(name) \
             and name.lower() not in ('status', 'state', 'next') and _match(places, name, fuzzy=False) is None \
             and not _is_code_to_run(name):
@@ -2517,6 +2531,11 @@ def _editor_read(root, state, c, mine_name):
                f"edit it by its name (['{label}', '<the whole new function or class>'])")
         return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). If the fix belongs here, '
                           f'{how}; the edit is kept and {mine_name} stays open.\n{body}')
+    if ROLE == 'editor':
+        # a file's top level: an import is added there by line numbers (the editor's prompt says so)
+        return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). To add an import, edit '
+                          f"it by line numbers (['{label}', '<first line number>', '<last line number>', '<new "
+                          f"lines>']); {mine_name} stays open.\n{body}")
     return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor '
                       f'changes {mine_name} alone; if the change belongs to {label}, reply with one sentence saying '
                       f'so, without a call.\n{body}')
