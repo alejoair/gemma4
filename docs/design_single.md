@@ -1247,3 +1247,54 @@ item as a range; never print an empty name; the coordinator prompt without the c
 | B9 | farther (small) | the editor can keep editing an accepted place; bounded by the repeat guard and the harness's time |
 | B10 | neutral | the model never saw the time; the harness still ends the run at 7 min |
 | P5 | closer | the coordinator prompt no longer offers find forms in the edit step |
+
+## Redesign: microtasks with the context each role needs (2026-10-12, the user's)
+
+**Why.**
+- In V18-V19 the editors spent 88-95% of each task's time and 60-75% of their calls reading.
+- 289 reads in three tasks went to the other planned places, the callers, the code the place uses, and ranges of long
+  places (`docs/feedback_audit.md`, "What the editor reads").
+- That reading was understanding the fix, not writing it. The only resolved task (rich_3521, V18) had a change that
+  fit in one function: 3 reads, 6 minutes.
+- The user's rule: if the files a fix needs do not fit, the task is not specific enough; the tasks must be smaller,
+  with less context.
+
+**Roles and their context.**
+
+| Role | Agent | Gets | Does not get | Size |
+|---|---|---|---|---|
+| Find | coordinator (`step.py`) | the statement; names, signatures and matching lines | code bodies | ~2k tokens |
+| Choose | coordinator | requirements, candidates with evidence | code bodies | ~2k |
+| **Specify** | **`specify_fix`** (new agent_tool, fresh context, thinking 4096), `spec.py` | the statement (system instruction); the numbered code of every planned place, with the lines that call it and the signatures it uses, all at once | editing, tests, search history | ~3-8k |
+| Edit one microtask | `edit_place`, `open.py`/`edit.py` | its place's code (the part the specification names, at most ~90 lines), the specification sentence, the requirement lines, the signatures it uses | other places' code, reads of any kind, the whole statement's reasoning | ~1-2.5k |
+| Review | script | the diff and the failing test with its line and error | — | ~0.5-1k |
+| Propagate | script | after a rename or removal: each use of the old name, with the function that holds it | — | ~0.3k per use |
+| Finish | coordinator | the requirement coverage map | — | ~1k |
+
+**Rules.**
+- **The specifier sees the whole plan at once** and writes one sentence per place: what changes there, or
+  'no change'.
+  - It can add code the plan lacks by naming it; the script adds it as a place and shows its code.
+  - A place it marks 'no change' is not handed to an editor.
+- **The editor receives one specified change.** It cannot read other code.
+  - A name, file, range or search gets one fixed answer: the change is specified; edit with what is shown, or reply
+    with one sentence naming the code that is missing.
+  - The one exception is a range inside its own place when the place is longer than the window.
+  - Edits of other code by name stay accepted (they join the plan).
+- **The coordinator no longer explains the fix.** Its steps are: start, choose, specify (`specify_fix`), edit each
+  specified place (`edit_place`), finish.
+
+**Checklist.**
+
+| Item | Effect | Why |
+|---|---|---|
+| W1 choosing from a short list | neutral | find and choose unchanged |
+| W2 whole functions | neutral | edit forms unchanged |
+| W3 code in front of it | closer | the specifier gets all the plan's code at once; each editor gets the code of its change |
+| W4 a fully filled next call | neutral | every answer still ends with NEXT |
+| W7 better calls after thinking | closer | the step that needs understanding gets a 4096 thinking budget |
+| B7 middle of a long context | closer | editor windows shrink to ~1-2.5k tokens; the specifier's view is one answer of ≤ 8k |
+| B8 many forms | closer | the editor loses every read form |
+| B9 reading instead of editing | closer | no reading in the editor; the reading is one prepared view for the specifier |
+| P3 open-ended prohibitions | farther | "no reads" is a prohibition; stated with its reason (the change is specified) and a way out (reply naming the missing code) |
+| new risk: free text | farther | the specification is free text, the step that failed with the local 12B (4 of 5 runs, 10-09); accepted because the 31B now writes one sentence per listed place, with all the code in view, in a fresh context with a 4096 thinking budget; measured in the next Kaggle eval |
