@@ -1457,10 +1457,28 @@ def _edit_of_other(root, state, args):
     if not found:
         return None
     _state.record({'look': 'edit of other code', 'q': name[:120], 'step': state['step']})
+    if ROLE == 'editor' and state['step'] == 'D3' and state.get('editor_place'):
+        # c2 (fastapi_14448): the editor of is_coroutine_callable edited Dependant._unwrapped_call, the helper its place
+        # reads; choosing it replaced the plan (the planned siblings were dropped) and left the editor on a place id
+        # that no longer existed (TypeError). An editor's edit of related code adds that code as a place and keeps
+        # the plan; _after_edit then brings the editor back to its own place.
+        _add_place(state, found[0], f'edited by the editor of {_name_of(state, state["editor_place"])}')
+        return d3(root, state, args)
     head, _ = _choose_code(root, state, found[0])
     if state['step'] != 'D3':
         return None
     return head + '\n\n' + d3(root, state, args)
+
+
+def _add_place(state, c, reason):
+    """Code (a dict with rel, name, start, end) added to the places and to the plan, the plan kept as it is."""
+    if any((q['rel'], q['name']) == (c['rel'], c['name']) for q in state['places']):
+        return
+    n = max([int(q['id'][1:]) for q in state['places'] if re.fullmatch(r'P\d+', q['id'])] or [0]) + 1
+    state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
+                            'reason': reason, 'id': f'P{n}'})
+    _set_handles(state['places'])
+    _journal.target(state, f'P{n}')
 
 
 def _whole_target_is_place(text, p):
@@ -1503,7 +1521,8 @@ def _whole_edit(root, p, text):
     rel = p['rel']
     code = _args.code(text)
     src, tree = code, None
-    for cand in (code, code.replace('\\n', '\n').replace('\\"', '"')):
+    # c2: '    @cached_property\ndef f(self):\n    ...' (the first line indented as in the file, the rest not)
+    for cand in (code, code.replace('\\n', '\n').replace('\\"', '"'), code.lstrip(' \t')):
         src = textwrap.dedent(cand)
         tree = _code.parse(src)
         if tree is not None:
@@ -1885,6 +1904,16 @@ def d3(root, state, args):
     if p is None:
         return ('The first item is not the name of a listed place. Nothing was changed.\nPlaces:\n'
                 + '\n'.join('  ' + _place_line(q) for q in state['places']))
+    _refresh(root, state, p['rel'])
+    p = _place(state, pid)
+    if p['name'] not in (MODULE, '<exports>') and (start, end) != (p['start'], p['end']) \
+            and _whole_target_is_place(text, p) and text.lstrip().startswith(('@', 'def ', 'async ', 'class ')):
+        # c2: the editor sent is_async_gen_callable whole with its numbers from before an edit above it moved it
+        # (95-109 for 99-109): the range cut into is_gen_callable. A whole definition of the place replaces the
+        # place by its name; the numbers are not needed (B1).
+        i = _journal.target(state, pid)
+        before = _repo.read_lines(root, p['rel'])
+        return _after_edit(root, state, i, p, _whole_edit(root, p, text), before)
     big = [pid, start, end]
     if text.strip() == 'DELETE' and end - start + 1 > DELETE_CONFIRM and state.get('pending_delete') != big:
         state['pending_delete'] = big
