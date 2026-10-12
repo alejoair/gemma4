@@ -8,7 +8,9 @@ if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
     raise SystemExit(0)
 
-MAX_FAILS = 2        # edits of one place undone by the tests (or refused) before it is left at its last verified state
+MAX_FAILS = 4        # edits of one place undone by the tests (or refused) before it is left at its last verified state
+                     # (2 until c4: fastapi_14448's editor was closed after two undone edits while each failing test
+                     # brought its next edit closer to the fix; the same error three times still closes it)
 MAX_SLIPS = 4        # edits that did not compile: a typo is a slip, not a wrong change (a14: the third, correct
                      # version of a one-line edit was never run after two typos closed the place)
 CALL_LIMIT = 200     # eval_config.yaml max_tool_calls (not binding: time is the limit)

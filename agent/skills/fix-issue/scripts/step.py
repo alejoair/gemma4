@@ -1906,11 +1906,11 @@ def d3(root, state, args):
                 + '\n'.join('  ' + _place_line(q) for q in state['places']))
     _refresh(root, state, p['rel'])
     p = _place(state, pid)
-    if p['name'] not in (MODULE, '<exports>') and (start, end) != (p['start'], p['end']) \
-            and _whole_target_is_place(text, p) and text.lstrip().startswith(('@', 'def ', 'async ', 'class ')):
+    if p['name'] not in (MODULE, '<exports>') and _whole_target_is_place(text, p) and text.lstrip().startswith(('@', 'def ', 'async ', 'class ')):
         # c2: the editor sent is_async_gen_callable whole with its numbers from before an edit above it moved it
         # (95-109 for 99-109): the range cut into is_gen_callable. A whole definition of the place replaces the
-        # place by its name; the numbers are not needed (B1).
+        # place by its name; the numbers are not needed (B1). Also with the right numbers: c4 sent the first line
+        # indented and the rest not, which only the whole-definition reader repairs.
         i = _journal.target(state, pid)
         before = _repo.read_lines(root, p['rel'])
         return _after_edit(root, state, i, p, _whole_edit(root, p, text), before)
@@ -2282,14 +2282,7 @@ def _editor_gate(root, state, args):
                 state['current'], state['step'] = i, 'D3'
                 return _window(root, state, i)
     if state.get('editor_done'):
-        nm = mine_name or 'this place'
-        q = _place(state, mine) if mine else None
-        q = q if q and q.get('handle') == mine_name else None
-        changed = q is not None and any(rel_ == q['rel'] and (own_ == q['name'] or own_.startswith(q['name'] + '.'))
-                                        for rel_, own_, _, _ in _status.summary(root))
-        done = (f'{nm}: the patch changes it as shown before; a later edit was undone.' if changed else
-                f'{nm} keeps its code; the change belongs elsewhere or is not needed.')
-        return EDITOR_CLOSED.format(name=nm, done=done)
+        return _editor_gate_closed(root, state)
     if mine is None or own is None or state['step'] not in ('D3', 'D4'):
         if not places or state['step'] not in ('D3', 'D4'):
             return ('No place is open for this editor: choosing code is the coordinator\'s step. Reply with one sentence '
@@ -2357,6 +2350,20 @@ EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requ
 EDITOR_THINKING = 2048      # the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml)
 
 
+def _editor_gate_closed(root, state):
+    """The answer to any call of an editor whose place is closed."""
+    mine = state.get('editor_place')
+    mine_name = state.get('editor_name') or (_name_of(state, mine) if mine else '')
+    nm = mine_name or 'this place'
+    q = _place(state, mine) if mine else None
+    q = q if q and q.get('handle') == mine_name else None
+    changed = q is not None and any(rel_ == q['rel'] and (own_ == q['name'] or own_.startswith(q['name'] + '.'))
+                                    for rel_, own_, _, _ in _status.summary(root))
+    done = (f'{nm}: the patch changes it as shown before; a later edit was undone.' if changed else
+            f'{nm} keeps its code; the change belongs elsewhere or is not needed.')
+    return EDITOR_CLOSED.format(name=nm, done=done)
+
+
 def _editor_tokens(state):
     """The editor's history, estimated: its instruction, every answer of the script (about 3.2 characters a token for
     code) and every reply of the model with its thoughts (kept in the history; about 700 tokens a call measured in
@@ -2393,6 +2400,9 @@ def _editor_open(root, state, name, hit):
         if used > EDITOR_CLOSE_AT:
             return _editor_done(state, 'This editor\'s history is near the model\'s context limit, so no further '
                                 'call can be answered here.', mine_name)
+        if hit['id'] == state['editor_place'] and state.get('editor_done'):
+            # c4: a closed place reopened got 'is open already: edit it' while NEXT said no call (B12)
+            return _editor_gate_closed(root, state)
         if hit['id'] == state['editor_place'] and state.get('current') is not None:
             # (no close here: nl4 closed the place on the third reopening and the next call was the edit; a reopening
             # is how a reasoning cut by the thinking budget goes on, and the context budget bounds it)
@@ -2407,7 +2417,9 @@ def _editor_open(root, state, name, hit):
         # edit_place without status, and the new editor inherited the old count and was cut at 7,000 real tokens): an editor that switches between its places with open.py
         # keeps what it has seen and what its history holds (nl2: the switches reset both, so the context grew to
         # 29,800 tokens unbounded and the same lines were asked for again and again)
-        state.update(editor_reads=[], seen={}, editor_chars=0, editor_calls=0)
+        # (the lines already shown are kept: c4's editor switched to a helper and back, and its edit of the place it
+        # had read was refused as 'not shown')
+        state.update(editor_reads=[], editor_chars=0, editor_calls=0)
         state['recent'], state['repeats'] = [], 0
     state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_name=hit['handle'])
     i = _journal.target(state, hit['id'])
