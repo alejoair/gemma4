@@ -1088,6 +1088,8 @@ def _resolve(root, names):
                     out.append({'rel': match[0], 'name': MODULE, 'start': 1, 'end': n, 'line': ''})
             continue
         found = table.find(name) if name else []
+        if not found and name and not rel:
+            found = _dotted_or_case(table, name)
         if rel:
             found = [(r, s) for r, s in found if _rank.names_file(rel, r)] or found
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
@@ -1100,6 +1102,23 @@ def _resolve(root, names):
             if hit:
                 out.append(hit)
     return out
+
+
+def _dotted_or_case(table, name):
+    """[(rel, Sym)] for 'fastapi.applications.FastAPI' (a module path, then a qualified name in it) or a qualified
+    name spelled with other capitals ('fastapi.setup.openapi' for FastAPI.setup.openapi). V17: the 31B's editor sent
+    both forms 9 times and was told 'Nothing in the repository defines' each time."""
+    parts = name.split('.')
+    for k in range(len(parts) - 1, 0, -1):
+        mod, rest = '/'.join(parts[:k]), '.'.join(parts[k:])
+        for rel in table.syms:
+            if rel.endswith(f'{mod}.py') or rel.endswith(f'{mod}/__init__.py'):
+                sym = table.get(rel, rest)
+                if sym is not None:
+                    return [(rel, sym)]
+    low = name.lower()
+    hits = [(rel, s) for rel, syms in table.syms.items() for s in syms if s.name.lower() == low]
+    return hits[:1]
 
 
 def _find_text(root, table, text):
@@ -2333,9 +2352,15 @@ def _editor_gate(root, state, args):
         return ('This editor opens its place first: send the place name from the request, alone. The places: '
                 + ', '.join(q['handle'] for q in places) + '.')
     used = _editor_tokens(state)
-    if used > EDITOR_CLOSE_AT:
-        return _editor_done(state, f'This editor\'s history is near the model\'s context limit ({CONTEXT_TOKENS} '
-                            'tokens), so no further call can be answered here.', mine_name)
+    is_edit = (len(items) == 2 and DEF_LINE.search(items[1]) is not None) or \
+        (len(items) == 4 and all(_args.clean(x).isdigit() for x in items[1:3]))
+    # V17: the 31B's edits of is_gen_callable and is_async_gen_callable (the fix the reference makes) were refused by
+    # this estimate, never checked against Kaggle's real prompt sizes; an edit is a short answer and always runs
+    if used > EDITOR_CLOSE_AT and not is_edit and not _is_skip(name):
+        # (the place is not closed: an edit or a skip after this still runs)
+        return (f'No more code is shown in this editor: its history is near the model\'s context limit '
+                f"({CONTEXT_TOKENS} tokens). Send the edits it still needs with what was shown, or reply with one "
+                'sentence for the coordinator, without a call.')
     is_read = (len(items) == 1 and NAME_LIKE.fullmatch(name) and not _is_skip(name) and hit is None or
                (hit is not None and hit['id'] != mine)) or \
         (len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3]))
@@ -2451,6 +2476,14 @@ def _editor_open(root, state, name, hit):
         if c is None:
             found = [x for x in _resolve(root, [name]) if not _repo.is_doc_path(x['rel'])]
             c = found[0] if found else None
+        req = state.get('requested')
+        if c is None and req and not state.get('requested_used') and (state.get('editor_done')
+                                                                     or not state.get('editor_place')):
+            # V17: a new editor's first call named 'fastapi.setup.openapi' for the request FastAPI.setup.openapi; the
+            # place the coordinator handed over is opened
+            hit = _match(state.get('places') or [], req, fuzzy=False)
+            if hit is not None:
+                return _editor_open(root, state, req, hit)
         if c is None:
             return (f'Nothing in the repository defines {_said(name)}. Reply with one sentence for the coordinator, '
                     'without a call, saying so.')
@@ -2477,8 +2510,9 @@ def _editor_open(root, state, name, hit):
         used = _editor_tokens(state)
         mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
         if used > EDITOR_CLOSE_AT:
-            return _editor_done(state, 'This editor\'s history is near the model\'s context limit, so no further '
-                                'call can be answered here.', mine_name)
+            return (f'No more code is shown in this editor: its history is near the model\'s context limit. Send the '
+                    f'edits {mine_name} still needs with what was shown, or reply with one sentence for the '
+                    'coordinator, without a call.')
         if hit['id'] == state['editor_place'] and state.get('editor_done'):
             # c4: a closed place reopened got 'is open already: edit it' while NEXT said no call (B12)
             return _editor_gate_closed(root, state)
