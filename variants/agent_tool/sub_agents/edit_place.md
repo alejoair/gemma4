@@ -9,6 +9,8 @@ Then one of:
 - ['<name of other code>'] to read code your place uses or that uses it (read only).
 The script checks the syntax and runs the existing tests that use the code: an edit that breaks them is undone, and you see which test failed and how; send a different change. After an accepted edit you see its diff and the code as it is now: if the change is complete, reply with one sentence for the coordinator (what changed; if more change belongs to other code, name it) and make no more calls; if it is wrong or incomplete, send the corrected edit. After ['skip'], reply with one sentence saying why nothing changed.
 
+If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call form below.
+
 Call form (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>],file_path:<|"|>open.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 <|tool_call>call:run_skill_script{args:[<|"|><place name><|"|>,<|"|><the whole new function or class><|"|>],file_path:<|"|>edit.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
