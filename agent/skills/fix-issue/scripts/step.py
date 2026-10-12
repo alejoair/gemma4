@@ -2375,7 +2375,16 @@ EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code 
 EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requests would not fit)
 # the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml); local runs set the server's (c8: the
 # local server's 512 against this 2,048 closed an editor at 18,000 real tokens)
-EDITOR_THINKING = int(os.environ.get('SWE_EDITOR_THINKING') or 2048)
+# (the harness gives scripts a clean environment, so the local runner writes it to a file; Kaggle has none: 2,048)
+def _thinking_budget():
+    try:
+        with open('/tmp/swe_editor_thinking') as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return 2048
+
+
+EDITOR_THINKING = _thinking_budget()
 
 
 def _editor_gate_closed(root, state):
@@ -2443,7 +2452,7 @@ def _editor_open(root, state, name, hit):
                 f"\n\nBack to {mine_name}: send its edit, or ['skip'] if it needs no change.")
     if new_editor and hit['handle'] == state.get('requested'):
         state['requested_used'] = True
-    if state.get("editor_place"):
+    if state.get("editor_place") and not new_editor:
         # an editor reopening places to go on thinking (nl3: 14 reopenings, each a full window of ~2,000 tokens)
         used = _editor_tokens(state)
         mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
@@ -2561,13 +2570,15 @@ def main(argv, role=None, opening=False):
         argv.pop()              # bare booleans the model appends to a list (seen after a runaway) are not items
     argv = _args.split_single_quoted(argv)
     args = _args.unpack(argv) if state['step'] in ('D1', 'D2', 'D4') else _args.split_escaped(argv)
-    if ROLE != 'editor' and state.get('editor_place') and not state.get('editor_done'):
+    if ROLE != 'editor' and state.get('editor_place'):
+        # (also after an editor that closed itself: c11's closed editor kept its counts, and the next editor was told
+        # 'near the context limit' on its first call)
         # the coordinator's call after an edit_place: that editor has replied, so it is closed (the script cannot
         # tell one edit_place invocation from the next: a07, where an editor still open made the next editor's
         # opening call read as a read of related code). A place it left undecided keeps its code (its sentence says
         # why); an accepted edit under review is kept
         i = _journal.plan_entry(state, state['editor_place'])
-        if i is not None and state['plan'][i]['status'] == 'todo':
+        if i is not None and state['plan'][i]['status'] == 'todo' and not state.get('editor_done'):
             state['plan'][i]['status'] = 'skipped'
         state['editor_review'], state['editor_done'] = False, True
         state.update(editor_place=None, editor_reads=[], seen={}, editor_chars=0, editor_calls=0, recent=[], repeats=0)
