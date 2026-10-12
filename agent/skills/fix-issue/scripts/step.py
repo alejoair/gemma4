@@ -966,11 +966,20 @@ def _search_view(root, state, text, prefer=None):
     lib = _library_view(root, text, prefer=prefer) if re.fullmatch(r'[A-Za-z_][\w.]*', text.strip()) else ''
     near = {x['rel'] for x in (state.get('places') or []) + (state.get('candidates') or [])}
     cands, tests, total = _search(root, text, near=near, only=only)
+    elsewhere = None
+    if only and not cands:
+        # c14: ['fastapi/dependencies/utils.py', 'isgeneratorfunction'] answered 'Nothing in the code holds it' while
+        # models.py holds it; the coordinator searched 12 more times. A search in a file that does not hold the
+        # text is answered with the code elsewhere that holds it.
+        cands, tests, total = _search(root, text, near=near)
+        elsewhere = only
     if not cands and not tests and not lib:
         return None
     _state.record({'look': 'search', 'q': text[:120], 'step': state['step'], 'found': len(cands)})
     said = _said(text)
     head = f'Where the code holds {said}' if total else f'Nothing in the code holds {said}'
+    if elsewhere and total:
+        head = f'Nothing in {elsewhere} holds {said}. Where the rest of the code holds it'
     out = []
     if lib:
         out.append(lib)
