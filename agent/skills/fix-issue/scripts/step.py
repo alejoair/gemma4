@@ -1533,7 +1533,11 @@ def _whole_edit(root, p, text):
     code = _args.code(text)
     src, tree = code, None
     # c2: '    @cached_property\ndef f(self):\n    ...' (the first line indented as in the file, the rest not)
-    for cand in (code, code.replace('\\n', '\n').replace('\\"', '"'), code.lstrip(' \t')):
+    # c10: '@cached_property\n    def f(self):\n        ...' (the first line not indented, the rest as in the file)
+    head, _, rest = code.partition('\n')
+    second = rest.split('\n', 1)[0]
+    first_as_second = _indent_of(second) + head.lstrip(' \t') + '\n' + rest if rest else code
+    for cand in (code, code.replace('\\n', '\n').replace('\\"', '"'), code.lstrip(' \t'), first_as_second):
         src = textwrap.dedent(cand)
         tree = _code.parse(src)
         if tree is not None:
