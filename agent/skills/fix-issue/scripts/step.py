@@ -2281,11 +2281,8 @@ def _editor_gate(root, state, args):
 def _editor_open(root, state, name, hit):
     """open.py: a new editor opens the place of its request. The previous editor has replied (its place, if still
     undecided, keeps its code); a name off the places is chosen as the coordinator's choice."""
-    prev = state.get('editor_place')
-    if prev and not state.get('editor_done'):
-        j = _journal.plan_entry(state, prev)
-        if j is not None and state['plan'][j]['status'] == 'todo' and (prev != (hit or {}).get('id')):
-            state['plan'][j]['status'] = 'skipped'
+    # (the previous editor's place stays as it is: b10 showed an editor sending open.py again to look at another
+    # place, so an open.py call is not proof that the previous editor ended; a place left to do is still offered)
     if hit is None:
         c = _match(state.get('candidates') or [], name, fuzzy=False)
         if c is None:
