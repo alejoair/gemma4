@@ -366,3 +366,19 @@ Session.send (system fault).
   - malformed calls;
   - opening another place than the request named;
   - empty replies.
+
+**Which stage fails (2026-10-12, `tools/stages.py` over the local traces a01-b10, nl).**
+- Columns:
+  - (1) a function the reference patch changes is among the candidates;
+  - (2) the agent's patch touches a function the reference changes;
+  - (3) the reference changes more than the agent covered.
+- Findings:
+  - Stage 1 (find) works: the reference function is a candidate in 16 of 17 runs. The exception is fastapi_15800, a
+    new feature in a new file.
+  - Stage 2 (choose the place) works for the main function: the agent's patch touches a reference function in 14 of
+    17 runs.
+  - The failing stage is the edit:
+    - (a) wrong content in the right place: rich_3521 (an uninformative statement), requests_7328 before a15;
+    - (b) incomplete coverage: the reference changes 3-8 functions (fastapi_14448: 6, httpx_3672: 8,
+      fastapi_14986: 3) and the agent changes 1-2;
+    - (c) time-outs while editing (5 of 7 in b9).
