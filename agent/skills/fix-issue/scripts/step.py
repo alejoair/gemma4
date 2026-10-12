@@ -2300,6 +2300,9 @@ def _editor_gate(root, state, args):
         inherited = _inherited_library(root, name) if '.' in name else None
         if inherited:       # b9: FastAPI.lifespan / on_startup come from Starlette, read only
             return inherited + back
+        listed = _file_names(root, state, name)
+        if listed:
+            return listed + back
         return f'Nothing in the repository defines {_said(name)} (library code is not read here).' + back
     if len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3]):
         rel, label = _read_target(root, state, items[0])
@@ -2383,6 +2386,29 @@ def _editor_open(root, state, name, hit):
         state['plan'][i]['status'] = 'todo'
     state['current'], state['step'] = i, 'D3'
     return _window(root, state, i)
+
+
+FILE_NAMES = 6      # functions and classes of a long file listed to an editor that sent the file's path
+
+
+def _file_names(root, state, text):
+    """A repository file sent by an editor (c1: 'fastapi/dependencies/models.py', answered 'Nothing in the repository
+    defines' because a file over BIG_FILE lines is not one place): its functions and classes most related to the
+    issue, by name, to read one. None when the text names no repository file."""
+    x = _args.clean(text).strip('/')
+    if not re.fullmatch(r'[\w./-]+\.py', x):
+        return None
+    rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None)
+    if rel is None:
+        return None
+    st = _state.load('statement', {})
+    cands, _ = _rank_candidates(root, st.get('text', ''), st.get('terms', []), state['requirements'], n=FILE_NAMES,
+                                only_rel=rel)
+    names = [c['name'] for c in cands if c['name'] != MODULE]
+    if not names:
+        return None
+    return (f'{rel} is too long to show whole. Its functions and classes most related to the issue: '
+            + ', '.join(names) + '. Send one name to read it.')
 
 
 def _editor_read(root, state, c, mine_name):
