@@ -463,3 +463,21 @@ the first system fault.**
 | B9 reading instead of editing | closer | no switching windows, no file browsing by ranges |
 | B12 contradictions | closer | "reply" vs "edit it"; "is open, edit it" vs "no call" removed |
 | B16 repurposing a form with side effects | closer | a search no longer drops the plan |
+
+**Runs c13-c16 (2026-10-12, after the gateway outage, same task).**
+- System faults fixed:
+  - c13: 'file.py:Name' (one colon) was not read as a name.
+  - c13: choosing the cached_property `_unwrapped_call` planned nothing else. Its readers in its class
+    (`self._unwrapped_call`: the three is_*_callable, all changed by the reference) are now planned, "reads X".
+  - c14: a search in a file that does not hold the text answered "Nothing in the code holds it". The coordinator
+    searched 12 more times. The code elsewhere that holds it is now shown.
+  - c15: ['Dependant.is_gen_callable', 'is_gen_callable'] four times against the generic "2 items" text. The answer
+    now gives the call filled with the place's first lines.
+  - c15: "keeps its code" after an accepted edit was false.
+- Model, not system:
+  - the choose stage varies from run to run: `Dependant` members in c13-c15, `get_typed_signature` in c16;
+  - with the local 512-token thinking budget the editor reopens and rereads instead of writing the code (c15: its
+    thoughts reached the reference's idea, that `inspect.unwrap` hides an async wrapper, but no edit followed);
+  - c16: six calls in a row with the args list broken by a quote, refused by the ADK before the script.
+- Open: the local server still runs a 512 thinking budget (the peer session did not answer two requests for 2,048).
+  The editor's behaviour with Kaggle's 2,048 is only measurable there.
