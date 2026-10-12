@@ -411,3 +411,55 @@ Session.send (system fault).
 | B10 knowing its budget | farther | longer thinking spends more of the 7 min unseen; accepted because coverage and content were the failing stage, member windows cut reads, and the context estimate closes the editor earlier |
 | B13 order in lists | neutral | siblings come after the chosen code, ranked by similarity |
 | P5 small thinking budget on contradictions | closer | more budget |
+
+**Runs c1-c12 (2026-10-12, fastapi_14448, local 26B, agent_tool variant), monitored call by call; each stopped at
+the first system fault.**
+- What worked:
+  - the same-pattern plan put `is_gen_callable` and `is_coroutine_callable` next to the chosen `is_async_gen_callable`
+    in every run; in c2 and c11 the editor changed all three;
+  - in c4, c8, c9 and c11 the editor found that the fix belongs in the helper `_unwrapped_call` (the reference
+    changes it too) and edited it.
+- System faults found and fixed, in order:
+  1. c1: a repository file path sent by the editor was answered "Nothing in the repository defines it". Now the
+     answer lists the file's functions and classes most related to the issue.
+  2. c2: an editor's edit of code off the plan (`_unwrapped_call`) re-chose code. The plan lost its places and the
+     editor was left on a dead place id (TypeError). Now the code is added as a place and the plan is kept.
+  3. c2: a whole definition sent with stale line numbers cut into the next method. A whole definition of the place
+     is now applied by name, whatever the numbers.
+  4. c3: the read text said "this editor changes X alone; reply" while edits of related code are kept. Two calls hit
+     the 4,096-token cap weighing the two. The read now says to edit the code by its name.
+  5. c3: read code was not marked as seen, so its edit was refused as "not shown". The resent edit was then refused
+     as a repeat. Reads now mark the lines seen, and the resend after an unseen-lines answer passes the repeat guard.
+  6. c4: two undone edits closed the place while each failing test brought the edit closer. Now 4 undone edits close
+     it. Also: seen marks were dropped on a switch of places; the first line came without the indentation of the
+     rest; open.py of a closed place answered "edit it".
+  7. c5: the editor switched among the planned places with open.py, getting a full window each time with no edit,
+     and each switch reset its context estimate. Another place is now read (and editable by name) unless it is the
+     place the coordinator was told to hand over.
+  8. c6: the editor read the same class 5 times, each answered "shown above". The third read now offers a ready
+     sentence for the coordinator, and a class read points to editing its member by name.
+  9. c7: the coordinator handed over a file path, and its top level was opened. open.py of a long file now lists its
+     definitions.
+  10. c8: every accepted edit dropped all seen marks of its file. The marks now follow the line shift.
+  11. c8: the context estimate counted Kaggle's 2,048 thinking budget against the local 512, which closed an editor
+      at 18,000 real tokens. The local runner sets the budget through `/tmp/swe_editor_thinking`.
+  12. c9: open.py ['top level'] was searched, and the search sent the work back to choosing, dropping the plan. An
+      editor's search is now a read, and 'top level' reads its own file's top level.
+  13. c10: the first line came without indentation while the rest was indented. Repaired.
+  14. c11: an editor that had closed itself kept its counts, and the next editor was told "near the context limit"
+      on its first call. The coordinator's call now always resets them.
+- Not system faults (the model):
+  - c3, c4: thinking runs cut at 4,096 tokens;
+  - c6, c7: the coordinator chose `get_dependant` or a file instead of the `Dependant` members;
+  - c11: five reopenings of its own place to go on thinking (local budget 512).
+- Checklist:
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 code in front of it | closer | related code is shown once and stays counted as seen |
+| W4 a fully filled next call | closer | the repeated-read answer gives the exact sentence |
+| B1 line numbers | closer | whole definitions are applied by name, stale numbers ignored |
+| B5 repeating a failed call | closer | the resend that the answer asked for runs |
+| B9 reading instead of editing | closer | no switching windows, no file browsing by ranges |
+| B12 contradictions | closer | "reply" vs "edit it"; "is open, edit it" vs "no call" removed |
+| B16 repurposing a form with side effects | closer | a search no longer drops the plan |
