@@ -2300,7 +2300,9 @@ def _editor_tokens(state):
     """The editor's history, estimated: its instruction, every answer of the script (about 3.2 characters a token for
     code) and every reply of the model with its thoughts (kept in the history; about 700 tokens a call measured in
     b10-b11, where an editor reached 31,900 prompt tokens after 40 calls)."""
-    return 1600 + state.get('editor_chars', 0) / 3.2 + state.get('editor_calls', 0) * 1000
+    # calibrated on nl5 (dumped requests against the server's prompt tokens): the history grows by ~1,450 tokens a
+    # call, mostly the model's own thoughts (~3,500 characters a call), the script's answers adding little
+    return 1600 + state.get('editor_calls', 0) * 1450
 
 
 def _editor_open(root, state, name, hit):
@@ -2338,8 +2340,9 @@ def _editor_open(root, state, name, hit):
             return (f'No more code is shown in this editor: its history is near the model\'s context limit. Edit '
                     f"{mine_name} with what was shown, or send ['skip'] if it needs no change.")
     state['reopen'] = 0
-    if not state.get('editor_place'):
-        # only a new editor starts with an empty history: an editor that switches between its places with open.py
+    if not state.get('editor_place') or hit['id'] != state.get('editor_place'):
+        # a new editor, or the opening of another place (the script cannot tell them apart: nl5's coordinator called
+        # edit_place without status, and the new editor inherited the old count and was cut at 7,000 real tokens): an editor that switches between its places with open.py
         # keeps what it has seen and what its history holds (nl2: the switches reset both, so the context grew to
         # 29,800 tokens unbounded and the same lines were asked for again and again)
         state.update(editor_reads=[], seen={}, editor_chars=0, editor_calls=0)
