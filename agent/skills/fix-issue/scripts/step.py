@@ -2300,7 +2300,7 @@ def _editor_tokens(state):
     """The editor's history, estimated: its instruction, every answer of the script (about 3.2 characters a token for
     code) and every reply of the model with its thoughts (kept in the history; about 700 tokens a call measured in
     b10-b11, where an editor reached 31,900 prompt tokens after 40 calls)."""
-    return 1600 + state.get('editor_chars', 0) / 3.2 + state.get('editor_calls', 0) * 700
+    return 1600 + state.get('editor_chars', 0) / 3.2 + state.get('editor_calls', 0) * 1000
 
 
 def _editor_open(root, state, name, hit):
@@ -2322,7 +2322,7 @@ def _editor_open(root, state, name, hit):
         if hit is None:
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
     new_editor = state.get('editor_done') or not state.get('editor_place')
-    if not new_editor:
+    if state.get("editor_place"):
         # an editor reopening places to go on thinking (nl3: 14 reopenings, each a full window of ~2,000 tokens)
         used = _editor_tokens(state)
         mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
@@ -2338,7 +2338,7 @@ def _editor_open(root, state, name, hit):
             return (f'No more code is shown in this editor: its history is near the model\'s context limit. Edit '
                     f"{mine_name} with what was shown, or send ['skip'] if it needs no change.")
     state['reopen'] = 0
-    if new_editor:
+    if not state.get('editor_place'):
         # only a new editor starts with an empty history: an editor that switches between its places with open.py
         # keeps what it has seen and what its history holds (nl2: the switches reset both, so the context grew to
         # 29,800 tokens unbounded and the same lines were asked for again and again)
@@ -2392,6 +2392,7 @@ def main(argv, role=None, opening=False):
         if i is not None and state['plan'][i]['status'] == 'todo':
             state['plan'][i]['status'] = 'skipped'
         state['editor_review'], state['editor_done'] = False, True
+        state.update(editor_place=None, editor_reads=[], seen={}, editor_chars=0, editor_calls=0, recent=[], repeats=0)
         if state['step'] == 'D3':
             _journal.advance(state)
     _state.record({'step': state['step'], 'args': [a[:300] for a in args]})
