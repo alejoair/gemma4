@@ -2322,6 +2322,25 @@ def _editor_open(root, state, name, hit):
         if hit is None:
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
     new_editor = state.get('editor_done') or not state.get('editor_place')
+    if not new_editor:
+        # an editor reopening places to go on thinking (nl3: 14 reopenings, each a full window of ~2,000 tokens)
+        used = _editor_tokens(state)
+        mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
+        if used > EDITOR_CLOSE_AT:
+            return _editor_done(state, 'This editor\'s history is near the model\'s context limit, so no further '
+                                'call can be answered here.', mine_name)
+        if hit['id'] == state['editor_place'] and state.get('current') is not None:
+            n = state['reopen'] = state.get('reopen', 0) + 1
+            if n >= 3:
+                state['reopen'] = 0
+                return _editor_done(state, f'{hit["handle"]} was opened {n} times in a row without an edit, so it '
+                                    'keeps its code.', hit['handle'])
+            return (f'{hit["handle"]} is open already: its code was shown above and has not changed. Edit it with '
+                    f"what was shown, or send ['skip'] if it needs no change.")
+        if used > EDITOR_READS_UNTIL:
+            return (f'No more code is shown in this editor: its history is near the model\'s context limit. Edit '
+                    f"{mine_name} with what was shown, or send ['skip'] if it needs no change.")
+    state['reopen'] = 0
     if new_editor:
         # only a new editor starts with an empty history: an editor that switches between its places with open.py
         # keeps what it has seen and what its history holds (nl2: the switches reset both, so the context grew to
@@ -2559,6 +2578,8 @@ def main(argv, role=None, opening=False):
             state.setdefault('ranges_shown', []).append(range_key)
             del state['ranges_shown'][:-6]
     if ROLE == 'editor':
+        if not OPENING:
+            state['reopen'] = 0         # reopenings count only in a row
         state['editor_chars'] = state.get('editor_chars', 0) + len(out) + sum(len(str(a)) for a in args)
         state['editor_calls'] = state.get('editor_calls', 0) + 1
     _state.save('journal', state)
