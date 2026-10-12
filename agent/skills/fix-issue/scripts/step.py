@@ -2464,6 +2464,11 @@ def _file_names(root, state, text):
             + ', '.join(names) + '. Send one name to read it.')
 
 
+def _is_class(root, c):
+    return any(s.name == c['name'] and s.kind == 'class'
+               for s in _code.symbols(_code.parse(_repo.read_text(root, c['rel']))))
+
+
 def _editor_read(root, state, c, mine_name):
     """Related code shown read only to the editor of another place (a05: what resolve_redirects yields decided the edit
     of Session.send)."""
@@ -2471,6 +2476,14 @@ def _editor_read(root, state, c, mine_name):
     key = f'{c["rel"]}:{c["start"]}'
     reads = state.setdefault('editor_reads', [])
     if key in reads:
+        again = state.setdefault('reads_again', {})
+        again[key] = again.get(key, 0) + 1
+        if again[key] >= 2 and label != mine_name:
+            # c6: the editor of get_dependant read Dependant 5 times, each answered 'shown above', and neither edited
+            # nor replied: a repeated read gets the way out, a ready sentence for the coordinator (F7, B5)
+            return (f'{label} was shown above and has not changed. Edit it by name, or, if the change belongs there '
+                    f'and not in {mine_name}, reply to the coordinator with this sentence and no call: '
+                    f'"The change belongs to {label} ({c["rel"]}), not to {mine_name}."')
         return f'{label} was shown above and has not changed.'
     reads.append(key)
     _state.record({'look': 'editor read', 'q': label[:120], 'step': state['step']})
@@ -2479,9 +2492,11 @@ def _editor_read(root, state, c, mine_name):
         # c3: 'this editor changes X alone; if the change belongs to Y, reply' while edits of related code are kept:
         # two calls cut at 4,096 tokens weighing 'the request names the place' against the fix in the helper (B12)
         # (marked as seen: c3 refused the edit of the code it had read as 'not shown')
+        how = (f"edit the member it needs by the member's name (['{label}.<member>', '<the whole new function>'])"
+               if c['name'] != MODULE and c['end'] - c['start'] > SHORT_MEMBER and _is_class(root, c) else
+               f"edit it by its name (['{label}', '<the whole new function or class>'])")
         return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). If the fix belongs here, '
-                          f"edit it by its name (['{label}', '<the whole new function or class>']); the edit is "
-                          f'kept and {mine_name} stays open.\n{body}')
+                          f'{how}; the edit is kept and {mine_name} stays open.\n{body}')
     return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor '
                       f'changes {mine_name} alone; if the change belongs to {label}, reply with one sentence saying '
                       f'so, without a call.\n{body}')
