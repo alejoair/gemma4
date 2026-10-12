@@ -6,7 +6,7 @@ Then one of:
 - ['<place name>', '<first line number>', '<last line number>', '<new lines>']: replaces those lines, with their full indentation ('DELETE' deletes them; to add an import, the place is '<file> top level');
 - ['skip'] if this place needs no change;
 - ['<place name>', '<first line number>', '<last line number>'] to see other lines of the place.
-- ['<name of other code>'] to read code your place uses or that uses it (read only).
+- ['<name of other code>'] to read code your place uses or that uses it. When the fix belongs in that code (a helper your place calls, a member of its class), edit it by its name in the same two forms: the edit is kept and your place stays open.
 The script checks the syntax and runs the existing tests that use the code: an edit that breaks them is undone, and you see which test failed and how; send a different change. After an accepted edit you see its diff and the code as it is now: if the change is complete, reply with one sentence for the coordinator (what changed; if more change belongs to other code, name it) and make no more calls; if it is wrong or incomplete, send the corrected edit. After ['skip'], reply with one sentence saying why nothing changed.
 
 If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call form below.

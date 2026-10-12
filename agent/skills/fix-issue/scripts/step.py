@@ -2451,8 +2451,16 @@ def _editor_read(root, state, c, mine_name):
     reads.append(key)
     _state.record({'look': 'editor read', 'q': label[:120], 'step': state['step']})
     body = _code_view(root, c['rel'], c['start'], c['end'], _focus(state), limit=CODE_LINES)   # read whole: what it yields or returns
-    return (f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor changes {mine_name} alone; '
-            f'if the change belongs to {label}, reply with one sentence saying so, without a call.\n{body}')
+    if ROLE == 'editor' and c['name'] != MODULE:
+        # c3: 'this editor changes X alone; if the change belongs to Y, reply' while edits of related code are kept:
+        # two calls cut at 4,096 tokens weighing 'the request names the place' against the fix in the helper (B12)
+        # (marked as seen: c3 refused the edit of the code it had read as 'not shown')
+        return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). If the fix belongs here, '
+                          f"edit it by its name (['{label}', '<the whole new function or class>']); the edit is "
+                          f'kept and {mine_name} stays open.\n{body}')
+    return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor '
+                      f'changes {mine_name} alone; if the change belongs to {label}, reply with one sentence saying '
+                      f'so, without a call.\n{body}')
 
 
 OPENING = False     # the call came through open.py: an edit_place editor opens the place of its request
@@ -2555,6 +2563,8 @@ def main(argv, role=None, opening=False):
     if state['step'] == 'D3' and state.get('pending_delete') and len(args) >= 4:
         e = _args.edit(_place_args(state, args))
         skip = skip or (e is not None and [e[0], e[1], e[2]] == state['pending_delete'])   # the confirmation
+    # c3: the unseen-lines answer asks for the same edit again; the repeat guard refused it ('same call')
+    skip = skip or str(state.get('answer') or '').startswith('Not applied yet')
     restate = _more_statement(state, args)
     resent = state['step'] != 'S0' and not restate and _is_statement_again(args)
     gate = None
