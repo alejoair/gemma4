@@ -1576,7 +1576,7 @@ def _whole_edit(root, p, text):
         repairs += [x for x in r.repairs if x not in repairs]
         warnings += [x for x in r.warnings if x not in warnings]
     if unchanged == len(defs):
-        return _edit.Result(False, p['start'], p['end'], 'the new code is the same as the old one: nothing changes',
+        return _edit.Result(False, p['start'], p['end'], "the new code is the same as the old one: nothing changes (if this place needs no change, send ['skip'])",
                             [], [])
     syms = _code.symbols(_code.parse(''.join(_repo.read_lines(root, rel))))
     spans = [t for t in (_target(syms, p, n) for n in names) if t is not None]
@@ -1979,7 +1979,15 @@ def _after_edit(root, state, i, p, r, before):
                        f'Send {p["handle"]} again with a change that keeps {"these tests" if n > 1 else "this test"} '
                        'passing.', 'BROKEN ' + ' '.join(new_failures[:3]))
     _tests.save_verified(root)
-    (state.get('seen') or {}).pop(p['rel'], None)      # the numbers moved: the next window shows the code again
+    # the numbers after the edit moved by the change in length: the marks follow them (c8: dropping every mark of the
+    # file after an edit of _unwrapped_call refused the edit of is_gen_callable, read before, as 'not shown'); the
+    # changed lines are in the diff shown with this answer
+    delta = len(_repo.read_lines(root, p['rel'])) - len(before)
+    marks = (state.get('seen') or {}).get(p['rel'])
+    if marks is not None:
+        old_end = r.end - delta
+        state['seen'][p['rel']] = sorted({m for m in marks if m < r.start} | {m + delta for m in marks if m > old_end}
+                                         | set(range(r.start, r.end + 1)))
     what = 'Kept and checked' if verdict == 'OK' else 'Kept, not checked'
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     move = _journal.edit_done(state, i)
@@ -2347,7 +2355,9 @@ def _editor_gate(root, state, args):
 CONTEXT_TOKENS = 32768      # the model's context; an agent_tool sub-agent's history is never compacted
 EDITOR_READS_UNTIL = 22000  # estimated history tokens after which no more code is shown to the editor
 EDITOR_CLOSE_AT = 27000     # ... after which the place is closed (the next requests would not fit)
-EDITOR_THINKING = 2048      # the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml)
+# the editor's thinking_budget (variants/agent_tool/sub_agents/sampling.yaml); local runs set the server's (c8: the
+# local server's 512 against this 2,048 closed an editor at 18,000 real tokens)
+EDITOR_THINKING = int(os.environ.get('SWE_EDITOR_THINKING') or 2048)
 
 
 def _editor_gate_closed(root, state):
