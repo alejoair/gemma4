@@ -2380,6 +2380,16 @@ def _editor_open(root, state, name, hit):
     # (the previous editor's place stays as it is: b10 showed an editor sending open.py again to look at another
     # place, so an open.py call is not proof that the previous editor ended; a place left to do is still offered)
     if hit is None:
+        x = _args.clean(name).strip('/')
+        rel = next((r for r in _repo.iter_py(root, docs=True) if _rank.names_file(x, r)), None) \
+            if re.fullmatch(r'[\w./-]+\.py', x) else None
+        if rel and len(_repo.read_lines(root, rel)) > BIG_FILE:
+            # c7: the coordinator handed over 'fastapi/dependencies/models.py'; its top level was opened and the
+            # editor read the file by ranges for 7 calls. A long file is opened through one of its definitions.
+            listed = _file_names(root, state, name)
+            if listed:
+                return listed.replace('Send one name to read it.', "Send open.py again with the one name the change "
+                                      "needs, to open it.")
         c = _match(state.get('candidates') or [], name, fuzzy=False)
         if c is None:
             found = [x for x in _resolve(root, [name]) if not _repo.is_doc_path(x['rel'])]
