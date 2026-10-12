@@ -2330,11 +2330,8 @@ def _editor_open(root, state, name, hit):
             return _editor_done(state, 'This editor\'s history is near the model\'s context limit, so no further '
                                 'call can be answered here.', mine_name)
         if hit['id'] == state['editor_place'] and state.get('current') is not None:
-            n = state['reopen'] = state.get('reopen', 0) + 1
-            if n >= 3:
-                state['reopen'] = 0
-                return _editor_done(state, f'{hit["handle"]} was opened {n} times in a row without an edit, so it '
-                                    'keeps its code.', hit['handle'])
+            # (no close here: nl4 closed the place on the third reopening and the next call was the edit; a reopening
+            # is how a reasoning cut by the thinking budget goes on, and the context budget bounds it)
             return (f'{hit["handle"]} is open already: its code was shown above and has not changed. Edit it with '
                     f"what was shown, or send ['skip'] if it needs no change.")
         if used > EDITOR_READS_UNTIL:
