@@ -2181,8 +2181,10 @@ def _editor_gate(root, state, args):
     name = _args.clean(items[0]) if items else ''
     hit = _match(places, name, fuzzy=False) if (places and len(items) == 1) else None
     mine = state.get('editor_place')
-    if OPENING and items:
+    if OPENING and items and (hit is not None or mine is None or state.get('editor_done') or state['step'] == 'D1'):
         return _editor_open(root, state, name, hit)
+    # (b10: an open editor sent open.py with file names, 'ls -R' and 'file:line' to browse; those are answered as
+    # edit.py answers them: related code read only, or the usual refusals)
     own = next((e for e in state.get('plan') or [] if e['place'] == mine), None) if mine else None
     # deciding: its place still to edit, or an accepted edit under review (until the editor replies and the
     # coordinator's next call to the script moves the work on)
