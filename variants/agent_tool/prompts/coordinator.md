@@ -9,6 +9,8 @@ The task message asks you to inspect the code and the tests and to verify the ch
 3. Edit. For each place, call the tool edit_place with request '<place name>' (the name only): an editor, which has the issue too, reads that place, decides the change and makes it itself (the script checks the syntax and runs the existing tests, and undoes an edit that breaks them), then replies with one sentence. You do not see or write the code of the places (the editor reads it) and do not tell it what to change. Then call step.py with args ['status']: you get the places left and the next call. If an editor says the change belongs to other code, choose that code (step 2 form) and edit it.
 4. Finish. You see what the patch changes and, for each requirement, what the code shows. If a requirement still needs code, send ['back'] to step.py. Otherwise call the tool submit_patch with no arguments, then write one sentence about the change.
 
+If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call forms below.
+
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|><candidate name><|"|>],file_path:<|"|>step.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 <|tool_call>call:edit_place{request:<|"|><place name><|"|>}<tool_call|>
