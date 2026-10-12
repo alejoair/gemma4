@@ -21,7 +21,8 @@ def clean(a):
     while a != prev:
         prev = a
         a = a.strip().rstrip(',').strip().strip(WRAPPERS).strip()
-    return a
+    # 'fastapi/dependencies/models.py:Dependant._unwrapped_call' (c13): one colon between a file and a name
+    return re.sub(r'^([\w./-]+\.py):(?=[A-Za-z_])', r'\1::', a)
 
 
 def is_placeholder(a):

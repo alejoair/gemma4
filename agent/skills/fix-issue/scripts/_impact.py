@@ -36,6 +36,7 @@ class Table:
         self.calls = {}      # called name -> [(rel, caller qualname or None, line)]
         self.bases = {}      # (rel, class qualname) -> [base names]
         self.exports = {}    # name -> [rel of __init__.py]
+        self.reads = {}      # attribute name read as self.<name> -> [(rel, reader qualname, line)]
         for rel in _repo.iter_py(root, docs=docs):
             tree = _code.parse(_repo.read_text(root, rel))
             if tree is None:
@@ -54,6 +55,12 @@ class Table:
                     if name:
                         o = owner[node.lineno] if node.lineno < len(owner) else None
                         self.calls.setdefault(name, []).append((rel, o.name if o else None, node.lineno))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) \
+                        and isinstance(node.value, ast.Name) and node.value.id == 'self':
+                    o = owner[node.lineno] if node.lineno < len(owner) else None
+                    if o is not None:
+                        self.reads.setdefault(node.attr, []).append((rel, o.name, node.lineno))
             if rel.endswith('__init__.py'):
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
@@ -101,6 +108,12 @@ def same_pattern(table, rel, sym):
     return [(rel, s) for _, _, s in sorted(scored)[:MAX_PATTERN]]
 
 
+def _is_property(sym):
+    return any((isinstance(d, ast.Name) and d.id in ('property', 'cached_property')) or
+               (isinstance(d, ast.Attribute) and d.attr in ('property', 'cached_property'))
+               for d in getattr(sym.node, 'decorator_list', []))
+
+
 def related(table, chosen):
     """The chosen places first, then the places related to them, each once: [Place]. chosen: [(rel, qualname)]."""
     out, seen = [], set()
@@ -136,6 +149,14 @@ def related(table, chosen):
                     put(r, s, f'version in base class {base}')
         for r, s in same_pattern(table, rel, sym):
             put(r, s, f'same pattern as {short}')
+        if '.' in name and _is_property(sym):
+            # c13: Dependant._unwrapped_call is a cached_property: read, never called, so its readers (the three
+            # is_*_callable, which the reference changes too) were not related places
+            cls = name.rsplit('.', 1)[0]
+            readers = [(r, o) for r, o, _ in table.reads.get(short, []) if r == rel and o.startswith(cls + '.')
+                       and o != name]
+            for r, o in list(dict.fromkeys(readers))[:MAX_CALLERS]:
+                put(r, table.get(r, o), f'reads {short}')
         plain = [(r, s) for r, s in same if not short.startswith('__')]
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:

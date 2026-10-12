@@ -1210,7 +1210,7 @@ def d1(root, state, args):
     # in its own window. Other related places are opened by their name.
     bases = {c['rel'].split('/')[-1] for c in chosen}
     planned = [p['id'] for p in places if p['reason'] == 'chosen'
-               or p['reason'].startswith('async/sync twin') or p['reason'].startswith('same pattern')
+               or p['reason'].startswith(('async/sync twin', 'same pattern', 'reads '))
                or (p['reason'].startswith('same definition') and p['rel'].split('/')[-1] in bases)]
     if not planned:
         _journal.back(state)
