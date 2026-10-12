@@ -2321,9 +2321,14 @@ def _editor_open(root, state, name, hit):
         hit = next((q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name'])), None)
         if hit is None:
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
-    state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
-                 editor_name=hit['handle'], editor_chars=0, editor_calls=0)
-    state['recent'], state['repeats'] = [], 0
+    new_editor = state.get('editor_done') or not state.get('editor_place')
+    if new_editor:
+        # only a new editor starts with an empty history: an editor that switches between its places with open.py
+        # keeps what it has seen and what its history holds (nl2: the switches reset both, so the context grew to
+        # 29,800 tokens unbounded and the same lines were asked for again and again)
+        state.update(editor_reads=[], seen={}, editor_chars=0, editor_calls=0)
+        state['recent'], state['repeats'] = [], 0
+    state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_name=hit['handle'])
     i = _journal.target(state, hit['id'])
     if state['plan'][i]['status'] == 'skipped':
         state['plan'][i]['status'] = 'todo'
