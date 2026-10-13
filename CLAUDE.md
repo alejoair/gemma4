@@ -72,8 +72,11 @@ Questions are not answered in the edit step. Code is named by its qualified name
 
 **Budget and generation:** `eval_config.yaml` 240 s per command / 60 min per task (7 min until 10-12; raised at the user's request: V17 lost 3 of 4 tasks to the 7-min stop while the editor was still working); tool calls 200 and turns 300, not binding (since
 10-11, the user's: time is the competition's only real limit, 12 h for about 120 tasks); no limit of our own
-inside the script (the 340 s edit stop was removed on 10-11 at the user's request; the harness's 7 min stays). `configs/sampling.yaml`: temperature 0.2, top_p 0.95, max_output_tokens 4096,
-thinking_budget 512, include_thoughts true. Answers are capped at 10,000 characters.
+inside the script (the 340 s edit stop was removed on 10-11 at the user's request). Sampling per agent: the coordinator
+`configs/sampling.yaml` (temperature 0.2, top_p 0.95, max_output_tokens 4096, thinking 512); the agent_tool sub-agents
+use the model's own defaults (temperature 1.0, top_k 64, top_p 0.95, checklist B14): `specify_fix` thinking 4096 /
+output 8192, `edit_place` thinking 2048 / output 8192; include_thoughts true everywhere. Answers are capped at 7,000
+characters (the specifier's view at about 27,000).
 
 **Decisions (newest last; the reasons are in `docs/design_single.md` and the commit messages):**
 - 10-08: the old exploring scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`) and the pipeline

@@ -18,7 +18,7 @@ CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
 # The forms use single quotes: every answer reaches the model as JSON, where a double quote reads as \" (B15)
 FORMS = {
-    'S0': "['<the issue statement, or its first paragraph>', '<search term>', '<search term>', ...]",
+    'S0': "['<the whole issue statement (its first 40 lines if it is longer)>', '<search term>', '<search term>', ...]",
     'D1': "['<candidate name>'] or ['<candidate name>', '<candidate name>'] (1 to 3 names from the list), or "
           "['<file>::<Name>'] for code not in the list, or ['<a name or text to find>']",
     'D2': "['P<n>: <what changes there>', 'P<m>: <what changes there>'] (one item per place to edit), or ['back'] "

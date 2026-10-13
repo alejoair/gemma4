@@ -1,7 +1,8 @@
 """build.py <out dir> [validator] [--variant <name>]: the submission from agent/, without Python caches (a .pyc file
 makes the harness reject it), as <out dir>/submission/ and <out dir>/submission.zip; then runs the competition's
 validate_submission.py on the directory when its path is given. A variant (variants/<name>/) is copied over agent/:
-its files replace or add to the base ones."""
+its files replace or add to the base ones, and the paths listed in its REMOVE.txt (one per line) are deleted from
+the build (base files the variant does not use)."""
 import os
 import shutil
 import subprocess
@@ -17,7 +18,16 @@ def build(out, variant=None):
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(ROOT, dst, ignore=IGNORE)
     if variant:
-        shutil.copytree(os.path.join(ROOT, '..', 'variants', variant), dst, ignore=IGNORE, dirs_exist_ok=True)
+        src = os.path.join(ROOT, '..', 'variants', variant)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache', 'REMOVE.txt'),
+                        dirs_exist_ok=True)
+        removals = os.path.join(src, 'REMOVE.txt')
+        for line in open(removals).read().split('\n') if os.path.exists(removals) else []:
+            path = line.strip()
+            if path and not path.startswith('#') and '..' not in path:
+                target = os.path.join(dst, path)
+                if os.path.isfile(target):
+                    os.remove(target)
     zpath = os.path.join(out, 'submission.zip')
     with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED) as z:
         for d, _, files in os.walk(dst):

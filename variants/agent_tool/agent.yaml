@@ -3,9 +3,9 @@ description: Fixes the issue by choosing the code to change with the fix-issue s
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include prompts/coordinator.md
 tools:
-  # edit_place runs in a fresh session for each place (ADK AgentTool): its windows and edits never enter this history,
-  # only its one-sentence reply, so this history stays far below the compaction threshold (docs/design_single.md,
-  # "The agent_tool variant").
+  # specify_fix and edit_place run in a fresh session for each call (ADK AgentTool): their views, windows and edits never
+  # enter this history, only their one-sentence replies, so this history stays far below the compaction threshold
+  # (docs/design_single.md, "The agent_tool variant" and "Redesign: microtasks").
   - submit_patch
   - agent_tool:
       config_path: sub_agents/specify_fix.yaml

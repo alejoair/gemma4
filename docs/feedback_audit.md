@@ -526,3 +526,49 @@ estimate refused reads at real sizes of 6,700-12,000 tokens (the limit is 32,768
 `2201 + 12·calls + 0.47·answer chars + 1.106·argument chars` with a median error of 742 tokens. The call count gave
 1,936. The estimate is now that fit plus a margin of 2,200, the 90th percentile of its error. The
 `/tmp/swe_editor_thinking` hook for local runs is gone: the fit has no per-call thinking term.
+
+**Review by three subagents with minimal context (2026-10-13): state machine, prompts against script texts, built
+submission.** Fixed:
+- The state machine:
+  - `requested` was set by `next_call` after the state was saved, so it was never kept; `next_call` now runs before
+    the save;
+  - `_move_on` read the plan entry after the skip had moved `current` (TypeError, or a wrong "keeps its code");
+  - an internal error now restores the state as it was before the call, and an editor is told to reply, not to call
+    `submit_patch` (it has no such tool);
+  - a specifier error sets `spec_failed`, and its editors work in the reading mode;
+  - a leftover D2 step (a crash between choosing and planning) goes back to choosing.
+- The coordinator:
+  - before the specification, a search or name that finds nothing keeps the plan (it used to drop it);
+  - an edit sent by the coordinator is refused (it used to reach d3 through d1);
+  - several names after the specification each join the plan;
+  - a name at the finish returns to D3 with that place current (its NEXT said submit);
+  - every return to unspecified resets the view counters.
+- The editor:
+  - it may read its own file's top level to add an import;
+  - after a broken rename, the specified editor is told to name the uses to the coordinator (it cannot edit them);
+  - the generic refusal and the tests note no longer offer reads outside the single role;
+  - the specified window labels the requirement as context and drops "place i of N";
+  - `reads_again` is reset with `editor_reads`;
+  - after it edits other code with its own place done, the review stays on its own place;
+  - "open your place first" names `open.py` and the requested place.
+- The specifier: a first call that already holds sentences is processed; a place whose code does not fit says to send
+  its name alone.
+- The submission:
+  - the variant has its own role-neutral `SKILL.md` (all three agents load the skill, and the base one described the
+    single flow, which would make an editor call `step.py` as the coordinator);
+  - the editor's `max_output_tokens` is 8192 (thinking 2048 + a 120-line function);
+  - `prompts/fix_issue.md` is removed from the variant build (`REMOVE.txt`);
+  - call forms are added for step 1, `status`, the line edit and `skip`;
+  - one wording for the statement in step 1;
+  - the `agent.yaml` comment and the `CLAUDE.md` facts are updated.
+- Kept as is:
+  - the 60-minute limit per task (the user's: no time limit for now);
+  - a second `edit_place` for the same place with no status call between is still read as a reopening (telling it
+    from a thinking-cut reopening needs an invocation id the ADK does not pass).
+
+| Item | Effect | Why |
+|---|---|---|
+| W4 a fully filled next call | closer | call forms for every step; NEXT and the answer agree at the finish |
+| B12 contradictions | closer | no texts offering reads that are refused; SKILL.md no longer describes another flow |
+| B6 calling tools that do not exist | closer | the editor is no longer told to call submit_patch |
+| P3 open-ended prohibitions | neutral | the refusals keep their reason and way out |

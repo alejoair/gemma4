@@ -267,13 +267,15 @@ def _window(root, state, i, show=None):
     _refresh(root, state, p['rel'])
     p = _place(state, entry['place'])
     goal = _goal(state, p)
-    head = f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])}).'
+    head = (f'Now edit {p["handle"]} ({p["rel"]}).' if _narrow(state) else
+            f'Now edit {p["handle"]} ({p["rel"]}; place {i + 1} of {len(state["plan"])}).')
     owner = _owner_class(root, p)
     if owner:
         head += f' It is a method of {owner}.'
     if p['reason'] != 'chosen' and not (ROLE == 'editor' and _specified(entry)):
         head += f" Related to the chosen code ({p['reason']}): change it only if the goal needs it here, else ['skip']."
-    head += f'\nGoal: {goal}'
+    head += (f'\nThe issue\'s requirement (context): {goal}' if _narrow(state) and _specified(entry) else
+             f'\nGoal: {goal}')
     if ROLE == 'editor' and _specified(entry) and entry['intent'] != 'no change':
         head += f'\nWhat to change here (the specification): {entry["intent"]}'
         for e2 in state['plan']:
@@ -904,8 +906,8 @@ def _is_tests(text):
 TESTS_NOTE = ('Test files are not changed here: the harness removes every change to a test file from the patch, and '
               'the hidden tests, written by the issue\'s authors (with the test the issue mentions), replace them. So a '
               'test written here never counts. Every edit is checked by running the existing tests that use the '
-              'changed code ("Kept and checked" means they passed); to see how a test uses some code, send the test '
-              'file with two line numbers.')
+              'changed code ("Kept and checked" means they passed).')
+TESTS_READ = ' To see how a test uses some code, send the test file with two line numbers.'   # (single role only)
 
 
 RUN_NOTE = ('Code is not run here: there is no shell and no Python command. The check of a change is the existing '
@@ -1208,7 +1210,8 @@ def d1(root, state, args):
     items = [a for a in args if a and a.strip()]
     if len(items) == 1 and _is_tests(items[0]):
         _state.record({'look': 'tests', 'q': items[0][:120], 'step': state['step']})
-        return TESTS_NOTE + '\n\n' + _candidates_view(state) + '\n\nChoose the code to change.'
+        return (TESTS_NOTE + (TESTS_READ if ROLE == 'single' else '') + '\n\n' + _candidates_view(state)
+                + '\n\nChoose the code to change.')
     edited = _edit_of_other(root, state, args)
     if edited is not None:
         return edited
@@ -1949,7 +1952,8 @@ def d3(root, state, args):
         return head + '\n\n' + _finish_view(root, state)
     if single and _is_tests(single):
         _state.record({'look': 'tests', 'q': single[:120], 'step': state['step']})
-        return TESTS_NOTE + '\n\n' + (_window(root, state, cur) if cur is not None else _finish_view(root, state))
+        return (TESTS_NOTE + (TESTS_READ if ROLE == 'single' else '') + '\n\n'
+                + (_window(root, state, cur) if cur is not None else _finish_view(root, state)))
     query = _search_query(items)
     if query:
         here = _place(state, state['plan'][cur]['place'])['rel'] if cur is not None else None
@@ -2011,8 +2015,9 @@ def d3(root, state, args):
         elif ROLE == 'editor':
             msg = ("Not run: this form is never accepted here, so sending it again gives the same answer. Accepted: the "
                    "whole new function or class ['<place name>', '<code>'], a line edit ['<place name>', '<first line "
-                   "number>', '<last line number>', '<new lines>'], ['skip'] if the place needs no change, or the name "
-                   "of related code to read it. Nothing was changed.")
+                   "number>', '<last line number>', '<new lines>'], ['skip'] if the place needs no change"
+                   + (". Nothing was changed." if _narrow(state) else ", or the name of related code to read it. "
+                      "Nothing was changed."))
         else:
             msg = ("Not run: this form is never accepted in this step, so sending it again gives the same answer. "
                    "Accepted: the whole new function or class ['<place name>', '<code>'], a line edit ['<place name>', "
@@ -2097,8 +2102,10 @@ def _after_edit(root, state, i, p, r, before):
         gone = _old_name_uses(root, before, _repo.read_lines(root, p['rel']), p['rel'])
         if gone:
             # a rename breaks the callers' tests: they are named, to rename together (edit them here by their names)
-            detail += ('\n' + gone + '\nA rename needs these uses renamed too: edit each by the name of the '
-                       'function that holds it, then the place again.')
+            detail += ('\n' + gone + ('\nA rename needs these uses renamed too. Reply with one sentence for the '
+                                      'coordinator, without a call, naming them: each gets its own editor.'
+                                      if _narrow(state) else '\nA rename needs these uses renamed too: edit each by '
+                                      'the name of the function that holds it, then the place again.'))
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
         n = len(new_failures)
@@ -2128,6 +2135,12 @@ def _after_edit(root, state, i, p, r, before):
             # an edit of other code by this editor is kept; its own place is still to decide
             state['current'], state['step'] = j, 'D3'
             return head + f'\n\nBack to {_name_of(state, state["editor_place"])}:\n\n' + _window(root, state, j)
+        # its own place is edited already: the review stays on it (review: current pointed at the other code, so
+        # NEXT and the window named it)
+        state['current'], state['step'], state['editor_review'] = j, 'D3', True
+        own = _name_of(state, state['editor_place'])
+        return (head + f'\n\nThe change at {own} is made too. If the work is complete, reply with one sentence for '
+                'the coordinator, without a call.')
     if ROLE == 'editor':
         # the place stays open with the diff: run a04 (requests_7328) saw its own wrong deletion in this diff and
         # sent the right fix, which a closed editor refused 5 times (F1: told where, it corrects well)
@@ -2324,8 +2337,8 @@ def _move_on(root, state):
     """The third same call in a row: the work moves on from where it is stuck."""
     if state['step'] == 'D3' and state.get('current') is not None:
         name = _name_of(state, state['plan'][state['current']]['place'])
+        done = state['plan'][state['current']]['status'] == 'done'      # (read before the skip moves current)
         move = _journal.skip(state, state['current'])
-        done = state['plan'][state['current']]['status'] == 'done'
         # (c15: 'keeps its code' after an accepted edit of the place was false)
         head = (f'The same call came three times, so the work on {name} moves on; '
                 + ('its accepted edit stays in the patch.' if done else 'it keeps its code.'))
@@ -2409,7 +2422,7 @@ def _coordinator_choice(root, state, item):
         e['status'] = 'todo'
         state['current'], state['step'] = i, 'D3'
         if state.get('spec_done') and not _specified(e):
-            state['spec_done'] = False      # it joins the plan: specify_fix writes its sentence
+            state['spec_done'], state['spec_shown'], state['spec_views'] = False, False, 0   # specify_fix writes it
             return f'{hit["handle"]} joins the plan.\n\n' + _coordinator_status(root, state)
         return f'{hit["handle"]} is planned and is next.\n\n' + _coordinator_status(root, state)
     found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
@@ -2419,8 +2432,9 @@ def _coordinator_choice(root, state, item):
         # m2: after the specification the coordinator named the class Dependant; choosing it replaced the plan and
         # dropped the specified places. Code named now joins the plan, the specification of the others stays
         _add_place(state, found[0], 'named by the coordinator')
-        state['spec_done'] = False
+        state['spec_done'], state['spec_shown'], state['spec_views'] = False, False, 0
         hit = next(q for q in state['places'] if (q['rel'], q['name']) == (found[0]['rel'], found[0]['name']))
+        state['current'], state['step'] = _journal.target(state, hit['id']), 'D3'      # (also from the finish)
         return f'{hit["handle"]} joins the plan.\n\n' + _coordinator_status(root, state)
     head, out = _choose_code(root, state, found[0])
     return head + '\n\n' + out
@@ -2453,7 +2467,7 @@ def _editor_gate(root, state, args):
     if hit is not None and state['step'] in ('D3', 'D4') and (hit['id'] != mine or state.get('editor_done')) \
             and not deciding:
         # a new editor opens its place (its first call names it, often the coordinator's last call word for word)
-        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
+        state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], reads_again={}, seen={},
                      editor_name=hit['handle'])
         state['recent'], state['repeats'] = [], 0
         i = _journal.target(state, hit['id'])
@@ -2474,7 +2488,7 @@ def _editor_gate(root, state, args):
             _choose_code(root, state, c)
             hit = _match(state.get('places') or [], c.get('handle') or c['name'], fuzzy=False)
             if hit is not None:
-                state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], seen={},
+                state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_reads=[], reads_again={}, seen={},
                              editor_name=hit['handle'])
                 state['recent'], state['repeats'] = [], 0
                 i = _journal.target(state, hit['id'])
@@ -2486,8 +2500,9 @@ def _editor_gate(root, state, args):
         if not places or state['step'] not in ('D3', 'D4'):
             return ('No place is open for this editor: choosing code is the coordinator\'s step. Reply with one sentence '
                     'for the coordinator, without a call, saying what the change needs.')
-        return ('This editor opens its place first: send the place name from the request, alone. The places: '
-                + ', '.join(q['handle'] for q in places) + '.')
+        req = state.get('requested')
+        return ("This editor opens its place first: call run_skill_script with file_path open.py and args "
+                + (f"['{req}']" if req else "['<the place name from the request>']") + '.')
     used = _editor_tokens(state)
     is_edit = (len(items) == 2 and DEF_LINE.search(items[1]) is not None) or \
         (len(items) == 4 and all(_args.clean(x).isdigit() for x in items[1:3]))
@@ -2517,7 +2532,11 @@ def _editor_gate(root, state, args):
         own_range = (len(items) == 3 and all(_args.clean(x).isdigit() for x in items[1:3])
                      and _match([p_mine], _args.clean(items[0]), fuzzy=False) is not None)
         own_name = len(items) == 1 and hit is not None and hit['id'] == mine
-        if (len(items) in (1, 3) or _search_query(items)) and not own_range and not own_name:
+        # its own file's top level, where an import is added (review: the prompt says how, the read was refused)
+        low = name.lower().strip('. ')
+        own_top = len(items) == 1 and (low in ('top level', 'imports', 'the imports', 'top-level', 'module') or
+                                       low.endswith('top level') and _rank.names_file(low[:-9].strip(), p_mine['rel']))
+        if (len(items) in (1, 3) or _search_query(items)) and not own_range and not own_name and not own_top:
             return _narrow_refusal(mine_name, state)
     if hit is not None and hit['id'] != mine:
         return _editor_read(root, state, hit, mine_name) + back
@@ -2585,8 +2604,6 @@ def _spec_view(root, state):
     order = [(planned[q['id']], q) for q in state['places'] if q['id'] in planned] + \
             [(None, q) for q in state['places'] if q['id'] not in planned]
     for e, p in order:
-        if p is None:
-            continue
         tag = p['reason'] if e is not None else f'{p["reason"]}; not planned: give it a sentence if it must change'
         head = f'== {p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}; {tag})'
         if e is not None and _specified(e):
@@ -2599,7 +2616,7 @@ def _spec_view(root, state):
         ctx = _context_view(root, p, _focus(state, e)) if e is not None else ''
         text = '\n'.join(x for x in (head, body, ctx) if x)
         if len(text) > room:
-            text = head + ' (its code does not fit here; it is shown to its editor)'
+            text = head + ' (its code does not fit here: send its name alone to see it)'
         _seen_mark(p['rel'], text)
         out.append(text)
         room -= len(text)
@@ -2612,7 +2629,7 @@ def _specified(e):
 
 def _narrow(state):
     """The editor of a specified change: one place, its sentence, no reading (docs/design_single.md, microtasks)."""
-    return ROLE == 'editor' and bool(state.get('spec_done'))
+    return ROLE == 'editor' and bool(state.get('spec_done')) and not state.get('spec_failed')
 
 
 def _narrow_refusal(mine_name, state=None):
@@ -2690,8 +2707,11 @@ def _specifier(root, state, args):
     plan_names = [_name_of(state, e['place']) for e in state['plan']]
     form = ("Send one item pair per place: ['<place name>', '<what changes there, in one sentence, or no change>', "
             "...]. A place the change needs that is not listed: its name and its sentence (it is added).")
-    if not state.get('spec_shown') or not items or (len(items) == 1 and items[0].lower().strip('. ') in (
-            'the plan', 'plan', 'show', 'start', 'places', 'status')):
+    known0 = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']}
+    first_pairs = _spec_pairs(items, known0)[0] if items else []
+    if not first_pairs and (not state.get('spec_shown') or not items or (len(items) == 1 and items[0].lower().strip(
+            '. ') in ('the plan', 'plan', 'show', 'start', 'places', 'status'))):
+        # (review: a first call that already held its sentences was answered with the view and the sentences lost)
         state['spec_views'] = state.get('spec_views', 0) + 1 if state.get('spec_shown') else 1
         if state['spec_views'] >= 3:
             # m7: 'the plan' 6 times, each answered with the whole view (2,500 tokens) in the specifier's history
@@ -2904,7 +2924,7 @@ def _editor_open(root, state, name, hit):
         # 29,800 tokens unbounded and the same lines were asked for again and again)
         # (the lines already shown are kept: c4's editor switched to a helper and back, and its edit of the place it
         # had read was refused as 'not shown')
-        state.update(editor_reads=[], editor_chars=0, editor_arg_chars=0, editor_calls=0)
+        state.update(editor_reads=[], reads_again={}, editor_chars=0, editor_arg_chars=0, editor_calls=0)
         state['recent'], state['repeats'] = [], 0
     state.update(editor_done=False, editor_place=hit['id'], editor_review=False, editor_name=hit['handle'])
     i = _journal.target(state, hit['id'])
@@ -2970,14 +2990,10 @@ def _editor_read(root, state, c, mine_name):
                f"edit it by its name (['{label}', '<the whole new function or class>'])")
         return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). If the fix belongs here, '
                           f'{how}; the edit is kept and {mine_name} stays open.\n{body}')
-    if ROLE == 'editor':
-        # a file's top level: an import is added there by line numbers (the editor's prompt says so)
-        return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). To add an import, edit '
-                          f"it by line numbers (['{label}', '<first line number>', '<last line number>', '<new "
-                          f"lines>']); {mine_name} stays open.\n{body}")
-    return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}), read only: this editor '
-                      f'changes {mine_name} alone; if the change belongs to {label}, reply with one sentence saying '
-                      f'so, without a call.\n{body}')
+    # a file's top level: an import is added there by line numbers (the editor's prompt says so; only editors read)
+    return _seen_mark(c['rel'], f'{label} ({c["rel"]}, lines {c["start"]}-{c["end"]}). To add an import, edit '
+                      f"it by line numbers (['{label}', '<first line number>', '<last line number>', '<new "
+                      f"lines>']); {mine_name} stays open.\n{body}")
 
 
 OPENING = False     # the call came through open.py: an edit_place editor opens the place of its request
@@ -2990,6 +3006,8 @@ def main(argv, role=None, opening=False):
     OPENING = opening
     root = _repo.repo_root()
     state = _state.load('journal') or _journal.new()
+    if state['step'] == 'D2':
+        _journal.back(state)        # (D2 is only left by a crash between choosing and planning: choose again)
     _SEEN['state'] = state
     argv = list(argv)
     while len(argv) > 1 and argv[-1].strip().lower() in ('false', 'true', 'none'):
@@ -3003,7 +3021,7 @@ def main(argv, role=None, opening=False):
             _state.record({'error': f'spec {type(e).__name__}: {e}'})
             out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Reply with one sentence '
                    'for the coordinator, without a call, saying the specification failed.')
-            state['spec_done'] = True
+            state['spec_done'], state['spec_failed'] = True, True    # editors then work as before (reading allowed)
         _state.record({'spec': [a[:200] for a in args][:12], 'answer': out[:300]})
         _state.save('journal', state)
         out = out.rstrip()
@@ -3022,7 +3040,8 @@ def main(argv, role=None, opening=False):
         if i is not None and state['plan'][i]['status'] == 'todo' and not state.get('editor_done'):
             state['plan'][i]['status'] = 'skipped'
         state['editor_review'], state['editor_done'] = False, True
-        state.update(editor_place=None, editor_reads=[], seen={}, editor_chars=0, editor_arg_chars=0, editor_calls=0,
+        state.update(editor_place=None, editor_reads=[], reads_again={}, seen={}, editor_chars=0, editor_arg_chars=0,
+                     editor_calls=0,
                      recent=[], repeats=0)
         if state['step'] == 'D3':
             _journal.advance(state)
@@ -3163,11 +3182,35 @@ def main(argv, role=None, opening=False):
                                                                          fuzzy=False) or _args.plan(args) == 'back')):
                 # m3, m4: before the specification the coordinator is still choosing (names, files, searches were
                 # refused 5-7 times): the call is answered as at the choose step, and a choice makes the plan again
-                _journal.back(state)
-                scoped = d1(root, state, items0)
+                if len(items0) == 4 and all(_args.clean(x).isdigit() for x in items0[1:3]) or \
+                        len(items0) == 2 and DEF_LINE.search(items0[1]):
+                    # (review: a coordinator's edit went through d1 to d3 and was applied; editors edit)
+                    scoped = ('This call was not run: the coordinator does not edit. specify_fix writes what changes '
+                              'at each place and each place is edited by its editor.\n\n'
+                              + _coordinator_status(root, state))
+                else:
+                    keep = {k: json.loads(json.dumps(state.get(k))) for k in ('places', 'plan', 'current', 'step')}
+                    _journal.back(state)
+                    scoped = d1(root, state, items0)
+                    if state['step'] != 'D3':
+                        # a search, a file or a name that found nothing: the plan stays as it was (review: a failed
+                        # search dropped it), and the answer is the list to choose from
+                        cands = state.get('candidates')
+                        state.update(keep)
+                        state['candidates'] = cands
+                        scoped = scoped.replace('\n\nChoose the code to change.', '') + (
+                            '\n\nThe plan is unchanged. Send a name from this list to choose it instead, or go on with '
+                            'specify_fix.')
             if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and len(items0) == 1 \
                     and _args.plan(args) != 'back':
                 scoped = _coordinator_choice(root, state, items0[0])
+            if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and state.get('spec_done') \
+                    and 1 < len(items0) <= 4 and all(NAME_LIKE.fullmatch(_args.clean(x)) for x in items0):
+                # (review: after the specification several names were refused; each joins the plan)
+                got = [_coordinator_choice(root, state, x) for x in items0]
+                got = [g.split('\n\n')[0] for g in got if g]
+                if got:
+                    scoped = '\n'.join(got) + '\n\n' + _coordinator_status(root, state)
             if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and _args.plan(args) != 'back' \
                     and (state.get('spec_done') or not _search_query(items0) and not
                          (len(items0) == 2 and re.fullmatch(r'[\w./-]+\.py', _args.clean(items0[1]).strip('/')))):
@@ -3218,8 +3261,12 @@ def main(argv, role=None, opening=False):
             out = read if read is not None else STEPS[state['step']](root, state, args)
         except Exception as e:      # never a traceback for the model: say what happened and the call to make
             _state.record({'error': f'{type(e).__name__}: {e}'})
-            out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Make the call below; '
-                   'if it fails the same way, call submit_patch.')
+            # the state as it was before the call: a half-made change (a skip, a plan dropped) is not kept
+            state = _state.load('journal') or state
+            _SEEN['state'] = state
+            out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). '
+                   + ("Nothing was changed. Reply with one sentence for the coordinator, without a call, saying so."
+                      if ROLE == 'editor' else 'Make the call below; if it fails the same way, call submit_patch.'))
         state['answer'] = out.strip().split('\n')[0][:300]
         _journal.remember(state, key, state['answer'])
         if range_key is not None and out.startswith('Lines ') and ' do not exist' not in out.split('\n')[0]:
@@ -3231,13 +3278,14 @@ def main(argv, role=None, opening=False):
         state['editor_chars'] = state.get('editor_chars', 0) + len(out)
         state['editor_arg_chars'] = state.get('editor_arg_chars', 0) + len(json.dumps(list(args)))
         state['editor_calls'] = state.get('editor_calls', 0) + 1
+    nxt = _journal.next_call(state, ROLE)      # (before the save: it records the place handed over, 'requested')
     _state.save('journal', state)
     out = out.rstrip()
     if state['step'] != 'S0':
         out = _progress(root, state) + '\n\n' + out
     if len(out) > MAX_CHARS:
         out = out[:MAX_CHARS - 2500] + '\n      ... (output cut) ...\n' + out[-2400:]
-    print(out + '\n\n' + _journal.next_call(state, ROLE))
+    print(out + '\n\n' + nxt)
 
 
 if __name__ == '__main__':
