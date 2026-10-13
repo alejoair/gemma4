@@ -577,3 +577,77 @@ submission.** Fixed:
     regression of the previous round);
   - pytest ran with `-rf`, which does not list ERROR lines, so a test whose setup the edit broke counted as passing
     ("Kept and checked"); it now runs with `-rfE`.
+
+**"Arregla todo menos el tiempo" (2026-10-13): the rest of the two context-free reviews.** Fixed:
+- **New files.** 11 of the 129 dev tasks add a file and no form could create one. A path that does not exist yet
+  (`'pkg/new.py'`, under an existing top directory, not a test file) is now a place: the specifier names it with a
+  sentence (`_specifier`, `_SPEC_N` reads a path as a name), it goes before the places still to do (an import of it
+  fails until it exists), its window says "Create <path>: it does not exist yet" with the sentence, and the editor (or
+  the single agent in D3) sends `['<path>', '<whole file>']`. The file must compile; it is written, the place is done
+  and verified, and the editor reviews it. The harness's patch runs `git add -N .`, so the new file is in the patch.
+  NEXT names the create form (`_journal._new_file`). Dry run on fastapi_14448: specifier → create
+  `fastapi/_callables.py` → the editor of `is_coroutine_callable` imports it → tests pass.
+- **An existing test that asserts the old behaviour.** Every edit that changed a value an existing test checks was
+  undone, also when the issue asks for that value. Now, when every new failure is the test's own `assert` (no
+  exception of the code), the "Undone" answer adds: "If the issue asks for exactly the value this test rejects, send
+  the same edit again: it is then kept." The same edit (or another one breaking the same tests the same way) is then
+  kept with "Kept: … these existing tests fail on their assertions a second time; they check the old behaviour, which
+  the issue changes", and those tests no longer count as new failures for later edits (`accepted_failures`). A
+  failure with an exception is never kept. Dry run on a toy repository (`format_size` "bytes" → "B").
+- **Replay tool.** `tools/replay_trace.py <scripts> <snapshot> <trace.json>...` replays every `run_skill_script` call
+  of harness traces (all agents, `step.py`/`spec.py`/`open.py`/`edit.py`) on a clean snapshot and reports tracebacks,
+  internal errors, answers without NEXT and calls over the command timeout (240 s). V20's 4 traces (251 calls): no
+  faults, identical answers before and after the `main()` refactor.
+- **`main()`** is split into `_run_specifier`, `_close_editor`, `_normalized`, `_range_guard`, `_repeat_answer`,
+  `_scoped_answer` and `_answer` (no change of behaviour: the replays print the same answers).
+- **Before this round, same review:** an internal error after an edit was written restores the verified files;
+  `restore_verified` puts back files that were already changed or untracked when the work started instead of
+  deleting them (`record_preexisting` at S0); one `fcntl` lock per state directory (parallel tool calls); the editor
+  ceilings fit an 8192-token output (`EDITOR_READS_UNTIL` 18000, `EDITOR_CLOSE_AT` 22000); the review window does not
+  repeat the diff; `spec.py`, `open.py` and `edit.py` live only in the variant; a no-op condition removed.
+- **Docs:** `CLAUDE.md` "The agent now" describes both builds and the variant evaluated since V17, and the window size;
+  `VERSIONS.md` says which tasks each run used and what a one-task difference means with 4 tasks;
+  `tools/kaggle_notebook_single.py` is the notebook as last pushed (V20), with the dataset layout; S5 scored 0.03.
+- **A stale journal** of the same task cannot be reused: the state directory is keyed by the repository path and its
+  HEAD, and the harness commits a fresh baseline (its own timestamp) before each run.
+- Kept as is: the 60-minute limit (the user's).
+
+| Item | Effect | Why |
+|---|---|---|
+| W2 whole functions or blocks | closer | a new module is sent whole, like a function |
+| W4 a fully filled next call | closer | NEXT names the create form for a new file |
+| W6 names of the statement | closer | a new module is named by its path, as the issue writes it |
+| B5 repeating a failed call | farther, with reason | resending an edit undone only by assertions is now accepted (it is the way to keep it); any other failed edit is still answered at once without a run |
+| B11 doubting tool output | closer | the verdict no longer calls a test that checks the old behaviour a break of the fix, and says which tests now disagree |
+| B12 contradictions | closer | "keep this test passing" no longer contradicts an issue that changes the value the test checks |
+| B8 many forms | farther, with reason | one more form (`['<path>', '<whole file>']`), offered only in the window of a file to create |
+
+**Why the step-by-step local runs did not find these faults (2026-10-13, asked by the user).**
+- **The runs covered few task shapes.** 61 local runs (t, a, b, nl, c, m series) used 6 of the 129 dev tasks: 29 on
+  fastapi_14448, 19 on requests_7328 (whose tests cannot run locally), 5 rich_3521, 4 fastapi_14986, 2 rich_3006,
+  2 fastapi_14851. All ten microtask runs (m1-m10) were fastapi_14448. None of the 11 dev tasks that add a file was
+  run, so the missing create form could not show. A code path that the task does not need is never run, however
+  closely the run is watched.
+- **The monitoring watched the model, not the script.** Each call was read for what the model did wrong; an answer of
+  the script that was wrong but plausible looked normal. Silent faults have no symptom in the call where they happen:
+  `requested` was never saved (no error, the new-editor check just never fired; later symptoms such as m8 were patched
+  with another heuristic instead of traced to it), and `-rf` hid setup errors so a broken edit read "Kept and
+  checked". The model takes these verdicts as true (checklist B11), and the reader did too.
+- **Stop at the first problem, fix, restart** gives many observations of the first steps and few of the later ones and
+  of rare paths (an internal error after a write, a file already changed in the sandbox, two calls at once). The local
+  sandbox is always clean and serial, so those paths never ran.
+- **No regression net between runs.** The replay of real calls (method step 3) needed `replay_step.py` and the
+  `step_calls*.json` files, which lived in the scratchpad and were lost with an earlier container; the step was
+  skipped since. Fixes made after the last model run were tested only on the path that motivated them: the
+  `['the plan']` parse regression came from such a fix and the review found it, not a run.
+- **Some findings are not runtime faults:** doc drift, files shipped in the wrong build, a capability the design lacks.
+  A run shows what happens; a review that reads the code against what the competition requires shows what is missing.
+
+Changes to the method:
+1. `tools/replay_trace.py` (in the repository) replays every real call of the latest traces after each change, before
+   any model run; the answers before and after a change are diffed.
+2. Local runs rotate over tasks chosen for their shape, not one task: at least one that adds a file, one whose test
+   patch changes an existing assert (13 of 129, e.g. rich_3521), one per repository whose tests run locally.
+3. Each finished local run is compared with the reference patch and the hidden tests, and each "Kept and checked" is
+   checked against them: a verdict of the script is data to verify, not a fact.
+4. A context-free review of the code after each round of fixes, as on 10-13: it found what the runs could not.

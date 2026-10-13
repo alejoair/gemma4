@@ -4,7 +4,7 @@ You work through the script spec.py of the skill fix-issue: call it with run_ski
 
 1. First call: args ['the plan']. You get every place with its numbered code, the code that calls it and the definitions it uses.
    To see the code of a place that does not fit, or of other code, send its name alone.
-2. Then: args with one pair of items per place: ['<place name>', '<what changes there, or no change>', '<place name>', '<what changes there>', ...]. If the fix needs code that is not among the places, add its name and its sentence the same way (it is added to the plan).
+2. Then: args with one pair of items per place: ['<place name>', '<what changes there, or no change>', '<place name>', '<what changes there>', ...]. If the fix needs code that is not among the places, add its name and its sentence the same way (it is added to the plan). If the issue asks for a new module, name its path (for example 'pkg/new_module.py') with a sentence of what it holds: the file is created first.
 3. When every place has its sentence, reply with one sentence for the coordinator, without a call.
 
 Think about the whole fix first: which places change, how they work together, and what each one must do so that the issue is fixed and the existing behaviour is kept. A change that several places share (the same pattern, a helper they all use) is written for each of them. A rename or a new parameter is written for its definition and for each place that uses it.

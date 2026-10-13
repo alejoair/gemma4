@@ -54,6 +54,8 @@ def next_call(state, role='single'):
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
         call = CALL.replace('file_path step.py', 'file_path edit.py')
+        if _new_file(state) and not state.get('editor_review'):
+            return f"NEXT: call {call}['{_new_file(state)}', '<the whole content of the file>'], or ['skip']"
         if state.get('editor_review'):
             return (f"NEXT: if the change at {pid} is complete, no call: reply with one sentence for the coordinator. "
                     f"Otherwise call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', "
@@ -74,12 +76,23 @@ def next_call(state, role='single'):
         return ("NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of "
                 "run_skill_script). Or, before that, run_skill_script with args ['back'] to choose code for a "
                 "requirement that nothing changed covers.")
+    if step == 'D3' and state['current'] is not None and _new_file(state):
+        return f"NEXT: call {CALL}['{_new_file(state)}', '<the whole content of the file>'], or ['skip']"
     if step == 'D3' and state['current'] is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
         return (f"NEXT: call {CALL}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
                 f"'<last line number>', '<new lines>'], or ['skip']")
     return f'NEXT: call {CALL}{FORMS[step]}'
+
+
+def _new_file(state):
+    """The path of the open place when it is a file still to create (step.py _add_new_file_place), else ''."""
+    if state.get('current') is None or not state.get('plan'):
+        return ''
+    e = state['plan'][state['current']]
+    p = next((q for q in state['places'] if q['id'] == e['place']), None)
+    return p['rel'] if p and p.get('new') and e['status'] == 'todo' else ''
 
 
 def _key(state, args):

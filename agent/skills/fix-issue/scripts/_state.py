@@ -5,6 +5,11 @@ import json
 import os
 import time
 
+try:
+    import fcntl
+except ImportError:      # (not on Windows; the sandbox is Linux)
+    fcntl = None
+
 import _repo
 
 if __name__ == '__main__':
@@ -16,7 +21,9 @@ _HEADS = {}
 
 
 def directory():
-    """One directory per repository path and original commit: a reused sandbox path never sees an earlier task."""
+    """One directory per repository path and original commit: a reused sandbox path never sees an earlier task. A rerun
+    of the same task gets a new directory too: the harness commits a fresh baseline (_swegemma_baseline, its own
+    timestamp) before each run, so HEAD differs (review: a stale journal of the same task)."""
     root = _repo.repo_root()
     base = os.environ.get('SWE_STATE_ROOT', '/tmp')
     if root not in _HEADS:
@@ -59,3 +66,24 @@ def events():
             return [json.loads(line) for line in fh if line.strip()]
     except (OSError, ValueError):
         return []
+
+
+_LOCK = []
+
+
+def lock():
+    """Holds the state directory for this call (released when the process ends). Two agents calling at once (ADK may
+    run parallel tool calls) would otherwise read, change and write the journal over each other (review)."""
+    if fcntl is None or _LOCK:
+        return
+    fh = open(path('lock'), 'w')
+    deadline = time.time() + 120
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.time() > deadline:
+                break           # never block the task for good: go on unlocked
+            time.sleep(0.2)
+    _LOCK.append(fh)

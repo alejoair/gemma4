@@ -369,6 +369,9 @@ def check(root, changed, renamed=(), cover=None):
         return _ran_it(r, cover, f'{n} existing test{"s pass" if n != 1 else " passes"} ({", ".join(files)}){late}')
     before = failing_before(root, r['failed'], stubs)
     new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
+    # tests accepted as checking the old behaviour the issue changes (step.py _asserts_old_behaviour) stay failing
+    accepted = set(_state.load('accepted_failures', []))
+    new = [f for f in new if f not in accepted]
     old_name = [f for f in new if renamed and _test_uses(root, f, renamed)]
     new = [f for f in new if f not in old_name]
     if old_name:
@@ -449,11 +452,28 @@ def save_verified(root):
     _state.save('verified', snap)
 
 
+def record_preexisting(root):
+    """The files already changed or untracked when the work starts (the sandbox may hold some): an undo puts them
+    back as they were instead of deleting them (review: restore_verified removed any untracked file)."""
+    if _state.load('preexisting', None) is not None:
+        return
+    snap = {}
+    for rel in changed_files(root):
+        try:
+            snap[rel] = ''.join(_repo.read_lines(root, rel))
+        except OSError:
+            snap[rel] = None
+    _state.save('preexisting', snap)
+
+
 def restore_verified(root):
     """Puts every changed file back to the last verified state (or the original when there is none)."""
     snap = _state.load('verified', {})
+    before = _state.load('preexisting', {}) or {}
     for rel in set(changed_files(root)) | set(snap):
         content = snap.get(rel)
+        if content is None and rel not in snap and before.get(rel) is not None:
+            content = before[rel]                     # a file that was there before the work started
         path = os.path.join(root, rel)
         if content is not None:
             _repo.write_lines(root, rel, content.splitlines(keepends=True))

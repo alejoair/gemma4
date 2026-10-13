@@ -43,17 +43,27 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 - Never remove a piece of the design because it has few or no calls: find out why it is not used and wire it.
 - Record design decisions and literature in the repository (this file and `docs/`), never only in the scratchpad.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md` as soon as it finishes.
-- No Kaggle competition submission unless the user asks (S5 is queued at the user's request; see below).
+- No Kaggle competition submission unless the user asks.
 - Never use Claude's outputs to train Gemma.
 - No model identifiers in commits, PRs or code. Commit and push after each round of changes
   (branch `claude/practical-wright-jnki3c`, PR alejoair/gemma4#3).
 
-## The agent now (2026-10-09)
+## The agent now (2026-10-13)
 
-`agent/` is the submission: one `LlmAgent` (`issue_fixer`, named `swe_step_agent` until 2026-10-09) with the tool `submit_patch` and the skill `fix-issue`
-(named `swe` until 2026-10-09), whose only entry point is `skills/fix-issue/scripts/step.py`; `_*.py` are its modules.
-`prompts/fix_issue.md` is the system instruction (it ends with the statement, `{problem_description}`). `tools/build.py`
-builds and validates the zip.
+Two builds share the scripts. `agent/` is the base: one `LlmAgent` (`issue_fixer`) with the tool `submit_patch` and the
+skill `fix-issue`, whose entry point is `skills/fix-issue/scripts/step.py` (`_*.py` are its modules) and whose system
+instruction is `prompts/fix_issue.md` (it ends with the statement, `{problem_description}`). **The version evaluated since
+V17 is the variant `variants/agent_tool/`** (`tools/build.py <dir> --variant agent_tool` overlays it on `agent/`; its
+`REMOVE.txt` drops the base prompt): the coordinator `issue_fixer` (`prompts/coordinator.md`, step.py with
+`_role.ROLE = 'coordinator'`) chooses the places and calls two `agent_tool` sub-agents, `specify_fix` (`spec.py`: one
+sentence per place) and `edit_place` (`open.py`, then `edit.py`: one place, its sentence, its code). `spec.py`,
+`open.py` and `edit.py` exist only in the variant. `tools/build.py` builds and validates the zip.
+
+The table below is the base procedure; in the variant the coordinator does S0 and D1, `specify_fix` writes the
+sentences, each `edit_place` does D3 for its own place, and the coordinator submits (D4). Since 10-13 a place can be a
+new file (a path that does not exist yet, named by the specifier; it is created first, `['<path>', '<whole file>']`),
+and an edit undone twice by the same existing tests, each failing only on its own assertion, is kept with a warning
+(the test checks the old behaviour the issue changes).
 
 **The procedure** (a state machine in `_journal.py`; each call is the model's decision for the current step, and every
 answer ends with the exact NEXT call):
@@ -65,7 +75,8 @@ answer ends with the exact NEXT call):
 | D3 Edit, per planned place | `["<place name>", "<whole new function or class>"]`, or `["<place name>", first, last, new lines]`, or `skip`, `back`, or another place's name | applies the edit (with repairs), checks the syntax, runs the related existing tests, undoes it if they break; the next place or the finish |
 | D4 Finish | `submit_patch`, or `["back"]` for the requirements nothing covers, or an edit again | the patch summary and a coverage map |
 
-The edit window shows the place's numbered code (whole up to 130 lines), the code it calls or reads (short members of
+The edit window shows the place's numbered code (whole up to 62 lines in the base, 120 for an editor, longer in
+parts), the code it calls or reads (short members of
 its own class as code) and the code that calls it, then what the change must do (requirements, the statement's
 sentences about the behaviour, its example, an existing test that uses the code), then the answer forms and NEXT.
 Questions are not answered in the edit step. Code is named by its qualified name; old ids (C2, P1) are still read.
@@ -111,8 +122,7 @@ characters (the specifier's view at about 27,000).
 All rows are in `VERSIONS.md`. Kaggle evals (the 31B on the same 10 dev tasks): V2 1/10, V3 3/10, V4 1/10, V6 2/10,
 V8 harness error, V10 1/10 (rich_3006 in almost every run). Local 12B batches with step.py: 1/10 and 1/10.
 Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, **S4 (= V3) 0.13** (scored 10-10), S5 (step
-procedure v1, commit bea4f0f) submitted 10-10 08:57 UTC, pending; the hourly routine "Kaggle S4/S5 hourly check"
-records its score and then turns itself off.
+procedure v1, commit bea4f0f, 5-min budget) **0.03** (checked 10-13).
 
 Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
 (vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
@@ -144,9 +154,10 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 2. Dry run: `scratchpad/dry_d3.sh <task> reset`, then `scratchpad/dry_d3.sh <task> <args…>` runs one `step.py` call on
    `scratchpad/repos/<task>` through `harness_like.py` (which deletes the skill's files when the script ends, as ADK
    does: nothing may run at exit).
-3. Replay the real calls: `venv/bin/python replay_step.py <skill dir> step_calls_v10.json` (and `step_calls.json`,
-   `step_calls_v13b.json`)
-   must print NO PROBLEMS.
+3. Replay the real calls of the latest traces on clean snapshots: `tools/replay_trace.py <build>/submission/skills/fix-issue/scripts
+   scratchpad/repos/<task> <trace_<task>.json>` must print NO PROBLEMS, and its answers are diffed with the run before
+   the change (the old `replay_step.py` was lost with the scratchpad on 10-12; see `docs/feedback_audit.md`, "Why the
+   step-by-step local runs did not find these faults"). Local runs rotate over tasks of different shapes.
 4. Build (`tools/build.py <dir>`) and validate (`scratchpad/validate_submission.py <dir>/submission`).
 5. Run with the local 12B: `run_local12.py <submission dir> e10 <out dir>` (`e10/tasks.jsonl` holds the tasks), with
    the proxy `stream_proxy.py` on 127.0.0.1:8765.

@@ -2,7 +2,7 @@
 
 One row per evaluated version. Update this file after every Kaggle run or submission (see CLAUDE.md).
 
-- **V** = a version of the Kaggle notebook `alejoair7/gemma4-eval-single`. It runs our `bench/kaggle_eval.py` with the real 31B on 4×L4, on the same 10 dev tasks (`--n 10 --seed 0`): fastapi_14448, fastapi_14583, fastapi_14851, fastapi_14986, fastapi_15800, httpx_3672, requests_7328, rich_3006, rich_3469, rich_3521. The outputs are in `scratchpad/kout_single<N>`.
+- **V** = a version of the Kaggle notebook `alejoair7/gemma4-eval-single`. It runs our `tools/kaggle_eval.py` (copied into the dataset as `bench/kaggle_eval.py`, see `tools/kaggle_notebook_single.py`) with the real 31B on 4×L4. Up to V16 on the same 10 dev tasks (`--n 10 --seed 0`): fastapi_14448, fastapi_14583, fastapi_14851, fastapi_14986, fastapi_15800, httpx_3672, requests_7328, rich_3006, rich_3469, rich_3521; from V17 on a subset named in each row (4 tasks: fastapi_14448, fastapi_14986, httpx_3672, rich_3521). With 4 or 10 tasks one task is 10-25 points: a difference of one task between versions is not evidence by itself (review); the step-by-step trace analysis is. The outputs are in `scratchpad/kout_single<N>`.
 - **S** = a real competition submission (public LB score, about 60 tasks from private repos).
 - **Q** = earlier runs of the notebook `alejoair7/gemma4-eval-quick` (pipelines before the journal, other task sets).
 
@@ -85,7 +85,7 @@ Readings: (a) the automatic check said OK in 5 failed tasks, so the related test
 | S2 | 10-06 09:30 | 56877024 | Locator committee (3 parallel) + merge + fails-before repro + fix/check loop + finalizer | 3.5 min, 50 calls | **0.05** | |
 | S3 | 10-07 04:46 | 56900403 | 4-stage sequential: grep locator → graph → fixer (edit + bash) → submitter, out 8192 | 4 min, 45 calls | **0.05** | Shown as ERROR at first; Kaggle lists it as COMPLETE 0.05 on 10-09 |
 | S4 | 10-08 13:03 | 56954989 | **V3** exactly as evaluated (`kout_single3/eval_single`), validated with `validate_submission.py` | 5 min, 45 calls | **0.13** (public, scored 10-10 ~08:50 UTC) | The best so far (S1 sample agent 0.12); local eval of the same build 3/10 |
-| S5 | 10-10 08:57 | 57037411 | **v1 step procedure** (commit bea4f0f): one agent, `swe/step.py` journal (S0 candidates → choose → plan → edit + tests → submit), thinking 512, out 4096. Never run on Kaggle with the 31B (GPU weekly quota exhausted); local 12B: rich_3006 resolved, requests_7328 not | 5 min, 30 calls, 40 turns | pending | Refused on 10-09 while S4 was pending (one pending submission per team); submitted by the hourly routine once S4 was scored |
+| S5 | 10-10 08:57 | 57037411 | **v1 step procedure** (commit bea4f0f): one agent, `swe/step.py` journal (S0 candidates → choose → plan → edit + tests → submit), thinking 512, out 4096. Never run on Kaggle with the 31B (GPU weekly quota exhausted); local 12B: rich_3006 resolved, requests_7328 not | 5 min, 30 calls, 40 turns | **0.03** (checked 10-13) | Refused on 10-09 while S4 was pending (one pending submission per team); submitted by the hourly routine once S4 was scored |
 
 ## Earlier eval-quick runs (Q)
 
