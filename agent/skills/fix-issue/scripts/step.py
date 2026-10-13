@@ -2518,7 +2518,7 @@ def _editor_gate(root, state, args):
                      and _match([p_mine], _args.clean(items[0]), fuzzy=False) is not None)
         own_name = len(items) == 1 and hit is not None and hit['id'] == mine
         if (len(items) in (1, 3) or _search_query(items)) and not own_range and not own_name:
-            return _narrow_refusal(mine_name)
+            return _narrow_refusal(mine_name, state)
     if hit is not None and hit['id'] != mine:
         return _editor_read(root, state, hit, mine_name) + back
     if len(items) == 1 and name.lower().strip('. ') in ('top level', 'imports', 'the imports', 'top-level', 'module'):
@@ -2615,8 +2615,15 @@ def _narrow(state):
     return ROLE == 'editor' and bool(state.get('spec_done'))
 
 
-def _narrow_refusal(mine_name):
+def _narrow_refusal(mine_name, state=None):
     # the rule with its reason and the way out (P3): the change is specified, the editor's view is the place
+    e = next((x for x in (state or {}).get('plan') or [] if x['place'] == (state or {}).get('editor_place')), None)
+    if e is not None and e['status'] == 'done':
+        # m7: the editor of _unwrapped_call, its edit accepted, tried to open the next planned places 6 times and got
+        # 'reading is not part of this task': its task is over, so it gets the reply to send
+        return (f'The change at {mine_name} is made and kept; the other places are handed to their own editors by '
+                'the coordinator. Reply with one sentence for the coordinator, without a call, for example: '
+                f'"{mine_name} is changed as specified."')
     return (f'Reading other code is not part of this task: what changes at {mine_name} is specified in its window, '
             'which shows its code and the definitions it uses. Edit it with what is shown, or send [\'skip\'] if the '
             'specification asks for no change here. If the change cannot be made without other code, reply with one '
@@ -2685,6 +2692,11 @@ def _specifier(root, state, args):
             "...]. A place the change needs that is not listed: its name and its sentence (it is added).")
     if not state.get('spec_shown') or not items or (len(items) == 1 and items[0].lower().strip('. ') in (
             'the plan', 'plan', 'show', 'start', 'places', 'status')):
+        state['spec_views'] = state.get('spec_views', 0) + 1 if state.get('spec_shown') else 1
+        if state['spec_views'] >= 3:
+            # m7: 'the plan' 6 times, each answered with the whole view (2,500 tokens) in the specifier's history
+            return ('The plan was shown above and has not changed. Write the sentences now. ' + form + '\nThe places: '
+                    + ', '.join(plan_names) + '.')
         state['spec_shown'] = True
         return ('The places of the plan, with their code, the code that calls them and the definitions they use. For '
                 'each place write what must change there so that the issue is fixed: one concrete sentence (what to '
@@ -2843,7 +2855,7 @@ def _editor_open(root, state, name, hit):
             # edit of it is kept while the editor's own place stays open
             mine_name = state.get('editor_name') or _name_of(state, state['editor_place'])
             if _narrow(state):
-                return _narrow_refusal(mine_name)
+                return _narrow_refusal(mine_name, state)
             return _editor_read(root, state, hit, mine_name) + (
                 f"\n\nBack to {mine_name}: send its edit, or ['skip'] if it needs no change.")
     if new_editor and hit['handle'] == state.get('requested'):

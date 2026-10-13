@@ -133,7 +133,7 @@ def requirement_back(state, candidates):
 def set_plan(state, entries):
     """entries: [(place id, intent)] already checked against the places."""
     state['plan'] = [{'place': p, 'intent': i, 'status': 'todo', 'fails': 0, 'errors': []} for p, i in entries]
-    state['spec_done'], state['spec_shown'] = False, False      # a new plan is specified again (agent_tool variant)
+    state['spec_done'], state['spec_shown'], state['spec_views'] = False, False, 0   # a new plan is specified again
     state['current'], state['step'] = 0, 'D3'
 
 
