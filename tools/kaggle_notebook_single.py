@@ -4,14 +4,14 @@ errored on setup with any patch, V15-V16), and runs the evaluation.
 
 The Kaggle dataset (scratchpad/ds3) holds this repository's tools/kaggle_eval.py as bench/kaggle_eval.py, the builds
 as v<N>/ and the wheels as extra_wheels/. Set SUBMISSION (the build folder) and TASKS (comma-separated) per run; the
-values below are the last run's (V20)."""
+values below are the last run's (V21)."""
 import glob
 import os
 import subprocess
 import sys
 
-SUBMISSION = 'v20'
-TASKS = 'fastapi_14448,httpx_3672,rich_3521,fastapi_14986'
+SUBMISSION = 'v21'
+TASKS = 'fastapi_14448,httpx_3672,rich_3521,fastapi_14986,requests_7502,rich_3296'
 
 hits = glob.glob('/kaggle/input/**/bench/kaggle_eval.py', recursive=True)
 assert hits, 'bench/kaggle_eval.py not found under /kaggle/input'
