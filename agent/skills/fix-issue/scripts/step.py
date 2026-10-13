@@ -532,6 +532,16 @@ def _context_view(root, p, focus=None):
             if node.id in here or node.id in imported:
                 used.append((node.lineno, node.id, 'name'))
 
+    assigned_self = {}          # class -> the self attributes its methods assign (instance attributes)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            assigned_self[node.name] = {t.attr for n in ast.walk(node) if isinstance(n, (ast.Assign, ast.AnnAssign))
+                                        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+                                        if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                                        and t.value.id == 'self'}
+    if cls and '.' in cls:
+        assigned_self[cls] = assigned_self.get(cls.split('.')[-1], set())
+
     def module_of(rel):
         mod = rel[:-3].replace('/', '.')
         return mod[4:] if mod.startswith('src.') else mod
@@ -542,6 +552,9 @@ def _context_view(root, p, focus=None):
             own_cls = [(r, x) for r, x in found if r == p['rel'] and cls and x.name == f'{cls}.{name}']
             if own_cls or not cls:
                 return own_cls
+            if cls in assigned_self and name in assigned_self[cls]:
+                # p3 (rich_3296): self.padding of Syntax, set in its __init__, was shown as Table.padding
+                return []
             # a11: self.resolve_redirects in Session.send is defined in its base SessionRedirectMixin
             return [(r, x) for r, x in found if x.name.endswith('.' + name) and x.kind == 'def'][:1] \
                 if len([1 for _, x in found if x.name.endswith('.' + name)]) <= 2 else []
@@ -607,6 +620,39 @@ def _context_view(root, p, focus=None):
             chars += len(text)
         if len(uses) >= n_uses:
             break
+    if cls and own != cls and focus:
+        # p3 (rich_3296): the fix was Syntax._get_base_style (which applies the background_color override), a member of
+        # the place's own class that the place does not call. Members that use what the place uses (the same calls and
+        # attributes: _get_base_style calls self._theme.get_background_style() as the place does) come first, the
+        # issue's words break ties
+        lines_ = _repo.read_lines(root, p['rel'])
+        words = {t for t in focus if focus[t] > 0} - set(_rank.tokens(cls.split('.')[-1]))
+        mine_used = {n for _, n, _ in used}
+        scored = []
+        for x in table.syms.get(p['rel'], []):
+            if not x.name.startswith(cls + '.') or x.name == own or x.name.count('.') != cls.count('.') + 1 or \
+                    (p['rel'], x.name) in seen or x.name.split('.')[-1].startswith('__'):
+                continue
+            body = ''.join(lines_[x.start - 1:x.end])
+            toks = set(_rank.tokens(x.name.split('.')[-1])) | {t for w in re.findall(r'[A-Za-z_]\w+', body)
+                                                               for t in _rank.tokens(w)}
+            hit = toks & words
+            node_names = {n.attr for n in ast.walk(x.node) if isinstance(n, ast.Attribute)} if getattr(x, 'node', None) \
+                else set(re.findall(r'\.(\w+)', body))
+            shared = len(mine_used & node_names)
+            if shared >= 1 and shared + len(hit) >= 2:
+                scored.append((-shared, -len(hit), x.end - x.start, x.start, x))
+        for *_, x in sorted(scored, key=lambda t: t[:4])[:2]:
+            if x.end - x.start + 1 <= 12:
+                text = (f'  {x.name} ({p["rel"]}), a member of the same class:\n'
+                        + _code.numbered(lines_, x.start, x.end, collapse=[]))
+            else:
+                text = f'  {x.name} ({p["rel"]}:{x.start}), a member of the same class: {_short_signature(x)[:70]}'
+            if chars + len(text) > uses_chars + 600:
+                break
+            seen.add((p['rel'], x.name))
+            uses.append(text)
+            chars += len(text)
     lib = _library_uses(root, p, tree, used, imported, modules, table, cls)
     room = uses_chars - chars
     for text in lib:
