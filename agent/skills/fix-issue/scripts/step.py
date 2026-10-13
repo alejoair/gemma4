@@ -2370,6 +2370,8 @@ def _progress(root, state):
 
 
 def _current_view(root, state):
+    if ROLE == 'coordinator' and state['step'] == 'D3':
+        return _coordinator_status(root, state)      # (m2: a repeated call showed the coordinator an editor's window)
     if state['step'] == 'D3' and state['current'] is not None:
         return _window(root, state, state['current'])
     if state['step'] == 'D4':
