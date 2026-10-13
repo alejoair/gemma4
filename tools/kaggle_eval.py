@@ -312,6 +312,10 @@ def main() -> None:
     from swegemma.config import ALLOWED_ADAPTER_EXTENSIONS, EvalConfig, build_submission_limits
     from swegemma.evaluate import Evaluator
     from swegemma.models import load_tasks
+    sys.path.insert(0, str(Path(__file__).resolve().parent))     # judge.py and eval_env.py ship next to this file
+    import eval_env
+    import judge
+    eval_env.patch()            # the tests import the task's src/ code, as in the competition's editable install
     try:
         from swegemma.models.discovery import validate_single_declared_model
     except ImportError:          # swegemma >= 0.2.11 moved model discovery to adk_submission
@@ -384,7 +388,9 @@ def main() -> None:
     evaluator = Evaluator(config)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    fields = ['task_id', 'repo', 'resolved', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls', 'duration_s', 'error']
+    fields = ['task_id', 'repo', 'resolved', 'judged', 'f2p', 'f2p_failing', 'p2p_broken', 'test_exit_code',
+              'patch_chars', 'tool_calls', 'llm_calls', 'duration_s', 'error']
+    judge_cache = WORK / 'judge_cache'
     rows = []
     with open(args.out, 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
@@ -409,6 +415,16 @@ def main() -> None:
                 for ln in [l for l in out.splitlines() if l.startswith(('FAILED', 'ERROR'))][:30]:
                     print('  hidden test: ' + ln[:200])
                 print('\n-- patch (first 2500 chars):\n' + (r.agent_patch or '(empty)')[:2500])
+                try:
+                    # the harness's verdict needs every test of the test files to pass, also those this environment
+                    # fails on the original code: the judge compares with the reference patch (judge.py)
+                    v = judge.judge(evaluator, task, r.agent_patch or '', harness_result=r, cache=judge_cache)
+                    row.update(judged=v['verdict'], f2p=len(v['f2p']), f2p_failing=' '.join(v.get('f2p_failing', [])),
+                               p2p_broken=' '.join(v.get('p2p_broken', [])))
+                    print(f'  JUDGED: {v["verdict"]} f2p={v["f2p"]} failing={v.get("f2p_failing")} '
+                          f'p2p_broken={v.get("p2p_broken")} env_failures={len(v["env_failures"])} {v.get("why", "")}')
+                except Exception as e:  # noqa: BLE001
+                    row.update(judged=f'judge error: {type(e).__name__}: {e}'[:200])
             except Exception as e:  # noqa: BLE001 - a crash is a data point too
                 import traceback
 
@@ -431,6 +447,10 @@ def main() -> None:
     solved = sum(r['resolved'] for r in rows)
     print(f'resolved {solved}/{len(rows)}; empty patches {sum(1 for r in rows if not r["patch_chars"])}; '
           f'errors {sum(1 for r in rows if r["error"])}; total {(time.time() - t_start) / 60:.1f} min')
+    judged = [r.get('judged', '') for r in rows]
+    print(f'JUDGED (against the reference patch, tools/judge.py): {judged.count("resolved")} resolved of '
+          f'{sum(1 for j in judged if j in ("resolved", "not resolved"))} scorable here; '
+          f'{judged.count("unscorable")} unscorable')
     for r in rows:
         print('  ', r)
     shutil.copy(server.log_path, WORK / 'vllm_server.log')

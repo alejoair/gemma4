@@ -1412,3 +1412,20 @@ rich suite has 14 environment failures: a local "not resolved" must be checked b
 |---|---|---|
 | B11 doubting tool output | closer | the escape from a test verdict needs the issue's own value; existing tests are trusted otherwise |
 | B5 repeating a failed call | closer | resending an undone edit is no longer offered unless the issue writes the value |
+
+### Evaluating the hidden tests locally and on Kaggle (2026-10-13, the user's request)
+
+Two faults made the dev evaluation wrong, locally and on Kaggle:
+1. **The sandbox imported the installed package, not the task's code.** swegemma's subprocess sandbox (used by
+   `local_eval.py` and `kaggle_eval.py`) skips the editable install, sets PYTHONPATH to the workspace root and adds the
+   host's site-packages. For a `src/` layout (requests, httpx) the tests imported the host's copy (a dependency of the
+   harness itself), so no patch could change their result: the reference patch of requests_7502 failed its own new test,
+   and V21's httpx_3672 failed collection on the installed httpx. `tools/eval_env.py` puts `<workspace>/src` first.
+   (The skill's own test runs, `_tests._env`, already put `src/` on the path.)
+2. **The harness's verdict needs the whole test files to pass**, including tests this environment fails on the
+   original code (requests' TLS/network tests, rich's pygments-dependent output). `tools/judge.py` compares with the
+   reference patch and the original code in the same sandbox (SWE-bench's FAIL_TO_PASS / PASS_TO_PASS) and caches the
+   two baseline runs per task.
+
+Judged again, V21's six patches: 4/6 resolved (rich_3521, requests_7502, rich_3296, httpx_3672); fastapi_14448 fails 4
+of its 8 FAIL_TO_PASS tests; fastapi_14986 fails 3 and breaks a PASS_TO_PASS test.

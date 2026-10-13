@@ -46,6 +46,11 @@ def main() -> None:
     from swegemma.evaluate import Evaluator
     from swegemma.models import load_tasks
 
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import eval_env
+    import judge
+    eval_env.patch()            # the tests import the task's src/ code, as in the competition's editable install
     litellm.drop_params = True
     install_litellm_reasoning_patch()
     dump = os.environ.get('SWE_DUMP_REQUESTS')
@@ -92,7 +97,9 @@ def main() -> None:
         wheels_dir=args.data / 'wheels', verbose=True,
     )
     evaluator = Evaluator(config)
-    fields = ['task_id', 'resolved', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls', 'duration_s', 'error']
+    fields = ['task_id', 'resolved', 'judged', 'f2p', 'f2p_failing', 'p2p_broken', 'test_exit_code', 'patch_chars',
+              'tool_calls', 'llm_calls', 'duration_s', 'error']
+    judge_cache = args.data / 'judge_cache'
     with open(args.out / 'run.csv', 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
         wr.writeheader()
@@ -103,6 +110,15 @@ def main() -> None:
                        patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
                        duration_s=round(r.duration_seconds, 1), error=(r.error_message or '')[:300])
             (args.out / f'patch_{task.instance_id}.diff').write_text(r.agent_patch or '', encoding='utf-8')
+            (args.out / f'tests_{task.instance_id}.txt').write_text(r.test_output or '', encoding='utf-8')
+            try:
+                # the harness's verdict needs every test of the test files to pass, also those the environment fails
+                # on the original code: the judge compares with the reference patch (tools/judge.py)
+                v = judge.judge(evaluator, task, r.agent_patch or '', harness_result=r, cache=judge_cache)
+                row.update(judged=v['verdict'], f2p=len(v['f2p']), f2p_failing=' '.join(v.get('f2p_failing', [])),
+                           p2p_broken=' '.join(v.get('p2p_broken', [])))
+            except Exception as e:  # noqa: BLE001
+                row.update(judged=f'judge error: {type(e).__name__}: {e}'[:200])
             wr.writerow(row)
             fh.flush()
             print(f'== RESULT {row}', flush=True)

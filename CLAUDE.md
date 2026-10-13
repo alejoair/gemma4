@@ -166,14 +166,23 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
    monitor.
 7. Analyse each finished task (result, calls, wasted calls and their cause, the fix) and record it in
    `docs/design_single.md`.
-8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
+8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
    set `SUBMISSION` in `scratchpad/kn_single*/run.py`, `kaggle kernels push`. Outputs: `kaggle kernels output`.
    Traces: `scratchpad/trace_brief.py`, `trace_stats.py`.
 
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
-Local runs cannot resolve requests tasks: the local wheels lack `pytest-httpbin`, `httpbin` and `trustme`, so `tests/test_requests.py` errors even with the reference patch (checked 2026-10-11); compare those patches with the reference by hand.
+**How a patch is judged (since 2026-10-13, local and Kaggle alike):** `tools/judge.py` runs the harness's own
+verification three times in the same sandbox setup (the reference patch, no patch, the agent's patch): FAIL_TO_PASS =
+tests failing without a patch and passing with the reference; resolved = no test fails that passes with the reference,
+and FAIL_TO_PASS is not empty; a task whose reference fixes nothing here is "unscorable". `local_eval.py` and
+`kaggle_eval.py` add its verdict (`judged`) to every row, and `tools/eval_env.py` makes the subprocess sandbox import a
+`src/` layout's own code (requests, httpx), as the competition's editable install does: before, every requests and
+httpx patch was invisible to the hidden tests. The harness's `resolved` column is kept but is not the score: it needs
+whole test files to pass, also tests the environment fails on the original code. For patches already made:
+`tools/judge.py --data <comp dir> --patches <dir of patch_<task>.diff> --cache <comp dir>/judge_cache`. The Kaggle
+dataset's `bench/` holds `kaggle_eval.py`, `judge.py` and `eval_env.py` (copy all three before a version).
 
 Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
 (vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
