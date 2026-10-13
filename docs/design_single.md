@@ -1386,3 +1386,29 @@ the `Padding` style in `Syntax.__rich_console__` from `self._theme.get_backgroun
 Open after p1-p4: at the finish the coordinator still wants to write or run a test (p2, p4), each attempt refused at
 once; the step is cheap but the wish comes back. The local judge cannot score requests tasks (no network) and the
 rich suite has 14 environment failures: a local "not resolved" must be checked by hand against the test patch.
+
+### Kaggle V21 (2026-10-13, the 31B, 6 tasks): 1/6 by the harness, 3/6 correct by hand
+
+- rich_3521 resolved. requests_7502 and rich_3296: correct patches (checked with the test patch: the new test passes,
+  nothing that passed on the original fails), but the harness's verdict needs the whole test file to pass, and these
+  files fail in this environment on the original code too (TLS/network tests; pygments-dependent ANSI output). A
+  local or Kaggle "not resolved" is checked by hand before it counts as a failure of the agent. `tools/kaggle_eval.py`
+  now keeps the whole hidden-test output (`tests_<task>.txt`) and prints its FAILED/ERROR lines (it was cut at 700
+  characters).
+- fastapi_14986: the specifier wrote "remove lines 1108-1112" (the root_path handling) instead of moving it to a
+  per-request copy of the schema. Three existing tests failed on their asserts; the answer offered "send the same edit
+  again: it is then kept", and the editor did, twice (also in `get_swagger_ui_html`). **The 10-13 assert rule was
+  wrong as written**: a failing assert of an existing test is usually right. Now the rule applies only when the new
+  value each test rejects appears in the issue's text (as in "returns '3 B'"); otherwise the edit is undone and no
+  resend is offered.
+- fastapi_14448: the same 4 hidden failures as local m10 (an async `__call__` of a class instance behind a wrapper).
+- httpx_3672: 60-min stop. The fix spans interdependent places (parser rename and keep_alive, connection loop, server
+  close); each place is verified alone, so half a fix left servers open and the next tests failed with
+  `OSError: [Errno 98] Address already in use`; correct edits were undone again and again. Open, proposed: when the
+  specification covers several places, verify them together after the last one (or treat a failure that is an
+  environment error such as EADDRINUSE as "not checked" instead of "broken").
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the escape from a test verdict needs the issue's own value; existing tests are trusted otherwise |
+| B5 repeating a failed call | closer | resending an undone edit is no longer offered unless the issue writes the value |

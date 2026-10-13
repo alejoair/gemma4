@@ -2392,9 +2392,20 @@ def _assert_only(detail, failures):
     if not failures:
         return False
     blocks = re.split(r'(?m)^  \S.*\(.*\):$', detail)[1:]
-    return bool(blocks) and len(blocks) == min(len(failures), 3) and all(
-        re.search(r'(?m)^    the test runs: assert\b', b) and not re.search(r'\b(?!Assertion)\w+(Error|Exception)\b', b)
-        for b in blocks)
+    if not (bool(blocks) and len(blocks) == min(len(failures), 3) and all(
+            re.search(r'(?m)^    the test runs: assert\b', b) and not re.search(r'\b(?!Assertion)\w+(Error|Exception)\b', b)
+            for b in blocks)):
+        return False
+    # V21 (fastapi_14986): three existing tests rightly rejected a deletion that the issue did not ask for, and the
+    # editor resent it to keep it. Only a value the issue itself writes counts: the new value each test rejects
+    # ('assert <new> == <old>') must appear in the statement
+    text = re.sub(r'\s+', ' ', (_state.load('statement', {}) or {}).get('text', ''))
+    for b in blocks:
+        m = re.search(r'(?m)^    (?:AssertionError: )?assert (.+?) (?:==|!=|in|not in) ', b)
+        new = (m.group(1).strip() if m else '').strip('\'"')
+        if len(new) < 2 or new not in text:
+            return False
+    return True
 
 
 def _asserts_old_behaviour(e, detail, failures):

@@ -402,6 +402,12 @@ def main() -> None:
                     if k != 'agent_patch':
                         print(f'  {k}: {str(v)[:700]}')
                 (WORK / f'patch_{task.instance_id}.diff').write_text(r.agent_patch or '', encoding='utf-8')
+                # V21: the hidden-test output was cut at 700 characters, so the failing tests could not be named; the
+                # whole output is kept, and its FAILED/ERROR lines printed (a 'not resolved' may be the environment's)
+                out = str(getattr(r, 'test_output', '') or '')
+                (WORK / f'tests_{task.instance_id}.txt').write_text(out, encoding='utf-8')
+                for ln in [l for l in out.splitlines() if l.startswith(('FAILED', 'ERROR'))][:30]:
+                    print('  hidden test: ' + ln[:200])
                 print('\n-- patch (first 2500 chars):\n' + (r.agent_patch or '(empty)')[:2500])
             except Exception as e:  # noqa: BLE001 - a crash is a data point too
                 import traceback
