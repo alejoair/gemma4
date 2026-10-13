@@ -1158,6 +1158,8 @@ def _resolve(root, names):
         found = table.find(name) if name else []
         if not found and name and not rel:
             found = _dotted_or_case(table, name)
+        if not found and name and re.fullmatch(r'[A-Za-z_]\w*', name):
+            found = _import_alias(root, table, name)
         if rel:
             found = [(r, s) for r, s in found if _rank.names_file(rel, r)] or found
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
@@ -1170,6 +1172,32 @@ def _resolve(root, names):
             if hit:
                 out.append(hit)
     return out
+
+
+def _import_alias(root, table, name):
+    """[(rel, Sym)] for a name the repository only imports under another name ('_SupportsRead' from
+    `from ._types import SupportsRead as _SupportsRead`): the definition it stands for (requests_7502, local run p1:
+    the specifier asked for _SupportsRead and was told no pair was read)."""
+    out = []
+    for rel in table.syms:
+        text = _repo.read_text(root, rel)
+        if f'as {name}' not in text:
+            continue
+        tree = _code.parse(text)
+        for node in ast.walk(tree) if tree is not None else ():
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            for al in node.names:
+                if al.asname != name:
+                    continue
+                mod = (node.module or '').replace('.', '/')
+                base = os.path.dirname(rel) if node.level else ''
+                for _ in range(max(node.level - 1, 0)):
+                    base = os.path.dirname(base)
+                path = '/'.join(x for x in (base, mod) if x)
+                hits = table.find(al.name)
+                out += [h for h in hits if h[0] in (f'{path}.py', f'{path}/__init__.py')] or hits
+    return list(dict.fromkeys(out))
 
 
 def _dotted_or_case(table, name):
@@ -2425,7 +2453,14 @@ def _finish_view(root, state):
     for r in state['requirements']:
         facts = _status.requirement_facts(root, r, added)
         out.append(f'  - {r["text"][:160]}')
-        out.append('      ' + ('; '.join(facts) + '.' if facts else 'nothing here can be checked automatically.'))
+        if facts:
+            # (p2: 'no fact of the code to show for it here' was read as 'unverified: write a test')
+            out.append('      ' + '; '.join(facts) + '.')
+    if rows:
+        # p1 (requests_7502): after 'nothing here can be checked automatically' the coordinator tried pytest, 'ls
+        # tests' and a second specify_fix to write a test, instead of submitting a correct patch
+        out.append('The hidden tests, with the issue\'s own test, run on this patch after submit_patch; tests are not '
+                   'written here (changes to test files are dropped from the patch).')
     return '\n'.join(out)
 
 
@@ -2844,6 +2879,18 @@ def _match_name_like(line):
 
 
 def _specifier(root, state, args):
+    open_ = [e for e in state.get('plan') or [] if e['status'] == 'todo' and not _specified(e)]
+    items_ = [_args.clean(a) for a in args if a and a.strip() and len(a) < 200]
+    known_ = {q['handle'] for q in state.get('places') or []} | {q['name'] for q in state.get('places') or []}
+    if state.get('spec_done') and not open_ and state.get('edited') and not _spec_pairs(items_, known_)[0]:
+        # (a call with sentences is still read: in V20 a second specifier added a place the edits showed was needed)
+        # p1 (requests_7502): the coordinator called specify_fix again after the edit; the new specifier got the whole
+        # view, read the fixed code as if nothing was done and spent 10 calls (one cut at 8192 tokens) on it
+        done = [f'  {_name_of(state, e["place"])}: {e.get("intent") or "no change"} ({e["status"]})'
+                for e in state['plan']]
+        return ('The specification was written before and its places are edited; nothing is left to specify:\n'
+                + '\n'.join(done) + '\nReply with this sentence for the coordinator, without a call: "The '
+                'specification is complete and edited; call step.py with args [\'status\'] for the next call."')
     if state['step'] not in ('D3', 'D4') or not state.get('plan'):
         return ('No places are chosen yet, so there is nothing to specify. Reply with one sentence for the coordinator, '
                 'without a call, saying so.')
@@ -2903,6 +2950,9 @@ def _specifier(root, state, args):
         if shown:
             return ('The code named (give it a sentence if it must change; a place left without one keeps its code):'
                     '\n\n' + '\n\n'.join(shown) + '\n\n' + form)
+    if not pairs and bare:
+        return (f'Nothing in the repository defines {", ".join(bare[:3])} (library code is not shown here). ' + form
+                + '\nThe places: ' + ', '.join(plan_names) + '.')
     if not pairs:
         return 'No place and sentence were read. ' + form + '\nThe places: ' + ', '.join(plan_names) + '.'
     saved, unknown, added = [], [], []
@@ -2916,6 +2966,11 @@ def _specifier(root, state, args):
                 hit = _add_new_file_place(state, rel_new, 'new file (specification)')
                 added.append(hit['handle'])
                 found = None
+            elif not found and os.path.isfile(os.path.join(root, _args.clean(name).split('::')[0])):
+                # p2 (requests_7502): ['src/requests/models.py', '<sentence>'] was answered 'Not in the repository'
+                listed = _file_names(root, state, _args.clean(name).split('::')[0])
+                return ((listed.replace('Send one name to read it.', '') if listed else f'{name} is a file.')
+                        + '\nA sentence belongs to a function or class: send it with that name. ' + form)
             elif not found:
                 unknown.append(name)
                 continue

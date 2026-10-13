@@ -1317,3 +1317,38 @@ item as a range; never print an empty name; the coordinator prompt without the c
   - the patch passes 24 of 28 hidden tests, the same as V18's 31B run, which took 45 minutes.
 - The four failures are cases no sentence covered: class instances with a wrapped `__call__`, and a generator with an
   async wrapper.
+
+### Local runs p1-p2 (2026-10-13, gemma-26b, agent_tool variant): requests_7502, drawn at random
+
+The task: "Fix `_encode_files` detection for `__getattr__`-based file wrappers" (one line); the reference replaces
+`isinstance(fp, _SupportsRead)` with `... or hasattr(fp, "read")` in `RequestEncodingMixin._encode_files`.
+
+- **p1** (stopped after 38 model calls). Choosing took 2 calls, the specification 6, the edit 2: the right change at
+  3:30 min. Then the coordinator did not submit: after "nothing here can be checked automatically" it tried `pytest`,
+  `ls tests` and called `specify_fix` again, twice; each new specifier got the whole view of code already fixed, read
+  `prepare_body` and `_encode_files` again and again (one reply cut at 8192 tokens) and proposed a change of
+  `prepare_body` that the reference does not make. Faults of the system, fixed:
+  1. `['_SupportsRead']` from the specifier was answered "No place and sentence were read": it is an import alias
+     (`from ._types import SupportsRead as _SupportsRead`). `_resolve` now follows import aliases
+     (`_import_alias`), and a name that nothing defines is answered "Nothing in the repository defines X".
+  2. `specify_fix` called again with nothing new (the specification done, its places edited, no pair in the call) is
+     answered with the sentences and their state and a sentence to give back; a call with pairs is still read (in
+     V20 a second specifier added a needed place).
+  3. The finish view says the hidden tests, with the issue's own test, run after `submit_patch` and that tests are
+     not written here.
+- **p2** (all fixes): submitted after 12 tool calls in 1.6 min, the patch equal to the reference's code. The local
+  verdict was "not resolved" (exit code 1); run by hand with the test patch: `test_post_named_tempfile` passes with
+  the patch and fails without it; the whole suite has 12 failures with and 13 without the patch, the 12 being
+  network tests (connect timeouts, proxies) that fail on the original too, as the container has no network. So the
+  task is solved; the local judge cannot pass requests tasks. Two smaller faults, fixed:
+  1. `['src/requests/models.py', '<sentence>']` from the specifier was answered "Not in the repository": now its
+     functions and classes are listed and the sentence is asked for one of them.
+  2. "no fact of the code to show for it here" under each requirement made the coordinator want to write a test;
+     the line is gone when there is no fact.
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | no "cannot be checked" line that reads as "unverified"; the finish says how the patch is judged |
+| B9 deciding when to stop exploring | closer | a second specify_fix with nothing new ends at once instead of a full view |
+| W6 names of code | closer | an import alias resolves to its definition |
+| B12 contradictions | closer | "not in the repository" for a file that is in it is gone |
