@@ -2847,7 +2847,15 @@ def _editor_open(root, state, name, hit):
             return 'The code of the request could not be opened. Reply with one sentence for the coordinator, saying so.'
     new_editor = state.get('editor_done') or not state.get('editor_place')
     if not new_editor and hit['id'] != state['editor_place']:
-        if hit['handle'] == state.get('requested') and not state.get('requested_used'):
+        own = next((e for e in state['plan'] if e['place'] == state['editor_place']), None)
+        nxt = next((e for e in state['plan'] if e['place'] == hit['id']), None)
+        if _narrow(state) and own is not None and own['status'] == 'done' and nxt is not None and \
+                nxt['status'] == 'todo':
+            # m8: the coordinator called edit_place for is_gen_callable right after the editor of
+            # is_async_gen_callable (no status call between); that editor's change is kept and its task is over, so
+            # an opening of another place still to do is the next editor's
+            new_editor = True
+        elif hit['handle'] == state.get('requested') and not state.get('requested_used'):
             new_editor = True       # the place the coordinator was told to hand over: its editor's first call
         else:
             # c5: an open editor sent open.py for the other planned places in turn (8 calls, a full window each, no
