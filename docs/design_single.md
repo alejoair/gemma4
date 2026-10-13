@@ -1298,3 +1298,22 @@ item as a range; never print an empty name; the coordinator prompt without the c
 | B9 reading instead of editing | closer | no reading in the editor; the reading is one prepared view for the specifier |
 | P3 open-ended prohibitions | farther | "no reads" is a prohibition; stated with its reason (the change is specified) and a way out (reply naming the missing code) |
 | new risk: free text | farther | the specification is free text, the step that failed with the local 12B (4 of 5 runs, 10-09); accepted because the 31B now writes one sentence per listed place, with all the code in view, in a fresh context with a 4096 thinking budget; measured in the next Kaggle eval |
+
+**First local runs of the microtasks (2026-10-13, fastapi_14448, local 26B with thinking 512), m1-m10.**
+- System faults found and fixed, one per run:
+  - before the specification, the coordinator's searches, files and multiple names were refused with the old "its
+    editor reads it" text; they are now answered as at the choose step;
+  - a repeated coordinator call showed it an editor's window, and the repeat move-on skipped an unspecified place;
+  - code the coordinator named after the specification replaced the plan; it now joins it, keeping the sentences;
+  - the specifier's parsing: a name alone, names copied from the view, annotated names, file paths (read as the class
+    FastAPI), one-word sentences;
+  - an all-"no change" specification sent the plan back to choosing; it is not accepted now;
+  - an editor whose edit was kept and reached for other places now gets the reply to send;
+  - a new editor opened without a status call is told apart when the previous place is done;
+  - a third 'the plan' gets a reminder, not the whole view.
+- m10, the first run with no system fault, took 5.7 minutes:
+  - the specifier wrote the code of the four `Dependant` methods;
+  - the editors applied it;
+  - the patch passes 24 of 28 hidden tests, the same as V18's 31B run, which took 45 minutes.
+- The four failures are cases no sentence covered: class instances with a wrapped `__call__`, and a generator with an
+  async wrapper.
