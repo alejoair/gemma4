@@ -651,3 +651,12 @@ Changes to the method:
 3. Each finished local run is compared with the reference patch and the hidden tests, and each "Kept and checked" is
    checked against them: a verdict of the script is data to verify, not a fact.
 4. A context-free review of the code after each round of fixes, as on 10-13: it found what the runs could not.
+
+**First catch of the replay tool (2026-10-13).** Replaying V15's traces (the 31B, single agent) hung on
+`['Dependant', '101', '108', '<code>']`: an edit named by its class. Since `_big_class_members` (10-12) a large class is
+chosen as its members, so the class name was still no place after choosing it, and `d3` called `_edit_of_other`
+again, without end, until the 240 s command timeout. The task would have lost the whole command and every later
+call would have waited on the state lock. No local run had sent an edit by a class name (the local model and the
+microtask editors name members), so only the 31B's own calls could show it. Fixed by `_edit_chosen`: the edit goes to
+the chosen member that holds its lines (or whose definition it sends), else it is refused with the window; a guard
+stops any recursion.

@@ -1566,17 +1566,49 @@ def _edit_of_other(root, state, args):
     if not found:
         return None
     _state.record({'look': 'edit of other code', 'q': name[:120], 'step': state['step']})
+    if _OTHER_DEPTH:
+        return None             # (V15 replay: a recursion with d3, see below)
     if ROLE == 'editor' and state['step'] == 'D3' and state.get('editor_place'):
         # c2 (fastapi_14448): the editor of is_coroutine_callable edited Dependant._unwrapped_call, the helper its place
         # reads; choosing it replaced the plan (the planned siblings were dropped) and left the editor on a place id
         # that no longer existed (TypeError). An editor's edit of related code adds that code as a place and keeps
         # the plan; _after_edit then brings the editor back to its own place.
         _add_place(state, found[0], f'edited by the editor of {_name_of(state, state["editor_place"])}')
-        return d3(root, state, args)
+        return _edit_chosen(root, state, items, found[0])
     head, _ = _choose_code(root, state, found[0])
     if state['step'] != 'D3':
         return None
-    return head + '\n\n' + d3(root, state, args)
+    return head + '\n\n' + _edit_chosen(root, state, items, found[0])
+
+
+_OTHER_DEPTH = []
+
+
+def _edit_chosen(root, state, items, c):
+    """The edit items applied to the code c just chosen. A large class is chosen as its members (_big_class_members),
+    so the class name is not a place: the edit goes to the member that holds its lines, or whose definition it sends
+    (V15 replay of fastapi_14448: ['Dependant', '101', '108', ...] chose the class, the name was still no place, and d3
+    called _edit_of_other again without end until the command timed out)."""
+    args = list(items)
+    if _match(state['places'], _norm_name(items[0]), fuzzy=False) is None:
+        mine = [q for q in state['places'] if q['rel'] == c['rel'] and q['name'] not in (MODULE, '<exports>')
+                and c['start'] <= q['start'] and q['end'] <= c['end']]
+        if len(items) == 4:
+            a, b = int(_args.clean(items[1])), int(_args.clean(items[2]))
+            q = next((q for q in mine if q['start'] <= a and b <= q['end']), None)
+        else:
+            q = next((q for q in mine if _whole_target_is_place(items[1], q)), None)
+        if q is None:
+            return (f'{_norm_name(items[0])} is chosen as the places listed below; the edit was not applied because no '
+                    'one of them holds it. Send it again with the name of the place it changes.\n\n'
+                    + (_window(root, state, state['current']) if state.get('current') is not None
+                       else _current_view(root, state)))
+        args[0] = q['handle']
+    _OTHER_DEPTH.append(1)
+    try:
+        return d3(root, state, args)
+    finally:
+        _OTHER_DEPTH.pop()
 
 
 def _add_place(state, c, reason):
