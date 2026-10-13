@@ -3066,10 +3066,10 @@ def main(argv, role=None, opening=False):
                 scoped = (_coordinator_status(root, state) if ROLE == 'coordinator' and state['step'] == 'D3'
                           else _current_view(root, state))
             if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and not state.get('spec_done') \
-                    and 1 < len(items0) <= 4 and all(NAME_LIKE.fullmatch(_args.clean(x)) for x in items0) \
-                    and not _search_query(items0):
-                # m3: before the specification the coordinator sent the names of the plan plus _unwrapped_call, 7
-                # times refused; names at this point are a new choice (the plan is made again from them)
+                    and items0 and not (len(items0) == 1 and (_match(state.get('places') or [], _args.clean(items0[0]),
+                                                                         fuzzy=False) or _args.plan(args) == 'back')):
+                # m3, m4: before the specification the coordinator is still choosing (names, files, searches were
+                # refused 5-7 times): the call is answered as at the choose step, and a choice makes the plan again
                 _journal.back(state)
                 scoped = d1(root, state, items0)
             if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and len(items0) == 1 \
