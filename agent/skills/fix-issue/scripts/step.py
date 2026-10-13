@@ -2771,9 +2771,18 @@ def _specifier(root, state, args):
     if missing:
         out.append('Still without a sentence: ' + ', '.join(missing) + '. ' + form)
         return '\n'.join(out)
+    todo = [(_name_of(state, e['place']), e['intent']) for e in state['plan'] if e['status'] == 'todo']
+    if not todo and not state.get('edited'):
+        # m9: every place got 'no change'; the plan went back to choosing and each later sentence was refused with
+        # 'no places are chosen'. A specification that changes nothing fixes nothing: it is not accepted
+        for e in state['plan']:
+            if e.get('intent') == 'no change':
+                e['intent'], e['status'] = '', 'todo'
+        return ('Every place got no change, so the patch would be empty and the issue would stay unfixed. Write what '
+                'must change at the place where the behaviour of the issue is decided, or name the code that needs '
+                'the change with its sentence (it is added). ' + form + '\nThe places: ' + ', '.join(plan_names) + '.')
     state['spec_done'] = True
     _journal.advance(state)
-    todo = [(_name_of(state, e['place']), e['intent']) for e in state['plan'] if e['status'] == 'todo']
     out.append('The specification is complete. The places to edit:\n' + '\n'.join(f'  {n}: {t}' for n, t in todo)
                if todo else 'The specification is complete: no place needs a change.')
     out.append('Reply with one sentence for the coordinator, without a call.')
