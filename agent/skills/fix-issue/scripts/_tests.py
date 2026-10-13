@@ -25,7 +25,7 @@ TEST_TIMEOUT = 15      # seconds per test, when pytest-timeout is installed (a h
 MAX_FILES = 3
 MAX_BASE_IDS = 10
 BIG_FILE = 40          # a test file with more tests than this runs only the tests that use the changed names
-PYTEST = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--no-header', '-rf', '--maxfail=60']
+PYTEST = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--no-header', '-rfE', '--maxfail=60']   # E: setup errors count as failures
 IDENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]{2,}')
 COMMON = {'self', 'cls', 'None', 'True', 'False', 'return', 'import', 'from', 'def', 'class', 'assert', 'raise', 'not',
           'and', 'for', 'while', 'with', 'pass', 'elif', 'else', 'try', 'except', 'finally', 'lambda', 'yield',

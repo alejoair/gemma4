@@ -572,3 +572,8 @@ submission.** Fixed:
 | B12 contradictions | closer | no texts offering reads that are refused; SKILL.md no longer describes another flow |
 | B6 calling tools that do not exist | closer | the editor is no longer told to call submit_patch |
 | P3 open-ended prohibitions | neutral | the refusals keep their reason and way out |
+- Found by two subagents with no context (2026-10-13), fixed at once:
+  - `['the plan']` was read as the name 'the' with the sentence 'plan', so the specifier never got the view (a
+    regression of the previous round);
+  - pytest ran with `-rf`, which does not list ERROR lines, so a test whose setup the edit broke counted as passing
+    ("Kept and checked"); it now runs with `-rfE`.

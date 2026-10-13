@@ -2708,7 +2708,10 @@ def _specifier(root, state, args):
     form = ("Send one item pair per place: ['<place name>', '<what changes there, in one sentence, or no change>', "
             "...]. A place the change needs that is not listed: its name and its sentence (it is added).")
     known0 = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']}
-    first_pairs = _spec_pairs(items, known0)[0] if items else []
+    asks_view = len(items) == 1 and items[0].lower().strip('. \'"[]') in (
+        'the plan', 'plan', 'show', 'start', 'places', 'status', 'show the plan')
+    # (review: 'the plan' was read as the name 'the' with the sentence 'plan', so the view never came)
+    first_pairs = _spec_pairs(items, known0)[0] if items and not asks_view else []
     if not first_pairs and (not state.get('spec_shown') or not items or (len(items) == 1 and items[0].lower().strip(
             '. ') in ('the plan', 'plan', 'show', 'start', 'places', 'status'))):
         # (review: a first call that already held its sentences was answered with the view and the sentences lost)
