@@ -2383,8 +2383,9 @@ def _coordinator_status(root, state):
     """The coordinator's answer while places are left: which, and that edit_place edits them."""
     left = [_name_of(state, e['place']) for e in state['plan'] if e['status'] == 'todo']
     if not state.get('spec_done'):
-        return ('The places are not specified yet: ' + ', '.join(left) + '. The tool specify_fix reads their code and '
-                'writes what changes at each.')
+        bare = [_name_of(state, e['place']) for e in state['plan'] if e['status'] == 'todo' and not _specified(e)]
+        return ('Not specified yet: ' + ', '.join(bare or left) + '. The tool specify_fix reads the code of the places '
+                'and writes what changes at each.')
     return ('Places still to edit: ' + ', '.join(left) + '. Each is edited by the tool edit_place (the script does '
             'not edit for the coordinator).')
 
@@ -2400,13 +2401,27 @@ def _coordinator_choice(root, state, item):
     hit = _match(state.get('places') or [], name, fuzzy=False)
     if hit is not None:
         i = _journal.target(state, hit['id'])
-        if state['plan'][i]['status'] != 'done':
-            state['plan'][i]['status'] = 'todo'
+        e = state['plan'][i]
+        if e['status'] == 'done':
+            return f'{hit["handle"]} is edited already.\n\n' + _coordinator_status(root, state)
+        if state.get('spec_done') and e.get('intent') == 'no change':
+            return f'{hit["handle"]} was specified as no change.\n\n' + _coordinator_status(root, state)
+        e['status'] = 'todo'
         state['current'], state['step'] = i, 'D3'
+        if state.get('spec_done') and not _specified(e):
+            state['spec_done'] = False      # it joins the plan: specify_fix writes its sentence
+            return f'{hit["handle"]} joins the plan.\n\n' + _coordinator_status(root, state)
         return f'{hit["handle"]} is planned and is next.\n\n' + _coordinator_status(root, state)
     found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
     if not found:
         return None
+    if state.get('spec_done'):
+        # m2: after the specification the coordinator named the class Dependant; choosing it replaced the plan and
+        # dropped the specified places. Code named now joins the plan, the specification of the others stays
+        _add_place(state, found[0], 'named by the coordinator')
+        state['spec_done'] = False
+        hit = next(q for q in state['places'] if (q['rel'], q['name']) == (found[0]['rel'], found[0]['name']))
+        return f'{hit["handle"]} joins the plan.\n\n' + _coordinator_status(root, state)
     head, out = _choose_code(root, state, found[0])
     return head + '\n\n' + out
 
@@ -2574,6 +2589,8 @@ def _spec_view(root, state):
             continue
         tag = p['reason'] if e is not None else f'{p["reason"]}; not planned: give it a sentence if it must change'
         head = f'== {p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}; {tag})'
+        if e is not None and _specified(e):
+            head += f'\nSpecified already ({e["status"]}): {e["intent"][:300]}'
         if p['name'] == '<exports>':
             body = _code_view(root, p['rel'], 1, len(_repo.read_lines(root, p['rel'])), _focus(state), limit=40)
         else:
@@ -2894,6 +2911,7 @@ def main(argv, role=None, opening=False):
             out = (f'The script hit an internal error ({type(e).__name__}: {str(e)[:200]}). Reply with one sentence '
                    'for the coordinator, without a call, saying the specification failed.')
             state['spec_done'] = True
+        _state.record({'spec': [a[:200] for a in args][:12], 'answer': out[:300]})
         _state.save('journal', state)
         out = out.rstrip()
         if len(out) > SPEC_CHARS + 3000:
