@@ -3039,6 +3039,10 @@ def main(argv, role=None, opening=False):
         is_edit = _args.edit(pargs) is not None or _whole_args([x for x in pargs if x and x.strip()]) is not None
         if is_edit and before.startswith(('Kept', 'OK', 'APPLIED')):
             out = 'This edit is already in the patch, so nothing was changed.\n\n' + _current_view(root, state)
+        elif state['repeats'] >= 2 and ROLE == 'coordinator' and state['step'] == 'D3':
+            # (m3: the move-on skipped an unspecified place; the coordinator does not edit, so nothing is stuck there:
+            # it is told the next call again)
+            out = ('This call came three times and was not run. ' + _coordinator_status(root, state))
         elif state['repeats'] >= 2:
             out = _move_on(root, state)
         elif is_edit and (state.get('failed_edits') or {}).get(_edit_key(args)):
@@ -3061,6 +3065,13 @@ def main(argv, role=None, opening=False):
                 # rich's Console.status in a dry run)
                 scoped = (_coordinator_status(root, state) if ROLE == 'coordinator' and state['step'] == 'D3'
                           else _current_view(root, state))
+            if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and not state.get('spec_done') \
+                    and 1 < len(items0) <= 4 and all(NAME_LIKE.fullmatch(_args.clean(x)) for x in items0) \
+                    and not _search_query(items0):
+                # m3: before the specification the coordinator sent the names of the plan plus _unwrapped_call, 7
+                # times refused; names at this point are a new choice (the plan is made again from them)
+                _journal.back(state)
+                scoped = d1(root, state, items0)
             if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and len(items0) == 1 \
                     and _args.plan(args) != 'back':
                 scoped = _coordinator_choice(root, state, items0[0])
