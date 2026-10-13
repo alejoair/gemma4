@@ -2623,24 +2623,56 @@ def _narrow_refusal(mine_name):
             'sentence naming that code, without a call.')
 
 
-def _spec_pairs(items):
-    """[(name, sentence)] from ['A', 'what changes', 'B', 'no change'], ['A: what changes', 'B - no change'], or a
-    mix of both."""
-    sep = r'\s*(?:(?<!:):(?!:)|—|–| - )\s*'
-    one = re.compile(r'^\s*([\w./:]+?)(\(\))?' + sep + r'(.+)$', re.S)
-    name_only = re.compile(r'^\s*[\w./:]+(\(\))?\s*$')
-    pairs, i = [], 0
-    while i < len(items):
-        x = items[i]
-        if name_only.match(x) and i + 1 < len(items):
-            pairs.append((x.strip().rstrip('()'), items[i + 1].strip()))
-            i += 2
+_SPEC_N = r'(?:[\w./-]+\.py::)?[A-Za-z_][\w.]*'
+SPEC_LINE = re.compile(r'^\s*(' + _SPEC_N + r')(?:\(\))?\s*(?:\([^()\n]*\))?\s*(?::|—|–| - )?\s*(.*)$', re.S)
+SPEC_NAME = re.compile(r'^\s*' + _SPEC_N + r'(?:\(\))?\s*(?:\([^()\n]*\))?\s*$')
+
+
+def _no_sentence(text):
+    """True for what the specifier copies from the view instead of a sentence: nothing, a signature, a tag."""
+    t = text.strip()
+    return not t or bool(re.match(r'(async\s+)?def\s|\w+\s*\(self\b|;?\s*(chosen|same pattern|reads |calls )', t))
+
+
+def _spec_pairs(items, known=()):
+    """([(name, sentence)], [names without a sentence]) from ['A', 'what changes', 'B', 'no change'],
+    ['A: what changes'], 'A (file:78) Replace ...', or lines of names copied from the view."""
+    lines = []
+    for x in items:
+        lines += [l for l in x.split('\n') if l.strip()] if '\n' in x and all(
+            SPEC_NAME.match(l) or SPEC_LINE.match(l) and _no_sentence(SPEC_LINE.match(l).group(2))
+            for l in x.split('\n') if l.strip()) else [x]
+    def is_name(x):
+        # a short sentence ('loop', 'no change') is not a name: a name is a place's or has the shape of code
+        n = SPEC_LINE.match(x).group(1) if SPEC_NAME.match(x) else ''
+        return bool(n) and (n in known or n.split('.')[-1] in known or any(c in n for c in '._:'))
+
+    pairs, bare, i = [], [], 0
+    while i < len(lines):
+        x = lines[i]
+        if is_name(x):
+            name = SPEC_LINE.match(x).group(1)
+            if i + 1 < len(lines) and not is_name(lines[i + 1]) and not _no_sentence(lines[i + 1]) and \
+                    not (SPEC_LINE.match(lines[i + 1]) and _match_name_like(lines[i + 1])):
+                pairs.append((name, lines[i + 1].strip()))
+                i += 2
+                continue
+            bare.append(name)
+            i += 1
             continue
-        m = one.match(x)
-        if m:
-            pairs.append((m.group(1), m.group(3).strip()))
+        m = SPEC_LINE.match(x)
+        if m and m.group(2).strip() and not _no_sentence(m.group(2)):
+            pairs.append((m.group(1), m.group(2).strip()))
+        elif m:
+            bare.append(m.group(1))
         i += 1
-    return pairs
+    return pairs, bare
+
+
+def _match_name_like(line):
+    """'Dependant.is_gen_callable (models.py, lines 87-92; chosen)': a copied view line, not a sentence."""
+    m = SPEC_LINE.match(line)
+    return bool(m) and _no_sentence(m.group(2)) and '.' in m.group(1)
 
 
 def _specifier(root, state, args):
@@ -2659,7 +2691,33 @@ def _specifier(root, state, args):
                 'add, remove or replace, and with what), or no change. Each place is then edited by its own editor, '
                 'which sees only that place and your sentence, so write each sentence so that it can be done from '
                 'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + form)
-    pairs = _spec_pairs(items)
+    known = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']} | \
+        {q['name'].split('.')[-1] for q in state['places']}
+    pairs, bare = _spec_pairs(items, known)
+    if not pairs and bare:
+        # m5: the specifier sent '_unwrapped_call' (a helper the places use, not a place) 15 times and was told 'no
+        # sentence was read': a name alone shows that code, to write its sentence (it joins the places)
+        shown = []
+        for name in bare[:3]:
+            hit = _match(state['places'], name, fuzzy=False)
+            if hit is None:
+                found = [c for c in _resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
+                if not found:
+                    continue
+                c = found[0]
+                if not any((q['rel'], q['name']) == (c['rel'], c['name']) for q in state['places']):
+                    n = max([int(q['id'][1:]) for q in state['places'] if re.fullmatch(r'P\d+', q['id'])] or [0]) + 1
+                    state['places'].append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
+                                            'reason': 'named by the specification', 'id': f'P{n}'})
+                    _set_handles(state['places'])
+                hit = next(q for q in state['places'] if (q['rel'], q['name']) == (c['rel'], c['name']))
+            if hit['name'] in (MODULE, '<exports>'):
+                continue
+            shown.append(f'== {hit["handle"]} ({hit["rel"]}, lines {hit["start"]}-{hit["end"]})\n'
+                         + _code_view(root, hit['rel'], hit['start'], hit['end'], _focus(state), limit=SPEC_PLACE_LINES))
+        if shown:
+            return ('The code named (give it a sentence if it must change; a place left without one keeps its code):'
+                    '\n\n' + '\n\n'.join(shown) + '\n\n' + form)
     if not pairs:
         return 'No place and sentence were read. ' + form + '\nThe places: ' + ', '.join(plan_names) + '.'
     saved, unknown, added = [], [], []
