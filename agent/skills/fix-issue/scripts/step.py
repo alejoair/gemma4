@@ -2624,7 +2624,7 @@ def _narrow_refusal(mine_name):
 
 
 _SPEC_N = r'(?:[\w./-]+\.py::)?[A-Za-z_][\w.]*'
-SPEC_LINE = re.compile(r'^\s*(' + _SPEC_N + r')(?:\(\))?\s*(?:\([^()\n]*\))?\s*(?::|—|–| - )?\s*(.*)$', re.S)
+SPEC_LINE = re.compile(r'^\s*(' + _SPEC_N + r')(?:\(\))?\s*(?:\([^()\n]*\))?(?:\s*(?::|—|–| - )\s*|\s+|$)(.*)$', re.S)
 SPEC_NAME = re.compile(r'^\s*' + _SPEC_N + r'(?:\(\))?\s*(?:\([^()\n]*\))?\s*$')
 
 
@@ -2693,6 +2693,12 @@ def _specifier(root, state, args):
                 'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + form)
     known = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']} | \
         {q['name'].split('.')[-1] for q in state['places']}
+    files = [x for x in items if re.fullmatch(r'\s*[\w./-]+\.py(:\d+(-\d+)?)?\s*', x)]
+    if files and len(files) == len(items):
+        # m6: 'fastapi/dependencies/models.py' was read as the name 'fastapi' (the class FastAPI) with a sentence
+        listed = _file_names(root, state, files[0].split(':')[0])
+        if listed:
+            return listed.replace('Send one name to read it.', 'Send a name alone to see its code.') + '\n\n' + form
     pairs, bare = _spec_pairs(items, known)
     if not pairs and bare:
         # m5: the specifier sent '_unwrapped_call' (a helper the places use, not a place) 15 times and was told 'no
