@@ -226,6 +226,18 @@ changes, GPU windows, gateway changes); do not guess from silence. Send with the
 tool (`SendMessage` cannot reach it). It warns before it unloads the model; tell it when a run is in progress. Never
 ask it to do what either session was denied; take that to the user. It was inactive on 2026-10-09.
 
+## Anthropic-style APIs through the same harness (2026-10-13)
+
+`tools/anthropic_proxy.py` serves an OpenAI-style `/v1/chat/completions` in front of an Anthropic Messages API, so
+`tools/local_eval.py --api-base http://127.0.0.1:8790/v1 --model <upstream model>` runs the submission against it
+the way it runs against the local gateway. Start it with the key in the environment (never in the repository):
+`ANTHROPIC_API_KEY=$(cat <scratchpad>/anthropic.key) python tools/anthropic_proxy.py --port 8790 --log <file>`. It
+converts system text, tools and tool results, tool_choice, sampling, stop sequences, reasoning and streaming; it adapts
+to what the upstream model refuses (a sampling parameter is dropped, a fixed thinking budget becomes adaptive
+thinking) and casts the ADK's `top_k` (64.0) to an integer. Checked on 10-13: rich_3521 resolved and judged resolved
+through it (coordinator, specifier, editor, submit in 42 s). **Its outputs are never used to train Gemma** (the rule
+above); runs through it test the system, they are not Kaggle evidence.
+
 ## Monitoring local runs
 
 Add `-A swe-monitor` (Cloudflare blocks default user agents):

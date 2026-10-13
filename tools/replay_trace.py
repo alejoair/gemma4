@@ -38,7 +38,8 @@ def replay(scripts, repo, trace):
     subprocess.run(['git', 'clean', '-qfd'], cwd=repo)
     faults = 0
     with tempfile.TemporaryDirectory() as state:
-        env = dict(os.environ, SWE_REPO=repo, SWE_STATE_ROOT=state, PWD=repo)
+        # (no __pycache__ in the build: the competition's validator rejects .pyc files)
+        env = dict(os.environ, SWE_REPO=repo, SWE_STATE_ROOT=state, PWD=repo, PYTHONDONTWRITEBYTECODE='1')
         for n, (file_path, args) in enumerate(calls(trace), 1):
             script = os.path.join(scripts, os.path.basename(file_path))
             if not os.path.exists(script):
