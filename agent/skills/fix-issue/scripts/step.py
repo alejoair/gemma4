@@ -933,6 +933,10 @@ def _search_query(items):
             not _args.clean(items[1]).isdigit():
         # ['rich/repr.py', 'param.empty']: the text in that file (local run of rich_3006: 6 such calls)
         return f'{_search_text(items[1])} in {_args.clean(items[0]).strip("/")}'
+    if len(items) == 2 and re.fullmatch(r'[\w./-]+\.py', _args.clean(items[1]).strip('/')) and \
+            not DEF_LINE.search(items[0]) and '\n' not in items[0].strip() and not _args.clean(items[0]).isdigit():
+        # ['async', 'fastapi/dependencies/utils.py'] (m1): the text first, then the file
+        return f'{_search_text(items[0])} in {_args.clean(items[1]).strip("/")}'
     if len(items) == 1:
         m = re.match(r'(?i)^\s*(?:search for|search|grep|find|look for)\s*:?\s+(.+)$', items[0].strip())
         if m and '\n' not in m.group(1):
@@ -3040,13 +3044,19 @@ def main(argv, role=None, opening=False):
             if scoped is None and ROLE == 'coordinator' and state['step'] in ('D3', 'D4') and len(items0) == 1 \
                     and _args.plan(args) != 'back':
                 scoped = _coordinator_choice(root, state, items0[0])
-            if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and _args.plan(args) != 'back':
+            if scoped is None and ROLE == 'coordinator' and state['step'] == 'D3' and _args.plan(args) != 'back' \
+                    and (state.get('spec_done') or not _search_query(items0) and not
+                         (len(items0) == 2 and re.fullmatch(r'[\w./-]+\.py', _args.clean(items0[1]).strip('/')))):
+                # (before the specification a search or ['<text>', '<file>'] goes on choosing: m1's coordinator chose
+                # _solve_generator and was refused 5 searches with the old 'its editor reads it')
                 # a04, a05, a07: the coordinator asked to see the code before delegating and got the same status
                 # each time (F7); the answer says why it is not shown (P3: the rule with its reason)
                 left = state['plan'][state['current']]['place'] if state.get('current') is not None else None
-                scoped = ((f'This call was not run: the code of {_name_of(state, left)} is read by its editor. '
-                           'edit_place shows the editor the numbered code, the code it uses and calls, and a test, and '
-                           'the editor decides the change and makes it.\n\n' if left else '')
+                scoped = ((f'This call was not run: the code of {_name_of(state, left)} is read by specify_fix, which '
+                           'sees the code of every place and writes what changes at each, and then by its editor.\n\n'
+                           if left and not state.get('spec_done') else
+                           f'This call was not run: {_name_of(state, left)} is edited by its editor from its '
+                           'specification.\n\n' if left else '')
                           + _coordinator_status(root, state))
             state['edit_key'] = _edit_key(args) if len(items0) >= 2 else None
             seen_fail = (state.get('failed_edits') or {}).get(state['edit_key']) if state['edit_key'] else None
