@@ -459,3 +459,74 @@ Still open from g1:
   the behaviour.
 - A 140-line whole definition costs malformed calls; the view asks for the whole definition first even when the place
   is long.
+
+## Gated runs with Haiku (fastapi_9555, 2026-10-14)
+
+The user asked for a real step-by-step test. Watching a running batch is not that: the model goes on while a fault is
+being read.
+
+`tools/step_gate.py` is an OpenAI-style pass-through in front of any upstream: the local gateway, or
+`tools/anthropic_proxy.py`.
+- Each model call goes upstream at once, but its answer is held until the step is released.
+- Each step can be read before the agent acts on it:
+  - the agent that speaks;
+  - the script's answer it just received, whole;
+  - its thinking and its call.
+- `show`, `go [K]`, `until <agent>`.
+- The time held is written to `paused_s`.
+  - `tools/eval_env.py` passes `SWE_PAUSED_FILE` to the sandbox.
+  - `_stages._elapsed` leaves the pauses out, so the "Time used" the model reads is not changed by the pauses.
+- `local_eval.py --max-minutes/--llm-timeout` keep a held step from ending the task.
+  - One visible side effect: the harness's task message then says "Time allowance: 600 minutes".
+
+Processes started with `nohup` die when the session's turn ends; the gate, the proxy and the run must be started as
+background tasks of the session (`scratchpad/grun.sh`).
+
+**The runs** (fastapi_9555, the same task as g1). Each was stopped at the first system fault, fixed and restarted:
+
+| Run | Stopped at | Fault | Fix |
+|---|---|---|---|
+| gh1 | step 1 | the processes died at the end of the turn (nohup) | background tasks |
+| gh2 | step 3 | `requirements` called `load_skill` first (weak point 28: only the coordinator's prompt said it is not needed) | the 7 sub-agent prompts say the skill is already loaded; from gh3 on no sub-agent called it |
+| gh3 | step 5 | R3's sentence lost its first backtick (`_args.clean`), the backticks no longer paired, and plain words ('decide', 'solves', 'calling') were tagged as new code; `inspect.unwrap`, `functools.cache` and `__wrapped__` were tagged new too | requirement sentences are only stripped of quotes that wrap them whole (`_sentence`); library names (an importable module outside the repository) and dunders are not new code (`_library`) |
+| gh3 | step 20 | locate sent `['solve_dependencies', 'Dependant.is_coroutine_callable']` for R2 and the script kept only the first, silently, because the second was off R2's list (it had been chosen for R1) | a name off the list is looked up in the repository; one that is not found is named in the answer |
+| gh4 | — | ran to the end | **resolved** (3 of 3 fail-to-pass tests), 78 model calls, 290 s of which 139 s held |
+
+**gh4 step by step:**
+
+| Stage | What happened |
+|---|---|
+| requirements | Two requirements; sentences intact; only `lru_cache_wrapper` tagged new |
+| reproduce | A `TestClient` test with an `@cache` async dependency; kept, it runs 46 functions of the repository |
+| locate R1 | `solve_dependencies`, `Dependant.is_coroutine_callable`, `Dependant.is_async_gen_callable`. Every candidate the reproduction test runs was marked "[the reproduction test runs it]", which pointed at the properties |
+| locate R2 | `Dependant.is_coroutine_callable`, `solve_dependencies` (both kept since the fix) |
+| scope | The script added `Dependant.is_gen_callable` (same pattern) and `Dependant.computed_scope` (reads a planned property); the model also named `is_gen_callable` |
+| specify | `solve_dependencies`: no change, "the fix belongs in the Dependant properties"; one sentence each for the three properties (unwrap `self.call`, apply the same checks); `computed_scope`: no change |
+| edit | Three whole definitions, all accepted. Two began with an unindented decorator line; the re-indent handled it |
+| review | R1 done, R2 done |
+| submit | `submit_patch`, 1,688 characters: the reference's change, without its `_unwrapped_call` helper |
+
+What g1 (the local 31B, before the fixes) did differently:
+- it kept an async reproduction test that never ran;
+- the test therefore gave locate no evidence;
+- locate chose `solve_dependencies` alone;
+- the edit left `_solve_generator` reading the wrapped call.
+
+**Still open (seen in gh4, not faults of the result):**
+- Scope adds a reader of a planned property (`computed_scope`) under "the same change is needed there". It is a
+  reader, not a copy. Cost: one specify cycle, 3 model calls, answered with "no change".
+- A "no change" answer to specify is acknowledged as "Saved for X".
+- Reproduce still says "It will be run again after the edits" while stage 7 is off (weak point 25).
+- 78 model calls for 5 places. The coordinator's turns are 2 per sub-agent call (`route.py ['next']` and the call),
+  and every sub-agent call costs `open`, a decision and a closing sentence (weak point 27).
+
+Checklist (the three fixes):
+
+| Item | load_skill line | `_sentence` / `_library` | locate keeps off-list names |
+|---|---|---|---|
+| W4 a concrete NEXT | closer: the first call is the script, as the forms show | neutral | neutral |
+| W6 the issue's words | neutral | closer: sentences reach later stages as the issue and the model wrote them | neutral |
+| B6 tools that do not exist | closer: no detour through load_skill | neutral | neutral |
+| B8 many forms | neutral | neutral | neutral |
+| B11 doubting tool output | neutral | closer: no false "[new: decide, solves]" tags | closer: the answer no longer hides a dropped choice |
+| P3 positive rules | closer: stated as a fact ("already loaded"), with the call to make | neutral | neutral |

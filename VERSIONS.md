@@ -114,10 +114,12 @@ The same 10 dev tasks, judged by tools/judge.py. Never used to train Gemma.
 | st3 | 10-14 15:58 | Haiku | stages build 8b6196a | 6/13 (3/10 of the usual set; fastapi_14873, rich_3894, rich_3052 also resolved) | httpx_3672 2,016 s; requirements still paraphrase the issue wrongly in fastapi_14986 |
 | st4 | 10-14 18:02 | Haiku | stages build d2f7e51 (per-edit tests and stage 7 off, import check on) | 3/10 (httpx_3672, rich_3521, rich_3006) | 2,051 s for 10 tasks (mean 205 s; st3 took about 4,000 s); httpx_3672 resolved in 558 s; fastapi_14851 lost to a 'missing' loop (fixed after the round) |
 
-## Local runs of the stages build (the local 31B, gemma-31b on llm.rayflow.dev, 17,664 context, reasoning budget 512)
+## Step-by-step runs of the stages build (one task at a time)
 
-One task at a time, monitored step by step. Not Kaggle evidence (other context size, quantization and server).
+g runs: the local 31B (gemma-31b on llm.rayflow.dev, 17,664 context, reasoning budget 512). gh runs: Haiku through
+tools/anthropic_proxy.py and tools/step_gate.py. Neither is Kaggle evidence.
 
 | Run | Date (UTC) | Task | Build | Judged | Notes |
 |---|---|---|---|---|---|
 | g1 | 10-14 20:13 | fastapi_9555 (chosen at random) | stages build at 1f9c3c8 | not resolved (1 of 3 F2P; the two generator cases fail) | 567 s, 42 model calls; the repro stage kept an async test that pytest could not run; the edit replaced `is_gen_callable` reads in `solve_dependencies` while `_solve_generator` still reads them; 4 malformed tries of a 140-line whole definition (2 min). Fixes in docs/design_stages.md, "Local run g1" |
+| gh4 | 10-14 22:20 | fastapi_9555, Haiku through tools/step_gate.py (one model call at a time) | stages build at b0499b5 | **resolved** (3 of 3 F2P) | 78 model calls, 290 s (139 s of it held by the gate); runs gh1-gh3 were stopped at the system faults they showed (load_skill in sub-agents, mangled requirement sentences, a located name dropped silently), each fixed before the next. Analysis in docs/design_stages.md, "Gated runs with Haiku" |
