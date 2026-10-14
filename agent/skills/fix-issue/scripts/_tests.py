@@ -331,9 +331,24 @@ def _installed(top):
         return False
 
 
+def _test_imports(root):
+    """Top-level modules that the test files and conftests import: the only ones a stand-in may replace (a stand-in
+    for email_validator, which pydantic imports, made pydantic fail on its missing metadata and every fastapi test file
+    with it)."""
+    found = set()
+    for rel in _repo.iter_py(root, tests=True):
+        if not _repo.is_test_path(rel):
+            continue
+        for m in re.findall(r'(?m)^\s*(?:from|import)\s+([A-Za-z_]\w*)', _repo.read_text(root, rel)):
+            found.add(m)
+    return found
+
+
 def _missing_modules(root, text):
-    """Top-level modules the output says are missing and that are neither in the repository nor installed."""
+    """Top-level modules the output says are missing, that the tests import, and that are neither in the repository
+    nor installed."""
     out = set()
+    imported = None
     for m in NO_MODULE.findall(text):
         top = m.split('.')[0]
         if '.' in m and _installed(top):
@@ -341,7 +356,10 @@ def _missing_modules(root, text):
         if os.path.exists(os.path.join(root, top)) or os.path.exists(os.path.join(root, top + '.py')) or \
                 os.path.exists(os.path.join(root, 'src', top)) or _installed(top):
             continue
-        out.add(top)
+        if imported is None:
+            imported = _test_imports(root)
+        if top in imported:
+            out.add(top)
     return out
 
 
