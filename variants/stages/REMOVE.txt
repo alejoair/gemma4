@@ -1,0 +1,2 @@
+# base files the stages build does not use (its instructions are prompts/coordinator.md and sub_agents/*.md)
+prompts/fix_issue.md
