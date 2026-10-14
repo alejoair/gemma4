@@ -530,3 +530,53 @@ Checklist (the three fixes):
 | B8 many forms | neutral | neutral | neutral |
 | B11 doubting tool output | neutral | closer: no false "[new: decide, solves]" tags | closer: the answer no longer hides a dropped choice |
 | P3 positive rules | closer: stated as a fact ("already loaded"), with the call to make | neutral | neutral |
+
+## Fixes after gh4 (2026-10-14)
+
+1. **Scope:** a reader of a planned property (`reads <property>`) is no longer added as needing "the same change". It
+   is listed as related code, with its line, for scope to decide (gh4: `Dependant.computed_scope`). Copies and
+   same-pattern siblings are still added.
+2. **Specify:** a "no change" answer is acknowledged as "<place> keeps its code: it is not edited". A sentence is
+   acknowledged as "its editor writes the change from this sentence".
+3. **Reproduce:** with stage 7 off, the kept test's answer no longer promises a rerun. It says the other agents see
+   which code the test runs and how it fails; specify and review show its output.
+4. **Locate:** each candidate that reads or calls other candidates says so: `[it uses X, Y from this list]`. In g1 the
+   statement named `solve_dependencies`, which only reads the `Dependant.is_*_callable` properties where the decision
+   is made. They were on the list, but nothing said that one uses the others.
+5. **Edit, long places** (over 80 lines):
+   - The view asks for `['replace', '<old lines>', '<new lines>']`, one call per group of lines, not the whole
+     definition. g1 sent the 140-line `solve_dependencies` whole and the call came out malformed three times.
+   - A `replace` whose new lines open with an import at column 0 moves the import to the top of the file (undone if
+     the replace is not applied).
+   - After an accepted edit, a correction is asked for as another `replace`.
+6. **Chained steps:**
+   - When an agent finishes its part (the script's answer ends with DONE), the script computes the coordinator's
+     next call at once.
+   - The agent's last answer says: "reply to the coordinator with exactly this line: call the tool X with request
+     'Y'". The coordinator makes that call without asking route.py.
+   - Guards:
+     - While a line is pending, route.py answers that same line, not a new ask (a second ask would spend the
+       target's tries).
+     - A call from an agent that is not the next agent's `open` is refused with the line to return.
+   - The coordinator's and the agents' prompts say how to treat the line.
+   - Expected saving: one coordinator call per finished agent step (about 14 of gh4's 78).
+
+Dry run on fastapi_9555 (the snapshot): the flow route → requirements → reproduce → locate → scope → specify → edit
+ran through the scripts. Checked:
+- each finished part ended with the chained line;
+- route.py with a pending line returned it unchanged;
+- a late call of the previous agent was refused;
+- the long `solve_dependencies` got the replace view;
+- a replace carrying `import functools` put the import at the top.
+
+Checklist:
+
+| Item | 1 scope | 2 ack | 3 repro text | 4 locate uses | 5 long edits | 6 chained steps |
+|---|---|---|---|---|---|---|
+| W1 choosing from named options | closer: the reader is an option with its line, not imposed | neutral | neutral | closer: the list shows how the options relate | neutral | neutral |
+| W2 writing whole blocks | neutral | neutral | neutral | neutral | farther for long places; reason: B2, a 140-line copy is a long exact transcription that failed three times | neutral |
+| W4 a concrete NEXT | neutral | neutral | neutral | neutral | closer: one form named first | closer: the next call is given whole, one step earlier |
+| B2 copying long text | neutral | neutral | neutral | neutral | closer: only the changed lines are copied | slightly farther: the agent copies one short line; reason: it saves a call per step, and route.py stays as the fallback |
+| B7 middle of long context | neutral | neutral | neutral | neutral | closer: shorter answers | closer: fewer coordinator turns in its history |
+| B11 doubting tool output | closer: no false "same change is needed" | closer: the answer says what was saved | closer: no false promise | neutral | neutral | neutral |
+| B12 contradictions | neutral | neutral | closer | neutral | closer: the correction form matches the edit form | neutral |

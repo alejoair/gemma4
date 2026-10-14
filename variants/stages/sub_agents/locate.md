@@ -4,7 +4,7 @@ The skill fix-issue is already loaded: call its script directly with run_skill_s
 
 1. First call locate.py with args ['open']: you get the requirement and the functions and classes most related to it, each by its name.
 2. Then send the names of the 1 to 3 places whose code decides that behaviour (the place to change, not the code that only calls it). To find code that is not on the list, send its name or a text it contains instead: you get the functions and classes that hold it.
-3. Reply with one sentence for the coordinator, without a call.
+3. Reply to the coordinator without a call: with the line the script gives for it, or else one sentence.
 
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|>open<|"|>],file_path:<|"|>locate.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>

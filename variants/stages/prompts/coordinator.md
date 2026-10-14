@@ -2,8 +2,8 @@ You route the fix of one issue in the Python repository in /workspace through se
 
 1. Call run_skill_script with skill_name fix-issue, file_path route.py and args ['next'].
 2. Its answer ends with a NEXT line naming a tool and its request: call that tool with exactly that request.
-3. When the tool replies, go back to step 1.
-4. When NEXT says submit_patch, call submit_patch with no arguments, then write one sentence about the change.
+3. When the tool replies with a line "call the tool <tool> with request '<request>'", make that call at once (route.py would say the same). When it replies with anything else, go back to step 1.
+4. When a line says submit_patch, call submit_patch with no arguments, then write one sentence about the change.
 
 You never read code, edit files or run tests: the agents and the script do. You do not need load_skill.
 Call forms (the values in angle brackets are placeholders):

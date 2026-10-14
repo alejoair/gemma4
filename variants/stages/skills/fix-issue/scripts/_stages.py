@@ -42,6 +42,7 @@ MAX_ROUNDS = 2          # review rounds (F6)
 MAX_FAILS = 2           # undone edits of one place
 MAX_EDITS = 4           # edits of one place
 MAX_SENTENCE = 1500
+LONG_EDIT = 80          # a place longer than this is edited by replacing lines, not sent whole
 BIG_CLASS = 120         # a class place longer than this is split into the members that change
 BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(45 * 60)))   # then the work goes to submit
 REPRO_NAME = 'test_swe_reproduce_issue.py'
@@ -506,7 +507,8 @@ def reproduce(root, st, args):
                    'calls': calls[:60], 'now_passes': False, 'now': ''}
     st['repro_done'] = True
     return (f'Kept: the test fails on the code as it is now:\n{st["repro"]["before"][:600]}\nIt runs '
-            f'{len(calls)} functions of the repository. It will be run again after the edits.\n\n{DONE}')
+            f'{len(calls)} functions of the repository. ' + ('It will be run again after the edits.' if VERIFY else
+            'The other agents see which code it runs and how it fails.') + f'\n\n{DONE}')
 
 
 # ------------------------------------------------------------------------------------------- 3 locate
@@ -554,7 +556,8 @@ def locate(root, st, args):
         others = sorted({p['name'] for ps in st['located'].values() for p in ps})
         view = [f'Where is this decided in the code?\n  {_req_line(r)}',
                 'Candidates (functions and classes, the most related first):\n' +
-                '\n'.join(f'  {c["handle"]}  {re.sub(r", lines [0-9]+-[0-9]+", "", c["line"])}' for c in cands)]
+                '\n'.join(f'  {c["handle"]}  {re.sub(r", lines [0-9]+-[0-9]+", "", c["line"])}{_uses_note(root, c, cands)}'
+                          for c in cands)]
         if others:
             view.append('Chosen for the other requirements: ' + ', '.join(others) + '.')
         return '\n\n'.join(view) + '\n\nChoose the 1 to 3 places whose code decides this behaviour.\n\n' + nxt
@@ -601,6 +604,18 @@ def locate(root, st, args):
             + '\n\n' + DONE)
 
 
+def _uses_note(root, c, cands):
+    """' [it uses X, Y from this list]' when the candidate reads or calls other candidates. g1 (fastapi_9555, the local
+    31B): the issue named solve_dependencies, which only reads Dependant.is_gen_callable and its siblings, where the
+    decision is made; they were on the list, but nothing said that one uses the others."""
+    if c.get('name') in (None, MODULE):
+        return ''
+    used = _used_names(_repo.read_lines(root, c['rel']), c['name']) or set()
+    others = [d['handle'] for d in cands if d is not c and d.get('name') not in (None, MODULE)
+              and d['name'].split('.')[-1] in used and d['name'] != c['name']]
+    return f'  [it uses {", ".join(others[:4])} from this list]' if others else ''
+
+
 def _fallback_locate(root, st, r):
     cands = st['cands'].get(r['id']) or _candidates(root, st, r, n=3)
     return [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end']} for c in cands[:1]]
@@ -608,7 +623,9 @@ def _fallback_locate(root, st, r):
 
 # ------------------------------------------------------------------------------------------- 4 scope
 
-AUTO = ('async/sync twin', 'same pattern', 'reads ')
+# 'reads <property>' left this list (gated run gh4, fastapi_9555): Dependant.computed_scope reads is_async_gen_callable
+# and was added as needing "the same change"; a reader may need no change, so it is related code for scope to decide
+AUTO = ('async/sync twin', 'same pattern')
 
 
 def _related(root, st, located):
@@ -890,7 +907,9 @@ def specify(root, st, args):
         p['sentence'], p['status'] = sentence, 'todo'
         p['fails'], p['edits'] = 0, 0
     p.pop('note', None)
-    return f'Saved for {p["handle"]}.\n\n{DONE}'
+    if p['status'] == 'nochange':
+        return f'{p["handle"]} keeps its code: it is not edited.\n\n{DONE}'
+    return f'Saved for {p["handle"]}: its editor writes the change from this sentence.\n\n{DONE}'
 
 
 # ------------------------------------------------------------------------------------------- 6 edit
@@ -1022,6 +1041,18 @@ def edit(root, st, args):
             diff = step._patch_here(root, p)
             if diff:
                 view.append(diff[:1500])
+        length = p['end'] - p['start'] + 1
+        if length > LONG_EDIT and not p.get('new'):
+            # g1 (fastapi_9555, the local 31B): the whole 140-line solve_dependencies, sent again after two replace
+            # edits, came out malformed three times (2 minutes, about 2,100 tokens each)
+            view.append(f"This place is long ({length} lines): change only the lines that change, with ['replace', "
+                        "'<the old lines, as shown, without their numbers>', '<the new lines>'], one call per group "
+                        "of lines; the rest stays as it is. A new import can open the new lines, not indented: it is moved "
+                        "to the top of the file.")
+            nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['replace', "
+                   "'<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this change "
+                   "needs>']")
+            return '\n\n'.join(view) + '\n\n' + nxt
         view.append('Send the whole new definition (from its def or class line, with its decorators); new imports go '
                     'above it and are moved to the top of the file. A new helper function can come with it.')
         if re.search(r'not shown\)', view[0]):
@@ -1052,8 +1083,23 @@ def edit(root, st, args):
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
     if first == 'replace' and len(items) >= 2:
         before = _repo.read_lines(root, p['rel'])
-        res = _replace_text(root, p, _args.code(items[1]), _args.code(items[2]) if len(items) > 2 else '')
+        new_text = _args.code(items[2]) if len(items) > 2 else ''
+        head = []
+        rest = new_text.split('\n')
+        while rest and (not rest[0].strip() or (rest[0][:1] not in (' ', '\t') and IMPORT.match(rest[0].strip()))):
+            # an import at column 0 opening the new lines goes to the top of the file
+            if rest[0].strip():
+                head.append(rest[0].strip())
+            rest.pop(0)
+        if head:
+            new_text = '\n'.join(rest)
+            _add_imports(root, p['rel'], head)
+            _refresh(root, p)
+        res = _replace_text(root, p, _args.code(items[1]), new_text)
         if isinstance(res, str):
+            if head:
+                _repo.write_lines(root, p['rel'], before)
+                _refresh(root, p)
             return f'Not applied: {res}.\n\n{nxt}'
         r = step._edit.apply(root, p['rel'], res[0], res[1], res[2] or 'DELETE')
         return _after_edit(root, st, p, r, before, [p['name'].split('.')[-1]], nxt)
@@ -1221,9 +1267,11 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 'goes into the plan and is changed next). If not, reply with one sentence for the coordinator.'
                 f"\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['missing', "
                 f"'{first}', '<what must change in it>'], or no call: reply with one sentence for the coordinator.")
+    fix = ("another ['replace', '<old lines>', '<new lines>']" if p['end'] - p['start'] + 1 > LONG_EDIT
+           else 'the corrected whole definition')
     return (f'{word}: {detail}.\n{shown}\n\nIf this is the whole change, reply with one sentence for the coordinator, '
-            'without a call. If it is wrong or incomplete, send the corrected whole definition.\n\nNEXT: no call: '
-            'reply with one sentence for the coordinator (or send the corrected whole definition to edit.py).')
+            f'without a call. If it is wrong or incomplete, send {fix}.\n\nNEXT: no call: '
+            f'reply with one sentence for the coordinator (or send {fix} to edit.py).')
 
 
 # ------------------------------------------------------------------------------------------- 7 verify
@@ -1344,6 +1392,25 @@ SCRIPT = {'route': 'route.py', 'requirements': 'req.py', 'reproduce': 'repro.py'
           'scope': 'scope.py', 'specify': 'specify.py', 'edit': 'edit.py', 'review': 'review.py'}
 
 
+def _opens(st, args):
+    first = _args.clean(args[0]).lower() if args and args[0] else ''
+    target = str((st.get('current') or (None, ''))[1] or '').lower()
+    return first in ('open', 'start') or (target and first == target)
+
+
+def _chain(root, st, out):
+    """An agent's finished part ends with the coordinator's next call, computed now (gated run gh4: 78 model calls for
+    5 places, a route.py call and the agent call for every agent step): the agent returns that line and the
+    coordinator makes the call, without asking route.py."""
+    nxt = route(root, st, ['next']).strip().split('\n')[-1]
+    if not nxt.startswith('NEXT: call the tool'):
+        return out
+    line = nxt[len('NEXT: '):].split('; when it replies')[0]
+    st['chained'] = line
+    return out[:-len(DONE)] + ('NEXT: no call: reply to the coordinator with exactly this line, and nothing else:\n'
+                               + line)
+
+
 def main(stage, argv):
     root = _repo.repo_root()
     if not _state.lock():
@@ -1352,8 +1419,21 @@ def main(stage, argv):
         return
     st = _state.load('stages') or _new()
     args = _args.split_single_quoted(list(argv))
+    pending = st.get('chained')
     try:
-        out = HANDLERS[stage](root, st, args)
+        if pending and stage == 'route':
+            # the coordinator called route.py instead of the line an agent returned: the same next step, not a new
+            # ask (a second ask would spend the target's tries)
+            out = f"NEXT: {pending}"
+        elif pending and not (_opens(st, args) and (st.get('current') or ('',))[0] == stage):
+            out = ("This call was not used: the agent before you has finished its part. If you are that agent, reply "
+                   f"to the coordinator with exactly this line, without a call:\n{pending}\nIf you have just started, "
+                   "call your script with args ['open'] first.")
+        else:
+            st['chained'] = None
+            out = HANDLERS[stage](root, st, args)
+            if stage != 'route' and out.endswith(DONE):
+                out = _chain(root, st, out)
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{stage} {type(e).__name__}: {e}'})
         import traceback

@@ -4,7 +4,7 @@ The skill fix-issue is already loaded: call its script directly with run_skill_s
 
 1. First call repro.py with args ['open']: you get the requirement, the signatures of its names and an existing test of the same code (for its imports and fixtures).
 2. Then send the test: one item holding a whole pytest test function, with the imports it needs above it. It is run at once on the current code: you see whether it was kept or why it was refused (at most two tries). Or send ['skip'].
-3. Reply with one sentence for the coordinator, without a call.
+3. Reply to the coordinator without a call: with the line the script gives for it, or else one sentence.
 
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|>open<|"|>],file_path:<|"|>repro.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
