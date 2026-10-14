@@ -1480,3 +1480,29 @@ new tests), fastapi_14583 and rich_3469 (wrong place: vague statements). No inte
 check caught an edit that used `os` without importing it in fastapi_15800, but its answer said "2 existing tests
 failed" (fixed: it now says the module does not import and how to add the import). The coordinator's attempts to read
 code (9 in httpx_3672) are refused at once. The failures left are of the model's reasoning, not of the tests.
+
+### Rounds h2 and s1 (2026-10-14): Sonnet no better than Haiku, and why that was the system
+
+h2 (Haiku, build after h1's fixes): judged 5/10 (requests_7328 resolved as well). s1 (Sonnet, the same build): judged
+5/10, the same five tasks failing as with Haiku (fastapi_14448, fastapi_15800, fastapi_14583, rich_3469 and
+requests_7328). The user's reading: a much stronger model that does no better points at the system. It did:
+- **Parallel calls.** Every task of h1, h2 and s1 had turns with several tool calls, up to five `edit_place` at once,
+  all on the one journal and the one working tree. The competition model made none in V20-V21 (Kaggle traces).
+- **An undone edit stayed in the patch (s1, requests_7328).** The editor sent two line edits of
+  `resolve_redirects` together. One was undone by the existing tests ("Undone: 2 existing tests that passed before
+  the edit failed after it… assert 29 == 30"), yet the status and the submitted patch still held both changes. The
+  state lock waited 120 s and then let the second call go on unlocked, while the first was still running its tests
+  (the edit check can take longer than that). That call wrote its edit over the restored file.
+
+Fixes:
+- `_state.lock()` never goes on unlocked. A call waits up to 200 s for the call before it (the harness kills a call at
+  its 240 s command timeout, which releases the lock). If that call is still running after the wait, this call does
+  nothing and says so.
+- The proxy asks the upstream model for one tool call per turn (`disable_parallel_tool_use`; `--parallel` keeps the
+  old behaviour), as the competition model makes them. h1-s1 are therefore not evidence about the design's limits.
+  s2 repeats s1 with one call per turn.
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | an answer that says "Undone" is now true of the files and the patch |
+| W5 familiar formats | neutral | no format change |
