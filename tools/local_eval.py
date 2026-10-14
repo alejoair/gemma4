@@ -50,7 +50,8 @@ def main() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import eval_env
     import judge
-    eval_env.patch()            # the tests import the task's src/ code, as in the competition's editable install
+    eval_env.patch()            # the tests import the task's src/ code (see eval_env.py for what is known of the scorer)
+    judge.install_capture()     # per-test outcomes from the JUnit report of every verify_task run
     litellm.drop_params = True
     install_litellm_reasoning_patch()
     dump = os.environ.get('SWE_DUMP_REQUESTS')
@@ -97,14 +98,17 @@ def main() -> None:
         wheels_dir=args.data / 'wheels', verbose=True,
     )
     evaluator = Evaluator(config)
-    fields = ['task_id', 'resolved', 'judged', 'f2p', 'f2p_failing', 'p2p_broken', 'test_exit_code', 'patch_chars',
-              'tool_calls', 'llm_calls', 'duration_s', 'error']
+    fields = ['task_id', 'resolved', 'judged', 'official_feasible', 'f2p', 'f2p_failing', 'p2p_broken',
+              'required_failing', 'flaky', 'judge_note', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls',
+              'duration_s', 'error']
+    rows = []
     judge_cache = args.data / 'judge_cache'
     with open(args.out / 'run.csv', 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
         wr.writeheader()
         for i, task in enumerate(tasks, 1):
             print(f'== TASK {task.instance_id} {time.strftime("%H:%M:%S", time.gmtime())} UTC', flush=True)
+            mark = judge.capture_mark()
             r = asyncio.run(evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)))
             row = dict(task_id=task.instance_id, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                        patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
@@ -114,14 +118,26 @@ def main() -> None:
             try:
                 # the harness's verdict needs every test of the test files to pass, also those the environment fails
                 # on the original code: the judge compares with the reference patch (tools/judge.py)
-                v = judge.judge(evaluator, task, r.agent_patch or '', harness_result=r, cache=judge_cache)
-                row.update(judged=v['verdict'], f2p=len(v['f2p']), f2p_failing=' '.join(v.get('f2p_failing', [])),
-                           p2p_broken=' '.join(v.get('p2p_broken', [])))
+                v = judge.judge(evaluator, task, r.agent_patch or '', harness_result=r, cache=judge_cache,
+                                capture_mark=mark)
+                row.update(judged=v['verdict'], official_feasible=int(bool(v['official_feasible'])),
+                           f2p=len(v['f2p']), f2p_failing=' '.join(v.get('f2p_failing', [])),
+                           p2p_broken=' '.join(v.get('p2p_broken', [])),
+                           required_failing=' '.join(v.get('required_failing', [])), flaky=len(v.get('flaky', [])),
+                           judge_note=v.get('why', '')[:300])
+                print(f'== JUDGED {task.instance_id}: {judge.short(v)}', flush=True)
             except Exception as e:  # noqa: BLE001
                 row.update(judged=f'judge error: {type(e).__name__}: {e}'[:200])
+            rows.append(row)
             wr.writerow(row)
             fh.flush()
             print(f'== RESULT {row}', flush=True)
+    judged = [r.get('judged', '') for r in rows]
+    print(f'== SUMMARY harness resolved {sum(r["resolved"] for r in rows)}/{len(rows)}; '
+          f'JUDGED (against the reference) {judged.count("resolved")} resolved of '
+          f'{sum(1 for j in judged if j in ("resolved", "not resolved"))} scorable, {judged.count("unscorable")} '
+          f'unscorable; OFFICIAL_FEASIBLE (the reference passes the harness here) '
+          f'{sum(1 for r in rows if r.get("official_feasible") == 1)}/{len(rows)}', flush=True)
 
 
 if __name__ == '__main__':

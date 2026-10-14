@@ -7,8 +7,10 @@ after a change of the scripts (review: fixes were tested only by new model runs;
 fault). A replay is not a model run: the calls after the first changed answer may no longer fit the state, so it
 catches crashes, not whether a change helps.
 
-Each trace starts from the snapshot as it was (git checkout + clean) and from an empty journal. Exit status 1 when a
-call had a fault.
+Each trace starts from the snapshot as it was (git checkout + clean) and from an empty journal. Before the first
+call the snapshot gets the sandbox's test setup (tools/hermetic.py: the harness's pytest.ini, conftest marker and
+baseline commit, once per snapshot), so the scripts collect and run tests as they do in the harness's sandbox. Exit
+status 1 when a call had a fault.
 """
 import json
 import os
@@ -16,6 +18,9 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hermetic import hermetic  # noqa: E402
 
 LIMIT = int(os.environ.get('REPLAY_TIMEOUT', '240'))     # eval_config.yaml timeout_seconds
 
@@ -36,6 +41,8 @@ def calls(trace):
 def replay(scripts, repo, trace):
     subprocess.run(['git', 'checkout', '-q', '.'], cwd=repo)
     subprocess.run(['git', 'clean', '-qfd'], cwd=repo)
+    if hermetic(repo):
+        print(f'(hermetic: the sandbox test setup was committed in {repo})')
     faults = 0
     with tempfile.TemporaryDirectory() as state:
         # (no __pycache__ in the build: the competition's validator rejects .pyc files)

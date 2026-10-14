@@ -173,16 +173,26 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
-**How a patch is judged (since 2026-10-13, local and Kaggle alike):** `tools/judge.py` runs the harness's own
-verification three times in the same sandbox setup (the reference patch, no patch, the agent's patch): FAIL_TO_PASS =
-tests failing without a patch and passing with the reference; resolved = no test fails that passes with the reference,
-a task whose reference run does not finish here is "unscorable" (with no FAIL_TO_PASS test here, the patch is judged on the tests that pass with the reference). `local_eval.py` and
-`kaggle_eval.py` add its verdict (`judged`) to every row, and `tools/eval_env.py` makes the subprocess sandbox import a
-`src/` layout's own code (requests, httpx), as the competition's editable install does: before, every requests and
-httpx patch was invisible to the hidden tests. The harness's `resolved` column is kept but is not the score: it needs
-whole test files to pass, also tests the environment fails on the original code. For patches already made:
-`tools/judge.py --data <comp dir> --patches <dir of patch_<task>.diff> --cache <comp dir>/judge_cache`. The Kaggle
-dataset's `bench/` holds `kaggle_eval.py`, `judge.py` and `eval_env.py` (copy all three before a version).
+**How a patch is judged (since 2026-10-14, local and Kaggle alike):** `tools/judge.py` runs the harness's own
+verification in the same sandbox setup: the reference patch twice, no patch twice (a test whose outcome differs between
+two runs of the same code is flaky and left out), then the agent's patch (repeated once when it fails something).
+Outcomes come from the JUnit XML. FAIL_TO_PASS = failing without a patch, passing with the reference; `verdict` =
+resolved when no test fails that passes with the reference and every test function the test patch adds passes (the
+harness's own required-node rule); `official_feasible` = the reference itself passes the harness's whole-file check
+here (rich's pygments-dependent tests and requests' network tests make it false for some tasks: no patch can score
+there in an environment like ours). An empty patch, a patch that does not apply or a run that did not finish is not
+resolved. The cache is keyed by the task, patch and test patch, with an environment fingerprint. `local_eval.py` and
+`kaggle_eval.py` add `judged` and `official_feasible` to every row; `tools/eval_env.py` makes the subprocess sandbox
+import the task's own code (src/ first, then the workspace; the official fast path's directories by a .pth after
+site-packages); `tools/hermetic.py` gives a local repository the harness's pytest.ini, conftest and baseline commit
+(replays use it). The documented public image shadows src/ packages with installed wheels; whether the private scorer
+does is unknown. For patches already made: `tools/judge.py --data <comp dir> --patches <dir of patch_<task>.diff>
+--cache <dir>`. The Kaggle dataset's `bench/` holds `kaggle_eval.py`, `judge.py`, `eval_env.py` and `hermetic.py`.
+
+**The skill's own test checks (`_tests.py`, rewritten 2026-10-14 after four audits, docs/design_single.md):** per-test
+outcomes from a pytest plugin; the original code run on the same groups (cached); stand-in modules decided on the
+original code only; an import check of the changed modules; a new failure must fail again alone and pass just before the
+edit; tests chosen from a once-per-task call map (which tests call which function), with the lexical score as fallback.
 
 Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
 (vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
