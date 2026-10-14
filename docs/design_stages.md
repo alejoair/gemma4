@@ -277,3 +277,14 @@ instruction no longer says tests are run. Stage 7 still runs the selected existi
 |---|---|---|
 | B10 knowing its budget | closer | edits answer at once; tasks fit the time better |
 | F2 repairing from failing tests, B11 | farther | a regression is no longer seen at the edit that made it; only stage 7 sees it, once |
+
+**Import check back on (2026-10-14, the user's request).** With the per-edit test run off, each edit is still checked
+for importing. The edited module is imported in a subprocess; when that fails, it is imported once more with the code
+just before the edit. The edit is undone only when the earlier code imported and the new code does not. No copy of the
+original code is needed. It costs about 0.1 s (rich: 0.1 s with an error, 0.04 s without), and the answer says the
+module cannot be imported, with the error.
+
+| Item | Effect | Why |
+|---|---|---|
+| F1 where the error is | closer | a broken import is caught at the edit that made it, with the error line |
+| B10 knowing its budget | neutral | about 0.1 s per edit |

@@ -18,8 +18,11 @@ its own script; the answer of every call ends with NEXT. The state is one JSON d
 existing helpers of step.py (ranking, search, views, whole-definition edits) and _tests.py (checks) are reused."""
 import ast
 import difflib
+import json
 import os
 import re
+import subprocess
+import sys
 import time
 
 import _args
@@ -1003,6 +1006,43 @@ def edit(root, st, args):
     return _after_edit(root, st, p, r, before, names, nxt)
 
 
+IMPORT_PROBE = ('import importlib, json, sys, traceback\nres = {}\n'
+                'for m in sys.argv[1:]:\n'
+                '    try:\n        importlib.import_module(m)\n'
+                '    except BaseException as e:\n'
+                '        res[m] = traceback.format_exception_only(type(e), e)[-1].strip()\n'
+                'print("SWEIMPORT" + json.dumps(res))\n')
+
+
+def _probe_imports(root, mods):
+    try:
+        out = subprocess.run([sys.executable, '-c', IMPORT_PROBE] + mods, cwd=root, env=_tests._env(root),
+                             capture_output=True, text=True, timeout=60).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    m = re.search(r'SWEIMPORT(\{.*\})', out)
+    return json.loads(m.group(1)) if m else None
+
+
+def _import_errors(root, rel, before):
+    """[(module, error)] for the edited module when it no longer imports but did with the code just before the edit
+    (no copy of the original code is needed: the file is put back for a second probe only when the first one fails).
+    About a second; the per-edit test run is off, this check stays (the user's, 2026-10-14)."""
+    if not rel.endswith('.py') or _repo.is_test_path(rel) or _repo.is_doc_path(rel):
+        return []
+    mods = _tests._module_names(rel)
+    now = _probe_imports(root, mods)
+    if not now:
+        return []
+    after = _repo.read_lines(root, rel)
+    try:
+        _repo.write_lines(root, rel, before)
+        earlier = _probe_imports(root, list(now)) or {}
+    finally:
+        _repo.write_lines(root, rel, after)
+    return [(m, err) for m, err in now.items() if m not in earlier]
+
+
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
@@ -1018,9 +1058,16 @@ def _after_edit(root, st, p, r, before, names, nxt):
                                                  undo=(p['rel'], before))
     else:
         verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
+        broken = _import_errors(root, p['rel'], before)
+        if broken:
+            verdict, failures = 'BROKEN', [m for m, _ in broken]
+            detail = 'the changed module cannot be imported any more:\n' + '\n'.join(
+                f'  importing {m} fails: {err}' for m, err in broken[:3])
     shown = step._changed_view(before, after, p['rel'])
     if verdict == 'BROKEN':
         _repo.write_lines(root, p['rel'], before)
+        why = ('after the edit its module cannot be imported' if detail.startswith('the changed module cannot')
+               else 'the edit breaks existing tests that passed before')
         p['fails'] = p.get('fails', 0) + 1
         if p['fails'] >= MAX_FAILS:
             if p.get('respecs', 0) < 1:
@@ -1028,17 +1075,19 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 # 'drop the servers' was refused twice by tests that expect the root path in the response)
                 p['respecs'] = p.get('respecs', 0) + 1
                 p['old_sentence'], p['sentence'], p['status'] = p.get('sentence'), None, None
-                p['note'] = ('edits made from the sentence below were undone twice: they break existing tests that '
+                p['note'] = ('edits made from the sentence below were undone twice: the module could not be '
+                             'imported after them:\n' + detail[:900]) if why.startswith('after') else (
+                             'edits made from the sentence below were undone twice: they break existing tests that '
                              'pass on the original code. Those tests show behaviour the issue keeps: write a change '
                              'that meets the requirement and keeps them passing (if the requirement, as written, '
                              'contradicts them, meet the issue\'s own sentence instead):\n' + detail[:900])
-                return (f'Undone: the edit breaks existing tests that passed before:\n{detail}\n{p["handle"]} goes '
+                return (f'Undone: {why}:\n{detail}\n{p["handle"]} goes '
                         f'back to be specified again, with these tests.\n\n{DONE}')
             p['status'] = 'failed'
-            return (f'Undone: the edit breaks existing tests that passed before:\n{detail}\nThat was the last try for '
+            return (f'Undone: {why}:\n{detail}\nThat was the last try for '
                     f'{p["handle"]}: it keeps its code.\n\n{DONE}')
-        return (f'Undone: the edit breaks existing tests that passed before, so {p["handle"]} is back as it was:\n'
-                f'{detail}\nSend a corrected definition that keeps these tests passing.\n\n{nxt}')
+        return (f'Undone: {why}, so {p["handle"]} is back as it was:\n'
+                f'{detail}\nSend a corrected definition that fixes this.\n\n{nxt}')
     p['status'] = 'done'
     if p.get('new'):
         p['new'] = False
