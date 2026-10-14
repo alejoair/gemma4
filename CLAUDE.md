@@ -239,8 +239,13 @@ virtual con CLI", via Remote Control) runs the local infrastructure:
   runs on the RTX 3090 (about 20.4 GB usable): 19.1-19.6 GB in use, nothing else may use VRAM. Speed: 31-32 tok/s
   generating, 930-1,100 tok/s on the prompt (the 26B: 126, or 173 with MTP). Largest context that held, filled to
   85-90%: 12,288 tokens with an f16 KV cache, 17,664 with q8_0, and 38,912 with q4_0 (only q4_0 reaches Kaggle's
-  32,768; its effect on tool calling has not been measured). Its MTP draft (267 MB) is downloaded but untested. Files are
-  in C:\llm-lab-c\models. The server still serves the 26B.
+  32,768; its effect on tool calling has not been measured). With its MTP draft (unsloth's 267 MB, `--spec-draft-n-max 3`), KV q8_0 and
+  17,664 context (the same context as without it), at temperature 0.2:
+  - generation is 66.6 tok/s on code (67-68% accepted) and 58.7 on text (52-54%), about twice the speed without MTP;
+  - the prompt runs at 1,055 tok/s, the same as without MTP.
+
+  Files are in C:\llm-lab-c\models. The server still serves the 26B; serving the 31B instead needs the user's
+  decision.
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
 
