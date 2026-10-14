@@ -19,11 +19,13 @@ if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
     raise SystemExit(0)
 
-FILE_TIMEOUT = 30      # seconds per test file; files run in parallel
-BASE_TIMEOUT = 25      # seconds for the failing ids on the original code
-TEST_TIMEOUT = 15      # seconds per test, when pytest-timeout is installed (a hanging test then costs 15 s, not 30)
+FILE_TIMEOUT = 60      # seconds per test group (groups run at once share it; one after the other, each has its own)
+BASE_TIMEOUT = 60      # the same groups on the original code
+MAP_TIMEOUT = 150      # the once-per-task run of the whole suite on the original code that maps functions to tests
+TEST_TIMEOUT = 15      # seconds per test, when pytest-timeout is installed (a hanging test then costs 15 s, not 60)
+MEM_LIMIT = 3 << 30    # address space of one pytest process (the sandbox has 4 GiB)
 MAX_FILES = 3
-MAX_BASE_IDS = 10
+MAX_IDS = 40           # tests of one file taken from the call map
 BIG_FILE = 40          # a test file with more tests than this runs only the tests that use the changed names
 PYTEST = ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--no-header', '-rfE', '--maxfail=60']   # E: setup errors count as failures
 IDENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]{2,}')
@@ -46,28 +48,49 @@ def _test_functions(tree):
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test'):
             out.append((node.name, node.lineno, node.end_lineno))
-        elif isinstance(node, ast.ClassDef) and node.name.startswith('Test'):
+        elif isinstance(node, ast.ClassDef) and (node.name.startswith('Test') or node.name.endswith('Test')):
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith('test'):
                     out.append((f'{node.name}::{item.name}', item.lineno, item.end_lineno))
     return out
 
 
+def _is_test_file(rel):
+    """A file pytest collects (test_*.py or *_test.py): tests/main.py or tests/testserver/server.py are helpers, not
+    tests, and took the 3 places of the selection (audit)."""
+    name = os.path.basename(rel)
+    return rel.endswith('.py') and (name.startswith('test_') or name.endswith('_test.py'))
+
+
 def select(root, changed):
-    """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. Test files score
-    first by being the changed module's own test file (test_<module>.py), then by importing a changed module, then by
-    the rare names they share with the changed code (inverse document frequency); in a big file only the tests that
-    use those names are kept."""
-    tests = [r for r in _repo.iter_py(root, tests=True) if _repo.is_test_path(r) and os.path.basename(r) != 'conftest.py']
-    if not tests:
-        return []
-    texts = {r: _repo.read_text(root, r) for r in tests}
-    words = {r: set(IDENT.findall(t)) for r, t in texts.items()}
+    """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. First the tests that
+    call a changed function on the original code (the call map), grouped by file, the files with most such tests
+    first. Without the map, test files score by being the changed module's own test file (test_<module>.py), then by
+    importing a changed module, then by the rare names they share with the changed code (inverse document frequency);
+    in a big file, or one that ran out of time before, only the tests that use those names are kept."""
     names = set()
     for items in changed.values():
         for item in items:
             names.update(w for w in IDENT.findall(item) if w not in COMMON)
-    modules = [m for rel in changed for m in _module_names(rel)]
+    m = callmap(root)
+    if m:
+        by_file = {}
+        for key, tids in m.items():
+            krel, _, qual = key.partition('::')
+            if krel in changed and qual.split('.')[-1] in names:
+                for t in tids:
+                    if _is_test_file(t.split('::')[0]):
+                        by_file.setdefault(t.split('::')[0], set()).add(t)
+        if by_file:
+            ranked = sorted(by_file, key=lambda f: (-len(by_file[f]), f))[:MAX_FILES]
+            return [sorted(by_file[f])[:MAX_IDS] for f in ranked]
+    tests = [r for r in _repo.iter_py(root, tests=True) if _is_test_file(r)]
+    if not tests:
+        return []
+    slow = set(_state.load('slow_tests', []))
+    texts = {r: _repo.read_text(root, r) for r in tests}
+    words = {r: set(IDENT.findall(t)) for r, t in texts.items()}
+    modules = [m_ for rel in changed for m_ in _module_names(rel)]
     n = len(tests)
     idf = {w: math.log(1 + n / (1 + sum(w in ws for ws in words.values()))) for w in names}
     stems = {os.path.basename(rel)[:-3].lstrip('_') for rel in changed if rel.endswith('.py')} - {'__init__'}
@@ -77,7 +100,7 @@ def select(root, changed):
         base = os.path.basename(r)[:-3]
         if base in {f'test_{x}' for x in stems} | {f'{x}_test' for x in stems}:
             s += 20.0                      # the module's own test file (rich/repr.py -> tests/test_repr.py)
-        if any(re.search(rf'\b{re.escape(m)}\b', texts[r]) for m in modules):
+        if any(re.search(rf'\b{re.escape(m_)}\b', texts[r]) for m_ in modules):
             s += 6.0                       # imports the changed module
         if s > 0:
             scores.append((s, r))
@@ -89,12 +112,14 @@ def select(root, changed):
         except (SyntaxError, ValueError):
             continue
         funcs = _test_functions(tree)
-        if len(funcs) > BIG_FILE:
+        if len(funcs) > BIG_FILE or r in slow:
             lines = texts[r].splitlines()
             keep = [f'{r}::{name}' for name, a, b in funcs
                     if names & set(IDENT.findall('\n'.join(lines[a - 1:b])))]
             if keep:
                 targets.append(keep)
+                continue
+            if r in slow:
                 continue
         targets.append([r])
     return targets
@@ -154,48 +179,110 @@ def example(root, rel, name, max_lines=6):
 
 def _env(root, extra=()):
     env = dict(os.environ)
-    paths = list(extra) + [root] + ([os.path.join(root, 'src')] if os.path.isdir(os.path.join(root, 'src')) else [])
+    for k in list(env):
+        if k.lower() in ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
+            # the sandbox has no proxy; a proxy in the environment made 8 of requests' tests wait 5 s each (audit)
+            del env[k]
+    paths = list(extra) + ([os.path.join(root, 'src')] if os.path.isdir(os.path.join(root, 'src')) else []) + [root]
     env['PYTHONPATH'] = os.pathsep.join(paths + ([env['PYTHONPATH']] if env.get('PYTHONPATH') else []))
     env['PYTHONDONTWRITEBYTECODE'] = '1'
     return env
 
 
-COVER_PLUGIN = '''"""Records which of the wanted lines run (sys.monitoring, Python 3.12+): one callback per code location, then that
-location is switched off, so the cost is small."""
-import atexit, json, os, sys
+PLUGIN = r'''"""Per-test outcomes, written as each test ends (a run killed at its deadline keeps what finished), and with
+sys.monitoring (Python 3.12+) the wanted lines each test ran and the functions each test called (the call map)."""
+import json, os, sys
+_fh = open(os.environ["SWE_OUTCOMES"], "a", buffering=1) if os.environ.get("SWE_OUTCOMES") else None
 _want = {os.path.realpath(k): set(v) for k, v in json.loads(os.environ.get("SWE_COVER_FILES", "{}")).items()}
-_out = os.environ.get("SWE_COVER_OUT")
-_hits = []
+_root = os.path.realpath(os.environ.get("SWE_CALLMAP_ROOT", "")) if os.environ.get("SWE_CALLMAP_ROOT") else ""
+_lines, _calls, _real = set(), set(), {}
+
+def _w(rec):
+    if _fh is not None:
+        _fh.write(json.dumps(rec) + "\n")
+
+def _real_of(code):
+    f = _real.get(code.co_filename)
+    if f is None:
+        f = _real[code.co_filename] = os.path.realpath(code.co_filename)
+    return f
+
 _mon = getattr(sys, "monitoring", None)
-if _mon is not None and _want and _out:
+_tool = None
+if _mon is not None and (_want or _root):
     _tool = next((i for i in (3, 4, 1) if _mon.get_tool(i) is None), None)
-    if _tool is not None:
-        _mon.use_tool_id(_tool, "swe-cover")
-        _real = {}
+if _tool is not None:
+    _mon.use_tool_id(_tool, "swe-tests")
+    events = 0
+    if _want:
         def _line(code, n):
-            f = _real.get(code.co_filename)
-            if f is None:
-                f = _real[code.co_filename] = os.path.realpath(code.co_filename)
+            f = _real_of(code)
             if n in _want.get(f, ()):
-                _hits.append([f, n])
+                _lines.add((f, n))
             return _mon.DISABLE
         _mon.register_callback(_tool, _mon.events.LINE, _line)
-        _mon.set_events(_tool, _mon.events.LINE)
-        def _save():
-            with open(_out, "w") as fh:
-                json.dump(_hits, fh)
-        atexit.register(_save)
+        events |= _mon.events.LINE
+    if _root:
+        def _start(code, offset):
+            f = _real_of(code)
+            if f.startswith(_root):
+                _calls.add((f, code.co_qualname))
+            return _mon.DISABLE
+        _mon.register_callback(_tool, _mon.events.PY_START, _start)
+        events |= _mon.events.PY_START
+    _mon.set_events(_tool, events)
+
+def _short(report):
+    try:
+        text = str(report.longrepr)
+    except Exception:
+        return "", ""
+    lines = text.splitlines()
+    marked = next((l[1:].strip() for l in lines if l.startswith(">")), "")
+    errs = [l[1:].strip() for l in lines if l.startswith("E ")]
+    if not errs:
+        errs = [l.strip() for l in lines[-4:] if l.strip()]
+    return marked[:300], "\n".join(e[:300] for e in errs[:8])
+
+def pytest_collectreport(report):
+    if report.failed:
+        marked, msg = _short(report)
+        _w({"id": report.nodeid or "<collection>", "o": "error", "msg": msg, "marked": marked})
+
+def pytest_runtest_logstart(nodeid, location):
+    _lines.clear()
+    _calls.clear()
+    if _tool is not None:
+        _mon.restart_events()          # every line and function counts again for this test
+
+def pytest_runtest_logreport(report):
+    if report.when == "call" or report.outcome != "passed":
+        if report.outcome == "failed":
+            o = "failed" if report.when == "call" else "error"
+        else:
+            o = report.outcome
+        rec = {"id": report.nodeid, "o": o}
+        if o in ("failed", "error"):
+            rec["marked"], rec["msg"] = _short(report)
+        _w(rec)
+    if report.when == "teardown":
+        if _lines or _calls:
+            _w({"id": report.nodeid, "lines": sorted(_lines), "calls": sorted(_calls)})
 '''
 
+RANK = {'passed': 0, 'skipped': 1, 'failed': 2, 'error': 3}
+PORT_CLASH = re.compile(r'Address already in use|EADDRINUSE|\[Errno 98\]|\[Errno 48\]')
+NO_MODULE = re.compile(r"No module named '([\w.]+)'")
 
-def _cover_dir():
-    """A directory holding the coverage plugin, outside the skill's files (they are deleted when the script ends)."""
-    d = os.path.join(_state.directory(), 'cover')
+
+def _plugin_dir():
+    """A directory holding the plugin, outside the skill's files (they are deleted when the script ends)."""
+    d = os.path.join(_state.directory(), 'plugin')
     os.makedirs(d, exist_ok=True)
-    path = os.path.join(d, 'swe_cover_plugin.py')
-    if not os.path.exists(path):
+    path = os.path.join(d, 'swe_tests_plugin.py')
+    if not os.path.exists(path) or open(path).read() != PLUGIN:
         with open(path, 'w') as fh:
-            fh.write(COVER_PLUGIN)
+            fh.write(PLUGIN)
     return d
 
 
@@ -205,15 +292,18 @@ SNAPSHOT_STUB = ('_MISSING = object()\n'
 
 
 def _stub_dir(modules):
-    """A directory of stand-in modules for test-only packages the environment lacks: every attribute is an object
-    equal to anything, except inline_snapshot's snapshot(value) and Is(value), which return the value: 290 of fastapi's
-    468 test files assert `== snapshot({...})`, and a stand-in equal to anything made them pass whatever the code did
-    (fastapi_14986, V13b: a deletion of the root_path behaviour passed)."""
-    d = os.path.join(_state.directory(), 'stubs')
+    """A directory of stand-in modules for test-only packages the environment lacks, one directory per set of
+    modules (a stand-in never outlives the run that needs it: audit, a stub written once shadowed later runs): every
+    attribute is an object equal to anything, except inline_snapshot's snapshot(value) and Is(value), which return
+    the value: 290 of fastapi's 468 test files assert `== snapshot({...})`, and a stand-in equal to anything made them
+    pass whatever the code did (fastapi_14986, V13b)."""
+    key = '_'.join(sorted(modules))
+    d = os.path.join(_state.directory(), 'stubs', re.sub(r'\W', '_', key)[:80])
     os.makedirs(d, exist_ok=True)
     body = ('class _Any:\n    def __init__(self, *a, **k): pass\n    def __call__(self, *a, **k): return _Any()\n'
             '    def __eq__(self, other): return True\n    def __ne__(self, other): return False\n'
             '    def __getattr__(self, name): return _Any()\n    def __repr__(self): return "<any>"\n'
+            '    def __or__(self, other): return self\n    __ror__ = __or__\n    def __iter__(self): return iter(())\n'
             '    __hash__ = object.__hash__\n'
             'def __getattr__(name): return _Any()\n')
     for m in modules:
@@ -222,99 +312,159 @@ def _stub_dir(modules):
     return d
 
 
-def _parse(out):
-    failed = set()
-    for line in out.splitlines():
-        m = re.match(r'(FAILED|ERROR) (\S+)', line)
-        if m:
-            failed.add(m.group(2))
-    passed = sum(int(x) for x in re.findall(r'(\d+) passed', out))
-    return failed, passed
+def _installed(top):
+    """Whether a top-level module can be imported here (an installed package is never replaced by a stand-in)."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec(top) is not None
+    except (ImportError, ValueError):
+        return False
 
 
-def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None):
-    """Runs each target group in its own pytest process, in parallel (one after the other when they clash on a port).
-    Returns {'ran', 'failed', 'passed', 'output',
-    'timeouts', 'missing', 'covered'}: ran is False when pytest itself could not run; covered is the set of (rel,
-    line) of cover ({rel: lines}) that the tests ran, or None when it could not be measured."""
-    timeout = timeout or FILE_TIMEOUT
-    extra = [_stub_dir(stubs)] if stubs else []
-    flags = PYTEST + ([f'--timeout={TEST_TIMEOUT}'] if _has_pytest_timeout() else [])
-    cover_env, outs = {}, []
-    if cover:
-        extra = [_cover_dir()] + extra
-        flags = flags + ['-p', 'swe_cover_plugin']
-        cover_env['SWE_COVER_FILES'] = json.dumps({os.path.join(cwd or root, rel): sorted(lines)
-                                                  for rel, lines in cover.items()})
-    serial = bool(_state.load('serial_tests', False)) and len(targets) > 1
-    result = _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, serial)
-    if not serial and len(targets) > 1 and PORT_CLASH.search(result['output']):
-        # httpx_3672 (V20, V21 and a local run): the test files start servers on one fixed port, so the parallel
-        # processes failed each other with 'Address already in use' and every edit counted as breaking 7-12 tests;
-        # the groups run again one after the other, and so for the rest of the task
-        _state.save('serial_tests', True)
-        outs.clear()
-        result = _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, True)
-    return result
+def _missing_modules(root, text):
+    """Top-level modules the output says are missing and that are neither in the repository nor installed."""
+    out = set()
+    for m in NO_MODULE.findall(text):
+        top = m.split('.')[0]
+        if '.' in m and _installed(top):
+            continue                     # a submodule of an installed package: the code's own error
+        if os.path.exists(os.path.join(root, top)) or os.path.exists(os.path.join(root, top + '.py')) or \
+                os.path.exists(os.path.join(root, 'src', top)) or _installed(top):
+            continue
+        out.add(top)
+    return out
 
 
-PORT_CLASH = re.compile(r'Address already in use|EADDRINUSE|\[Errno 98\]|\[Errno 48\]')
+def _untracked(cwd):
+    out = _repo.git(cwd, 'ls-files', '--others', '--exclude-standard') or ''
+    return {l.strip() for l in out.splitlines() if l.strip()}
 
 
-def _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, serial):
-    """The pytest runs of the target groups, all at once or (serial) one after the other."""
-    procs = []
-    deadline = time.time() + timeout          # one deadline for all the runs, not one per run
+def _limit_memory():
+    """A pytest process may not take the whole sandbox (4 GiB): a test that hangs or leaks dies alone (rich_3772 and
+    rich_3480 run out of memory on the original code)."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT, MEM_LIMIT))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
+def _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial):
+    """One pytest process per target group, all at once or (serial) one after the other; per group: outcomes
+    {id: o}, messages {id: (marked line, E lines)}, hits {id: (lines, calls)}, timed out, exit code, output."""
+    before = _untracked(cwd)
+    results, procs = [], []
+    deadline = time.time() + timeout
     for k, group in enumerate(targets):
+        fd, outcomes = tempfile.mkstemp(prefix='swe_outcomes_', suffix='.jsonl')
+        os.close(fd)
         out = tempfile.TemporaryFile('w+')
-        env = _env(cwd or root, extra)
-        if cover:
-            outs.append(os.path.join(_state.directory(), f'cover_{os.getpid()}_{k}.json'))
-            if os.path.exists(outs[-1]):
-                os.remove(outs[-1])
-            env.update(cover_env, SWE_COVER_OUT=outs[-1])
-        p = subprocess.Popen([sys.executable] + flags + group, cwd=cwd or root, env=env,
-                             stdout=out, stderr=subprocess.STDOUT, text=True)
-        procs.append((group, p, out))
+        env = _env(cwd, extra)
+        env.update(env_extra, SWE_OUTCOMES=outcomes)
+        p = subprocess.Popen([sys.executable] + flags + list(group), cwd=cwd, env=env, stdout=out,
+                             stderr=subprocess.STDOUT, text=True, preexec_fn=_limit_memory)
+        procs.append((group, p, out, outcomes))
         if serial:
-            deadline = time.time() + timeout    # one after the other: each run has its own deadline
+            deadline = time.time() + timeout
             try:
                 p.wait(timeout=max(0.1, deadline - time.time()))
             except subprocess.TimeoutExpired:
-                pass                            # killed and counted below
-    result = {'ran': False, 'failed': set(), 'passed': 0, 'output': '', 'timeouts': [], 'missing': set(),
-              'covered': None}
-    for group, p, out in procs:
+                pass
+    for group, p, out, outcomes in procs:
+        timed_out = False
         try:
-            p.wait(timeout=max(0.1, deadline - time.time()))
+            p.wait(timeout=max(0.1, deadline - time.time()) if not serial else 0.1)
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
-            result['timeouts'].append(group[0].split('::')[0])
+            timed_out = True
         out.seek(0)
         text = out.read()
         out.close()
-        if 'No module named pytest' in text or 'pytest is disabled' in text:
-            continue
-        result['ran'] = True
-        for m in re.findall(r"ModuleNotFoundError: No module named '([\w.]+)'", text):
-            top = m.split('.')[0]
-            if not os.path.exists(os.path.join(root, top)) and not os.path.exists(os.path.join(root, 'src', top)):
-                result['missing'].add(top)
-        failed, passed = _parse(text)
-        result['failed'] |= failed
-        result['passed'] += passed
-        result['output'] += text
-    base = os.path.realpath(cwd or root)
-    for path in outs:
+        res = {'group': list(group), 'outcomes': {}, 'msgs': {}, 'hits': {}, 'timeout': timed_out,
+               'exit': p.returncode, 'output': text}
         try:
-            with open(path) as fh:
-                hits = json.load(fh)
-        except (OSError, ValueError):
+            with open(outcomes) as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if 'o' in rec:
+                        old = res['outcomes'].get(rec['id'])
+                        if old is None or RANK[rec['o']] > RANK[old]:
+                            res['outcomes'][rec['id']] = rec['o']
+                        if rec['o'] in ('failed', 'error'):
+                            res['msgs'].setdefault(rec['id'], (rec.get('marked', ''), rec.get('msg', '')))
+                    else:
+                        res['hits'][rec['id']] = (rec.get('lines', []), rec.get('calls', []))
+        except OSError:
+            pass
+        finally:
+            try:
+                os.remove(outcomes)
+            except OSError:
+                pass
+        results.append(res)
+    for rel in _untracked(cwd) - before:
+        # files a test writes into the working directory (fastapi's templates test copies static/ and templates/
+        # there): they would enter the patch (audit)
+        try:
+            os.remove(os.path.join(cwd, rel))
+        except OSError:
+            pass
+    return results
+
+
+def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None, callmap=False):
+    """Runs the target groups with the outcome plugin. Returns {'ran', 'outcomes', 'msgs', 'covered', 'calls',
+    'timeouts' (groups killed at the deadline), 'missing' (modules the output says are missing), 'output', 'broken_run'
+    (groups that ran no test and ended with an error, e.g. a conftest that cannot import)}."""
+    timeout = timeout or FILE_TIMEOUT
+    cwd = cwd or root
+    extra = [_plugin_dir()] + ([_stub_dir(stubs)] if stubs else [])
+    flags = PYTEST + ['-p', 'swe_tests_plugin'] + ([f'--timeout={TEST_TIMEOUT}'] if _has_pytest_timeout() else [])
+    env_extra = {}
+    if cover:
+        env_extra['SWE_COVER_FILES'] = json.dumps({os.path.join(cwd, rel): sorted(lines) for rel, lines in cover.items()})
+    if callmap:
+        env_extra['SWE_CALLMAP_ROOT'] = cwd
+    serial = bool(_state.load('serial_tests', False)) and len(targets) > 1
+    res = _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial)
+    if not serial and len(targets) > 1 and any(PORT_CLASH.search(g['output']) for g in res):
+        # httpx_3672 (V20, V21, a local run): the test files start servers on one fixed port, so the processes
+        # failed each other with 'Address already in use'; the groups run again one after the other, and so for the
+        # rest of the task
+        _state.save('serial_tests', True)
+        res = _run_groups(cwd, targets, timeout, extra, flags, env_extra, True)
+    out = {'ran': False, 'outcomes': {}, 'msgs': {}, 'covered': None, 'calls': {}, 'timeouts': [], 'missing': set(),
+           'output': '', 'broken_run': []}
+    base = os.path.realpath(cwd)
+    for g in res:
+        if 'No module named pytest' in g['output'] or 'pytest is disabled' in g['output']:
             continue
-        result['covered'] = result['covered'] or set()
-        result['covered'] |= {(os.path.relpath(f, base), n) for f, n in hits}
-    return result
+        out['ran'] = True
+        out['output'] += g['output']
+        out['missing'] |= _missing_modules(cwd, g['output'])
+        out['outcomes'].update(g['outcomes'])
+        out['msgs'].update(g['msgs'])
+        if g['timeout']:
+            out['timeouts'].append(g['group'])
+        elif not g['outcomes'] and g['exit'] not in (0, 5):
+            out['broken_run'].append(g['group'])
+        for tid, (lines, calls) in g['hits'].items():
+            if cover and lines and g['outcomes'].get(tid) == 'passed':
+                # only tests that passed count: a test that ran the line and then failed anyway checks nothing
+                out['covered'] = out['covered'] or set()
+                out['covered'] |= {(os.path.relpath(f, base), n) for f, n in lines}
+            for f, qual in calls:
+                out['calls'].setdefault(f'{os.path.relpath(f, base)}::{qual}', []).append(tid)
+    if cover and out['covered'] is None and getattr(sys, 'monitoring', None) is not None and out['outcomes']:
+        out['covered'] = set()
+    if cover and getattr(sys, 'monitoring', None) is None:
+        out['covered'] = None
+    return out
 
 
 def _has_pytest_timeout():
@@ -333,30 +483,52 @@ def _base_worktree(root):
     return path if os.path.exists(path) else None
 
 
-def failing_before(root, ids, stubs=()):
-    """The ids (first MAX_BASE_IDS) that also fail on the original code. Results are kept, so each id runs on the
-    original once per task."""
-    known = _state.load('original_results', {})
-    ids = sorted(ids)[:MAX_BASE_IDS]
-    todo = [i for i in ids if i not in known]
-    base = _base_worktree(root) if todo else None
-    if base:
-        r = run(base, [todo], timeout=BASE_TIMEOUT, cwd=base, stubs=stubs)
-        if r['ran']:
-            for i in todo:
-                known[i] = i in r['failed'] or any(f.startswith(i) for f in r['failed'])
-            _state.save('original_results', known)
-    return {i for i in ids if known.get(i)}
+def _key(targets, stubs):
+    return json.dumps([sorted(map(list, targets)), sorted(stubs)])
+
+
+def base_run(root, targets):
+    """(outcomes on the original code for exactly these target groups, stubs, complete). The modules to stub are
+    found here only, on the original code, until no new one appears (at most 3 rounds): a module missing only after an
+    edit is the edit's fault, not a test-only dependency (audit: a typo'd import was stubbed and passed). Cached per
+    groups and stubs; a run that timed out is not cached and its unfinished tests stay unknown."""
+    base = _base_worktree(root)
+    if base is None:
+        return None, tuple(_state.load('stubs', [])), False
+    cache = _state.load('base_runs', {})
+    stubs = set(_state.load('stubs', []))
+    for _ in range(3):
+        key = _key(targets, stubs)
+        if key in cache:
+            return cache[key], tuple(sorted(stubs)), True
+        r = run(base, targets, timeout=BASE_TIMEOUT, cwd=base, stubs=tuple(sorted(stubs)))
+        if not r['ran']:
+            return None, tuple(sorted(stubs)), False
+        new = r['missing'] - stubs
+        if new:
+            stubs |= new
+            _state.save('stubs', sorted(stubs))
+            continue
+        complete = not r['timeouts']
+        if complete:
+            cache[key] = r['outcomes']
+            _state.save('base_runs', cache)
+        return r['outcomes'], tuple(sorted(stubs)), complete
+    return None, tuple(sorted(stubs)), False
 
 
 def _test_uses(root, test_id, names):
-    """Whether the test function test_id ('file::name' or 'file::Class::name') uses one of names."""
+    """Whether the test function test_id ('file::name', 'file::Class::name', or a whole file 'file') uses one of
+    names (a file-level id: the file names one, e.g. it imports the old name)."""
     parts = test_id.split('::')
     try:
-        tree = ast.parse(_repo.read_text(root, parts[0]))
-    except (SyntaxError, ValueError):
+        text = _repo.read_text(root, parts[0])
+        tree = ast.parse(text)
+    except (OSError, SyntaxError, ValueError):
         return False
-    lines = _repo.read_text(root, parts[0]).splitlines()
+    if len(parts) == 1:
+        return any(re.search(rf'\b{re.escape(n)}\b', text) for n in names)
+    lines = text.splitlines()
     want = parts[-1].split('[')[0]
     for fname, a, b in _test_functions(tree):
         if fname.split('::')[-1] == want:
@@ -365,50 +537,169 @@ def _test_uses(root, test_id, names):
     return False
 
 
-def check(root, changed, renamed=(), cover=None):
-    """The verdict on the current code: ('OK' | 'UNCHECKED' | 'BROKEN', detail, new failures). OK needs passing tests
-    that run the changed statements (cover: {rel: lines}; a false OK is worse than none: Reflexion's 16.3% false
-    positives, Olausson); passing tests that do not run them, or no test at all, give UNCHECKED. A new failure of a
-    test that uses a name the statement renames does not count: the hidden tests replace such tests."""
-    slow = _state.load('slow_tests', [])
-    targets = [g for g in select(root, changed) if g[0].split('::')[0] not in slow]
+def import_check(root, rels):
+    """[(module, error)] of the changed modules that cannot be imported now but can on the original code (audit: an
+    edit that broke importing requests was 'Kept, not checked' because conftest failed before any test ran)."""
+    mods = [m for rel in rels if rel.endswith('.py') and not _repo.is_test_path(rel) and not _repo.is_doc_path(rel)
+            for m in _module_names(rel)]
+    if not mods:
+        return []
+    code = ('import importlib, json, sys, traceback\nres = {}\n'
+            'for m in sys.argv[1:]:\n'
+            '    try:\n        importlib.import_module(m)\n'
+            '    except BaseException as e:\n'
+            '        res[m] = traceback.format_exception_only(type(e), e)[-1].strip()\n'
+            'print("SWEIMPORT" + json.dumps(res))\n')
+
+    def probe(cwd):
+        try:
+            p = subprocess.run([sys.executable, '-c', code] + mods, cwd=cwd, env=_env(cwd), capture_output=True,
+                               text=True, timeout=60, preexec_fn=_limit_memory)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        m = re.search(r'SWEIMPORT(\{.*\})', p.stdout)
+        return json.loads(m.group(1)) if m else None
+
+    now = probe(root)
+    if not now:
+        return []
+    base = _base_worktree(root)
+    before = probe(base) if base else {}
+    if before is None:
+        return []
+    return [(m, err) for m, err in now.items() if m not in before]
+
+
+def callmap(root):
+    """{'rel::qualname': [test ids]}: which tests call each function of the repository, from one run of the test
+    suite on the original code, once per task, with a deadline (a run cut short keeps the tests that finished).
+    fastapi_14448's places are called by 115-598 tests each, none of which the lexical selection found (audit)."""
+    cached = _state.load('callmap', None)
+    if cached is not None:
+        return cached
+    base = _base_worktree(root)
+    tests = sorted({r.split('/')[0] for r in _repo.iter_py(base or root, tests=True) if _is_test_file(r)})
+    m = {}
+    if base and tests:
+        stubs = set(_state.load('stubs', []))
+        deadline = time.time() + MAP_TIMEOUT
+        for _ in range(2):
+            # a first round that stops on a missing test-only module (inline_snapshot in fastapi) runs again with
+            # its stand-in, within the same deadline
+            r = run(base, [tests], timeout=max(10, deadline - time.time()), cwd=base, stubs=tuple(sorted(stubs)),
+                    callmap=True)
+            new = r['missing'] - stubs
+            m = {k: sorted(set(v)) for k, v in r['calls'].items()}
+            if not new or time.time() > deadline - 10:
+                break
+            stubs |= new
+            _state.save('stubs', sorted(stubs))
+    _state.save('callmap', m)
+    return m
+
+
+def _rerun(root, ids, stubs):
+    """The ids that fail when run again on their own (one process)."""
+    if not ids:
+        return set()
+    r = run(root, [list(ids)], stubs=stubs)
+    return {i for i in ids if r['outcomes'].get(i) in ('failed', 'error')}
+
+
+def check(root, changed, renamed=(), cover=None, undo=None):
+    """The verdict on the current code: ('OK' | 'UNCHECKED' | 'BROKEN', detail, new failures). A failure counts against
+    the edit only when the same test, in the same groups, passes on the original code, fails again when run alone,
+    and (undo = (rel, lines before the edit)) passes on the code just before this edit. OK needs passing tests that run
+    the changed statements (cover: {rel: lines}; a false OK is worse than none: Reflexion's 16.3% false positives,
+    Olausson). A new failure of a test that uses a name the statement renames does not count: the hidden tests
+    replace such tests."""
+    broken_imports = import_check(root, list(changed))
+    if broken_imports:
+        detail = '\n'.join(f'  importing {m} fails: {err}' for m, err in broken_imports[:3])
+        return 'BROKEN', 'the changed code cannot be imported any more:\n' + detail, [m for m, _ in broken_imports]
+    targets = select(root, changed)
     if not targets:
-        return 'UNCHECKED', 'no existing test uses the changed code' + (
-            f' (left out because they ran out of time before: {", ".join(slow)})' if slow else ''), []
-    r = run(root, targets, cover=cover)
-    if r['timeouts']:
-        _state.save('slow_tests', sorted(set(slow) | set(r['timeouts'])))
-    stubs = ()
-    if r['missing']:
-        stubs = tuple(sorted(r['missing']))
-        r = run(root, targets, stubs=stubs, cover=cover)
+        return 'UNCHECKED', 'no existing test uses the changed code (it imports without errors)', []
+    stubs = tuple(_state.load('stubs', []))
+    r = run(root, targets, stubs=stubs, cover=cover)
     if not r['ran']:
         return 'UNCHECKED', 'pytest could not run', []
-    files = sorted({g[0].split('::')[0] for g in targets} - set(r['timeouts']))
-    late = f'; out of time, not counted: {", ".join(r["timeouts"])}' if r['timeouts'] else ''
-    if not r['failed']:
-        if r['passed'] == 0:
-            return 'UNCHECKED', 'the selected tests did not finish (' + ', '.join(r['timeouts'] or files) + ')', []
-        n = r['passed']
-        return _ran_it(r, cover, f'{n} existing test{"s pass" if n != 1 else " passes"} ({", ".join(files)}){late}')
-    before = failing_before(root, r['failed'], stubs)
-    new = sorted(f for f in r['failed'] if f not in before and not any(f.startswith(b) for b in before))
-    # tests accepted as checking the old behaviour the issue changes (step.py _asserts_old_behaviour) stay failing
+    failing = {i for i, o in r['outcomes'].items() if o in ('failed', 'error')}
+    if r['missing'] - set(stubs) or failing or r['broken_run'] or not r['outcomes']:
+        base, stubs2, _ = base_run(root, targets)
+        if set(stubs2) != set(stubs):
+            r = run(root, targets, stubs=stubs2, cover=cover)
+            failing = {i for i, o in r['outcomes'].items() if o in ('failed', 'error')}
+            stubs = stubs2
+        missing = r['missing'] - set(stubs)
+        if missing:
+            return 'BROKEN', (f'the changed code imports {", ".join(sorted(missing))}, which is not installed here '
+                              '(the tests cannot import it)'), sorted(missing)
+    else:
+        base = {}
+    files = sorted({g[0].split('::')[0] for g in targets})
+    late = ''
+    if r['timeouts']:
+        late = '; out of time, the unfinished tests not counted: ' + ', '.join(g[0].split('::')[0] for g in r['timeouts'])
+        slow = _state.load('slow_tests', [])
+        _state.save('slow_tests', sorted(set(slow) | {g[0].split('::')[0] for g in r['timeouts']}))
+    if r['broken_run'] and base:
+        ran_before = [g for g in r['broken_run'] if any(i.split('::')[0] == g[0].split('::')[0] for i in base)]
+        if ran_before:
+            text = '\n'.join(l for l in r['output'].splitlines() if l.startswith('E ') or 'Error' in l)[-1200:]
+            return 'BROKEN', ('the tests cannot start any more (their conftest or imports fail), though they ran on '
+                              f'the original code:\n{text}'), [g[0] for g in ran_before]
+    passed = sum(1 for o in r['outcomes'].values() if o == 'passed')
+    if not failing:
+        if passed == 0:
+            return 'UNCHECKED', 'the selected tests did not finish (' + ', '.join(files) + ')' + late, []
+        return _ran_it(r, cover, f'{passed} existing test{"s pass" if passed != 1 else " passes"} '
+                                 f'({", ".join(files)}){late}')
+    base = base or {}
+
+    def was_ok(i):
+        if base.get(i) == 'passed':
+            return True
+        file = i.split('::')[0]
+        if i == file:              # a file that cannot be collected now: it was fine if its tests ran before
+            return base.get(i) != 'error' and any(b.startswith(file + '::') for b in base)
+        return False
+
+    new = sorted(i for i in failing if was_ok(i))
+    unknown = sorted(i for i in failing if i not in base and not was_ok(i))
     accepted = set(_state.load('accepted_failures', []))
-    new = [f for f in new if f not in accepted]
-    old_name = [f for f in new if renamed and _test_uses(root, f, renamed)]
-    new = [f for f in new if f not in old_name]
+    new = [i for i in new if i not in accepted]
+    old_name = [i for i in new if renamed and _test_uses(root, i, renamed)]
+    new = [i for i in new if i not in old_name]
     if old_name:
         late += (f'; {len(old_name)} failing tests use the renamed {", ".join(f"`{n}`" for n in renamed)} and do not '
                  f'count (the hidden tests replace them)')
+    if new:
+        again = _rerun(root, new, stubs)
+        flaky = [i for i in new if i not in again]
+        new = [i for i in new if i in again]
+        if flaky:
+            late += f'; {len(flaky)} failing tests passed when run again (not counted)'
+    if new and undo is not None:
+        rel, lines_before = undo
+        now = _repo.read_lines(root, rel)
+        try:
+            _repo.write_lines(root, rel, lines_before)
+            earlier = _rerun(root, new, stubs)
+        finally:
+            _repo.write_lines(root, rel, now)
+        if earlier:
+            new = [i for i in new if i not in earlier]
+            late += (f'; {len(earlier)} failing tests already failed before this edit, after the earlier edits '
+                     f'({", ".join(sorted(earlier)[:3])})')
     if not new:
-        if r['passed'] == 0:      # nothing passes: the tests say nothing about the change (SWE-ABS: not verified)
-            return 'UNCHECKED', (f'no selected test passes, before or after the change ({len(r["failed"])} failed '
-                                 f'already before it){late}'), []
-        already = len(r['failed']) - len(old_name)
-        return _ran_it(r, cover, f'{r["passed"]} existing tests pass' + (
-            f'; {already} failures were already there before the change' if already else '') + late)
-    return 'BROKEN', _failure_excerpt(r['output'], new), new
+        if passed == 0:      # nothing passes: the tests say nothing about the change (SWE-ABS: not verified)
+            return 'UNCHECKED', (f'no selected test passes ({len(failing)} failed for other reasons){late}'), []
+        already = len(failing)
+        return _ran_it(r, cover, f'{passed} existing tests pass' + (
+            f'; {already} failures were already there or are not this edit\'s' if already else '') + late +
+            (f'; {len(unknown)} failing tests could not be compared with the original code' if unknown else ''))
+    return 'BROKEN', _failure_excerpt(r, new), new
 
 
 def _ran_it(r, cover, detail):
@@ -419,35 +710,24 @@ def _ran_it(r, cover, detail):
     if r['covered'] is None:
         return 'OK', detail + ' (whether they run the changed lines could not be measured)', []
     if r['covered']:
-        return 'OK', detail + ' and run the changed lines', []
-    return 'UNCHECKED', re.sub(r'\bpass(es)?\b', lambda m: m.group(0) + ' but none of them runs the changed lines', detail, count=1), []
+        return 'OK', detail + '; they run the changed lines', []
+    return 'UNCHECKED', re.sub(r'\bpass(es)?\b', lambda m: m.group(0) + ' but none of them runs the changed lines',
+                               detail, count=1), []
 
 
-def _failure_excerpt(output, ids, limit=1500):
+def _failure_excerpt(r, ids, limit=1500):
     """Per new failing test (at most 3): its name and file, the line pytest marks with '>' and its 'E' lines (what was
     expected and what came). A failing test with expected vs actual is the feedback models repair best from; traceback
-    frames add little (Self-Debugging: 88.8 vs 89.5 with traces; FeedbackEval)."""
+    frames add little (Self-Debugging: 88.8 vs 89.5 with traces; FeedbackEval). A file that cannot be collected shows
+    its import error."""
     out = []
     for test_id in ids[:3]:
         parts = test_id.split('::')
-        name = parts[-1]
-        head = re.compile(rf'(?m)^_+ (?:\S+\.)?{re.escape(name)} _+$')   # one '_' when the id is long
-        m = head.search(output)
-        marked, errors = '', []
-        if m:
-            nxt = re.search(r'(?m)^(_+ (?!_)\S.* _+$|=+ short test summary)', output[m.end():])  # not '_ _ _'
-            body = output[m.end():m.end() + nxt.start()] if nxt else output[m.end():]
-            lines = body.splitlines()
-            arrows = [l for l in lines if l.startswith('>')]
-            marked = arrows[0][1:].strip() if arrows else ''    # the first frame is the test's own line
-            errors = [l[1:].strip() for l in lines if l.startswith('E ')][:6]
-        else:
-            short = [l for l in output.splitlines() if l.startswith(('FAILED', 'ERROR')) and test_id in l]
-            errors = [short[0].split(' - ', 1)[-1]] if short and ' - ' in short[0] else []
-        out.append(f'  {name} ({parts[0]}):')
+        marked, msg = r['msgs'].get(test_id, ('', ''))
+        out.append(f'  {parts[-1]} ({parts[0]}):' if len(parts) > 1 else f'  {parts[0]} (cannot be collected):')
         if marked:
             out.append(f'    the test runs: {marked[:200]}')
-        out.extend(f'    {e[:200]}' for e in errors)
+        out.extend(f'    {e[:200]}' for e in (msg or '').splitlines()[:6])
     more = f'\n  and {len(ids) - 3} more failing tests' if len(ids) > 3 else ''
     return ('\n'.join(out) + more)[:limit]
 

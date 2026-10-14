@@ -2274,8 +2274,17 @@ def _after_edit(root, state, i, p, r, before):
             changed[p['rel']].extend(l.strip() for l in before[i1:i2])
     renamed = sorted({n for r_ in state['requirements'] for n in r_.get('old', [])})
     cover = _status.changed_statements(before, after)
-    verdict, detail, new_failures = _tests.check(root, changed, renamed, cover={p['rel']: cover} if cover else None)
+    verdict, detail, new_failures = _tests.check(root, changed, renamed, cover={p['rel']: cover} if cover else None,
+                                                 undo=(p['rel'], before))
     notes = ''.join(f'\n  note: {x}' for x in r.repairs + r.warnings)
+    if verdict == 'BROKEN' and _pending_elsewhere(state, i, before, after, detail):
+        # gold check (httpx_3672): renaming complete -> reset in the parser broke the pool's tests with an
+        # AttributeError until the pool's call was renamed too, in every order: one editor per place could never keep
+        # the correct fix. A failure that names only what this edit renamed, added or removed, while other places of
+        # the plan are still to edit, keeps the edit; their edits are checked against the same tests
+        verdict = 'PENDING'
+        detail = ('kept for now: these tests fail on a name this edit changes, and the other planned places still '
+                  'have to change with it (they are checked after their edits):\n' + detail)
     shown = _changed_view(before, _repo.read_lines(root, p['rel']), p['rel'])
     if verdict == 'BROKEN' and _asserts_old_behaviour(state['plan'][i], detail, new_failures):
         # review: an existing test that asserts the behaviour the issue changes undid every correct edit. The same
@@ -2314,7 +2323,7 @@ def _after_edit(root, state, i, p, r, before):
         old_end = r.end - delta
         state['seen'][p['rel']] = sorted({m for m in marks if m < r.start} | {m + delta for m in marks if m > old_end}
                                          | set(range(r.start, r.end + 1)))
-    what = {'OK': 'Kept and checked', 'KEPT_AGAINST': 'Kept'}.get(verdict, 'Kept, not checked')
+    what = {'OK': 'Kept and checked', 'KEPT_AGAINST': 'Kept', 'PENDING': 'Kept'}.get(verdict, 'Kept, not checked')
     head = f'{what}: {p["handle"]} lines {r.start}-{r.end} changed; {detail}.{notes}\n{shown}'
     gone = _old_name_uses(root, before, _repo.read_lines(root, p['rel']), p['rel'])
     if gone:
@@ -2384,6 +2393,29 @@ def _old_name_uses(root, before, after, rel=''):
 def _edit_key(args):
     """The identity of an edit: its items without spacing differences."""
     return '\x00'.join(re.sub(r'\s+', ' ', str(a)).strip() for a in args if a is not None and str(a).strip())
+
+
+def _pending_elsewhere(state, i, before, after, detail):
+    """True when every new failure of the edit of plan entry i is an AttributeError, ImportError or NameError on a
+    name that the edit removed or added, and another place of the plan is still to edit (a rename or a new name
+    that spans places)."""
+    if not any(e['status'] == 'todo' for j, e in enumerate(state['plan']) if j != i):
+        return False
+    blocks = re.split(r'(?m)^  \S.*\(.*\):$', detail)[1:]
+    if not blocks:
+        return False
+    removed = set(IDENT_RE.findall(''.join(before))) ^ set(IDENT_RE.findall(''.join(after)))
+    for b in blocks:
+        # "AttributeError: 'HTTPParser' object has no attribute 'complete'", "cannot import name 'reset'",
+        # "NameError: name 'reset' is not defined": one of the quoted names is the changed one
+        line = next((l for l in b.splitlines() if re.search(r'AttributeError|ImportError|NameError|cannot import', l)),
+                    None)
+        if line is None or not set(re.findall(r"'(\w+)'", line)) & removed:
+            return False
+    return True
+
+
+IDENT_RE = re.compile(r'[A-Za-z_]\w*')
 
 
 def _assert_only(detail, failures):
