@@ -253,3 +253,17 @@ What the first runs (Haiku through the proxy) changed:
 | F2 repairing from failing tests | closer | the tests that undid a place reach its specifier |
 | B11, F3 doubting a verdict | closer | a failing reproduction test outranks a "done" review |
 | B8 many forms | farther (small) | the editor has two more forms; they are offered in the window only when part of the place is hidden |
+
+**st3** (Haiku, build 8b6196a, the same 13 tasks): 6/13.
+- Resolved: rich_3006, rich_3052, rich_3521, rich_3894, fastapi_14851, and fastapi_14873 (the long-definition forms).
+- On the usual 10 that is 3/10, against 4-5/10 for the previous design with the same model (h1, h2).
+- Still failing:
+  - **fastapi_14986.** "do not store `root_path` in servers" is written as "the servers do not contain root_path";
+    the reproduction test and the specifier follow it against three existing tests. Since the next commit the re-specified
+    place is told those tests show behaviour the issue keeps.
+  - **requests_7328.** A `replace` block was counted twice; fixed after the round.
+  - **fastapi_14448.** As before.
+  - **httpx_3672.** 2,016 s, not resolved.
+  - **fastapi_15800, fastapi_14583, rich_3469.** Statement-limited.
+- Time per task: 96-327 s except requests (580 s) and httpx (2,016 s). That is still over Kaggle's ~6-minute average
+  for those repositories.

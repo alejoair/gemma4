@@ -110,3 +110,5 @@ The same 10 dev tasks, judged by tools/judge.py. Never used to train Gemma.
 | s2 | 10-14 07:20 | Sonnet | 16c216c (serial calls) | 6/10 | requests_7328 resolved |
 | s3 | 10-14 08:09 | Sonnet | 364e443 | 6/10 | the 4 failures are statement-limited (15800, 14583, 3469) or the specifier's reading (14448) |
 | s4 | 10-14 09:00 | Sonnet | d50331a | 0/1 | fastapi_14448 alone: `_solve_generator` shown first with the branch-order question, still no change |
+| st1+st2 | 10-14 14:29 | Haiku | stages build 21fb1c3-6052f0c | 4/13 (2/10 of the usual set) | first runs of the redesign (docs/design_stages.md); fixes made during the round |
+| st3 | 10-14 15:58 | Haiku | stages build 8b6196a | 6/13 (3/10 of the usual set; fastapi_14873, rich_3894, rich_3052 also resolved) | httpx_3672 2,016 s; requirements still paraphrase the issue wrongly in fastapi_14986 |
