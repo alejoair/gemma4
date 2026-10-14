@@ -195,7 +195,8 @@ original code only; an import check of the changed modules; a new failure must f
 edit; tests chosen from a once-per-task call map (which tests call which function), with the lexical score as fallback.
 
 Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
-(vLLM: 0). Since 2026-10-10 23:21 UTC the server runs with Kaggle's reasoning budget (512) and the model's
+(vLLM: 0). From 2026-10-10 23:21 UTC the server ran with Kaggle's reasoning budget (512); the peer reports it was later
+raised to 1024 at the 'editor' experiment's request, and it runs with 1024 now (10-14; the user decides 512 or 1024). The model's
 `generation_config.json` sampling defaults (see below); before that its budget was 3072.
 
 ## Harness essentials (swegemma 0.2.11; details in `docs/adk_harness.md`)
@@ -215,12 +216,14 @@ Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10
 
 ## The local model and the peer session
 
-A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
+On 2026-10-14 drive F: of the PC was damaged after unexpected restarts: F:\llm-lab (LoRA adapters, data, the 24 GB
+training base, the 12B copy) is not accessible until the user repairs it (chkdsk as administrator); the server was
+rebuilt in C:\llm-lab-c with the 26B GGUF. A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
 virtual con CLI", via Remote Control) runs the local infrastructure:
 - `https://llm.rayflow.dev`: llama.cpp `llama-server`. **Since 2026-10-11 the model is `gemma-26b`** (Gemma 4 26B A4B
   QAT Q4_0, MoE with 3.8B active parameters; the 12B, `gemma-12b`, until then). llama-server does not check the
   `model` field: send `gemma-26b` so results are not mixed up. Options: `-c 32768 -ngl 99 --parallel 1 --jinja
-  --reasoning-budget 512 --temp 1.0 --top-k 64 --top-p 0.95 -fa on` (Kaggle's thinking budget and the model's
+  --reasoning-budget 1024 --temp 1.0 --top-k 64 --top-p 0.95 -fa on` (1024 since a later request; Kaggle's coordinator uses 512; the model's
   defaults for unset parameters) plus MTP speculative decoding (`--spec-type draft-mtp`, unsloth's
   `mtp-gemma-4-26B-A4B-it.gguf`, `--spec-draft-n-max 3`). Measured by the peer: 16.3 GB VRAM; generation 126 tok/s
   without MTP, 142-173 with it; prompt 3,800 tok/s without MTP, 3,455 with it (the 12B: 54-65 and 2,700). With MTP
