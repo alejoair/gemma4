@@ -515,7 +515,7 @@ def locate(root, st, args):
         return 'No place was read. Send 1 to 3 names from the list.\n\n' + nxt
     st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end']}
                           for c in found[:3]]
-    return f'{rid} is decided at: ' + ', '.join(c['handle'] for c in found[:3]) + '.\n\n' + DONE
+    return f'{rid} is decided at: ' + ', '.join(c.get('handle') or c['name'] for c in found[:3]) + '.\n\n' + DONE
 
 
 def _fallback_locate(root, st, r):
@@ -689,32 +689,51 @@ def _order(root, plan):
     return out
 
 
+def _missing_names(text):
+    """The code names in an agent's 'missing' text: 'PromptBase.__init__ and Prompt.ask' gives both."""
+    names = re.findall(r'[\w./-]+\.py::[A-Za-z_][\w.]*|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[A-Za-z_]\w*', text or '')
+    names = [n for n in dict.fromkeys(names) if '.' in n or '_' in n or n[:1].isupper()]
+    dotted = [n for n in names if '.' in n or '::' in n]
+    return (dotted or names)[:3]
+
+
 def _add_missing(root, st):
-    """Code an editor or the review named as missing: added to the plan, to specify."""
+    """Code an editor or the review named as missing: added to the plan before the place that needs it, to specify."""
     while st['missing']:
-        name, note, rids = st['missing'].pop(0)
-        if _place_by(st, name):
-            p = _place_by(st, name)
-            p['sentence'], p['note'] = None, note
-            continue
-        found = [c for c in step._resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
-        if found:
-            c = found[0]
-            new = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'], 'reqs': rids,
-                    'sentence': None, 'status': None, 'note': note}]
-            auto, _ = _related(root, st, new)
-            for d in auto:
-                if not any(_key(q) == _key(d) for q in st['plan'] + new):
-                    new.append({**{k: d[k] for k in ('rel', 'name', 'start', 'end')}, 'reqs': rids, 'sentence': None,
-                                'status': None})
-            st['plan'] += new
-        elif '.' in name:
-            owner = step._new_definition_owner(root, name)
-            if owner:
-                c, short = owner
-                st['plan'].append({'rel': c['rel'], 'name': f'{c["name"]}.{short}', 'start': c['start'],
-                                   'end': c['end'], 'new': True, 'owner': c['name'], 'reqs': rids,
-                                   'sentence': None, 'status': None, 'note': note})
+        entry = st['missing'].pop(0)
+        text, note, rids = entry[0], entry[1], entry[2]
+        requester = entry[3] if len(entry) > 3 else None
+        added = []
+        for name in _missing_names(text) or [text]:
+            if _place_by(st, name):
+                p = _place_by(st, name)
+                if p.get('status') in ('done', 'nochange', 'failed'):
+                    p['old_sentence'] = p.get('sentence')
+                    p['sentence'], p['note'] = None, note
+                continue
+            found = [c for c in step._resolve(root, [name]) if not _repo.is_doc_path(c['rel'])]
+            if found:
+                c = found[0]
+                if any(_key(q) == _key(c) for q in st['plan'] + added):
+                    continue
+                added.append({'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'], 'reqs': rids,
+                              'sentence': None, 'status': None, 'note': note})
+                auto, _ = _related(root, st, [added[-1]])
+                for d in auto:
+                    if not any(_key(q) == _key(d) for q in st['plan'] + added):
+                        added.append({**{k: d[k] for k in ('rel', 'name', 'start', 'end')}, 'reqs': rids,
+                                      'sentence': None, 'status': None})
+            elif '.' in name:
+                owner = step._new_definition_owner(root, name)
+                if owner:
+                    c, short = owner
+                    added.append({'rel': c['rel'], 'name': f'{c["name"]}.{short}', 'start': c['start'],
+                                  'end': c['end'], 'new': True, 'owner': c['name'], 'reqs': rids,
+                                  'sentence': None, 'status': None, 'note': note})
+        for p in added:
+            _refresh(root, p)
+        at = next((i for i, q in enumerate(st['plan']) if _key(q) == requester), len(st['plan']))
+        st['plan'][at:at] = added
         _handles(st)
 
 
@@ -866,8 +885,10 @@ def edit(root, st, args):
         return f'{p["handle"]} keeps its code.\n\n{DONE}'
     if first == 'missing' and len(items) >= 2:
         st['missing'].append([_args.clean(items[1]), f'the editor of {p["handle"]} needs it: ' + ' '.join(items[2:])[:300],
-                              list(p['reqs'])])
-        return f'{_args.clean(items[1])} is added to the plan.\n\n{DONE}'
+                              list(p['reqs']), _key(p)])
+        st['asked'].pop(f'edit {_key(p)} {st["round"]}', None)      # its edit is asked again after the new code
+        return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
+                f'\n\n{DONE}')
     p['edits'] = p.get('edits', 0) + 1
     if p['edits'] > MAX_EDITS:
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
@@ -1010,7 +1031,7 @@ def review(root, st, args):
                 p['old_sentence'] = p.get('sentence')
                 p['sentence'], p['note'] = None, f'the review of {rid} says: {what}'
             else:
-                st['missing'].append([name, f'the review of {rid} says: {what}', [rid]])
+                st['missing'].append([name, f'the review of {rid} says: {what}', [rid], None])
         return f'{rid}: not done; {name} goes back to be specified and edited.\n\n{DONE}'
     return 'The answer was not read. ' + nxt
 
