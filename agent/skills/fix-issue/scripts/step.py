@@ -41,6 +41,7 @@ try:
 except ImportError:
     ROLE = 'single'
 
+PER_FILE = 5            # candidates from one file; the others are counted under its last one
 N_CANDIDATES = 10
 MAX_PLACES = 8
 CODE_LINES = 120        # numbered lines shown for one place; a longer place shows its best-matching part
@@ -294,6 +295,8 @@ def _window(root, state, i, show=None):
         n = len(_repo.read_lines(root, p['rel']))
         body = _code_view(root, p['rel'], 1, n, _focus(state, entry))
     else:
+        if show is None and (entry.get('intent') or '').startswith('Add the new '):
+            show = (max(p['start'], p['end'] - 40), p['end'])     # where the new definition is added
         body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, entry),
                           limit=EDITOR_EDIT_LINES if ROLE == 'editor' else EDIT_LINES, show=show)
         if re.search(r'\(lines \d+-\d+ not shown\)', body):
@@ -869,13 +872,26 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only
                     seen.add(owner)
                     out.append(_candidate(index, doc, [], note=f'where the new `{new}` would go', root=root,
                                           literals=literals, toks=toks))
-    ranked = index.rank(terms, _statement.paths(text) + mpaths, n=len(index.docs) if only_rel else n + len(out))
+    ranked = index.rank(terms, _statement.paths(text), n=len(index.docs), guessed=mpaths)
+    per_file, more = {}, {}
     for _, doc, matched in ranked:
         if only_rel and doc.rel != only_rel or within and not doc.name.startswith(within + '.'):
             continue
-        if (doc.rel, doc.name) not in seen and len(out) < n:
-            seen.add((doc.rel, doc.name))
-            out.append(_candidate(index, doc, matched, root=root, literals=literals, toks=toks))
+        if (doc.rel, doc.name) in seen:
+            continue
+        if len(out) >= n:
+            break
+        if not only_rel and not within and per_file.get(doc.rel, 0) >= PER_FILE:
+            # h1-s1 (fastapi_14583): 8 of the 10 candidates were the Param classes of one file, and the places to
+            # change (in other files) were not on the list; the rest of a file is counted and named by its path
+            more[doc.rel] = more.get(doc.rel, 0) + 1
+            continue
+        seen.add((doc.rel, doc.name))
+        per_file[doc.rel] = per_file.get(doc.rel, 0) + 1
+        out.append(_candidate(index, doc, matched, root=root, literals=literals, toks=toks))
+    for c in out:
+        if more.get(c['rel']) and c is [x for x in out if x['rel'] == c['rel']][-1]:
+            c['line'] += f'\n      (and {more[c["rel"]]} more in {c["rel"]}: send the path to list them)'
     for i, c in enumerate(out, 1):
         c['id'] = f'C{i}'
     _set_handles(out)
@@ -890,6 +906,10 @@ def s0(root, state, args):
     if not items or len(items[0].strip()) < 10:
         return 'The first call copies the issue statement. Nothing was searched yet.'
     statement = items[0]
+    while len(items) > 1 and re.match(r'(?i)\s*(fix(es|ed)?|close[sd]?|resolve[sd]?|refs?)\b.*(https?://|#\d)', items[1]):
+        # h1 (rich_3469): the statement's second line 'Fixes https://…' sent as the second item; the script said only
+        # one line was read, and the resend lost the term that had ranked the right place third
+        statement += '\n' + items.pop(1)
     if '\n' not in statement.strip() and '\\n' in statement:
         # written with escaped line breaks (V10: the requirements then held 'nThis', 'nShould')
         statement = statement.replace('\\r\\n', '\n').replace('\\n', '\n')
@@ -2353,7 +2373,8 @@ def _after_edit(root, state, i, p, r, before):
         state['current'], state['step'], state['editor_review'] = i, 'D3', True
         return (head + f'\n\nIf this is the whole change {p["handle"]} needs, reply with one sentence for the '
                 'coordinator, without a call. If it is wrong or incomplete, send the corrected edit of the code '
-                'below (the code as it is now).\n\n' + _window(root, state, i))
+                'below (the code as it is now).\n\n' + _window(root, state, i, show=(max(p['start'], r.start - 5),
+                                                                       r.end)))
     if move == 'next':
         return head + '\n\n' + _window(root, state, state['current'])
     return head + '\n\n' + _finish_view(root, state)
@@ -2885,8 +2906,12 @@ def _spec_view(root, state):
         if p['name'] == '<exports>':
             body = _code_view(root, p['rel'], 1, len(_repo.read_lines(root, p['rel'])), _focus(state), limit=40)
         else:
+            at = re.search(r'\(line (\d+)\)$', p['reason']) if e is None else None
+            # a caller or reader left out of the plan: the part around the line that calls or reads the planned code
+            # (fastapi_14448: the branch order in _solve_generator, 2 lines in a 9-line function, mattered)
+            show = (max(p['start'], int(at.group(1)) - 8), min(p['end'], int(at.group(1)) + 12)) if at else None
             body = _code_view(root, p['rel'], p['start'], p['end'], _focus(state, e),
-                              limit=SPEC_PLACE_LINES if e is not None else 30)
+                              limit=SPEC_PLACE_LINES if e is not None else 30, show=show)
         ctx = _context_view(root, p, _focus(state, e)) if e is not None else ''
         text = '\n'.join(x for x in (head, body, ctx) if x)
         if len(text) > room:
@@ -2967,6 +2992,42 @@ def _spec_pairs(items, known=()):
     return pairs, bare
 
 
+MAX_SENTENCE = 1500
+
+
+def _new_names_note(state):
+    """The issue's new names and the form that adds them (h1, h2, s1 on fastapi_15800: no specifier knew one)."""
+    new = [n for r in state.get('requirements') or [] if r['type'] == 'new' for n in r.get('names') or []]
+    if not new:
+        return ''
+    return (f'The issue asks for new code ({", ".join(f"`{n}`" for n in new[:4])}). A new method is a place too: '
+            "send '<Class>.<new name>' with its sentence and it is added at the end of that class; a new function: "
+            "'<path>.py::<new name>'.\n")
+
+
+def _new_definition_owner(root, name):
+    """(place dict, new short name) for a definition that does not exist yet: 'Class.new' (an existing class) or
+    'path.py::new' (an existing file's top level); else None."""
+    name = _args.clean(name).strip('`')
+    m = re.fullmatch(r'([\w./-]+\.py)::([A-Za-z_]\w*)', name)
+    if m and os.path.isfile(os.path.join(root, m.group(1))):
+        top = _resolve(root, [f'{m.group(1)} top level'])
+        return (top[0], m.group(2)) if top else None
+    m = re.fullmatch(r'(?:[\w./-]+\.py::)?([A-Za-z_][\w.]*)\.([A-Za-z_]\w*)', name)
+    if not m:
+        return None
+    for c in _resolve(root, [m.group(1)]):
+        if c['name'] != MODULE and not _repo.is_doc_path(c['rel']) and \
+                c['name'].split('.')[-1] == m.group(1).split('.')[-1] and _is_class(root, c):
+            return c, m.group(2)
+    return None
+
+
+def _is_class(root, c):
+    lines = _repo.read_lines(root, c['rel'])
+    return any(re.match(r'\s*class\s', l) for l in lines[max(0, c['start'] - 1):c['start'] + 5])
+
+
 def _match_name_like(line):
     """'Dependant.is_gen_callable (models.py, lines 87-92; chosen)': a copied view line, not a sentence."""
     m = SPEC_LINE.match(line)
@@ -3011,7 +3072,7 @@ def _specifier(root, state, args):
                 'each place write what must change there so that the issue is fixed: one concrete sentence (what to '
                 'add, remove or replace, and with what), or no change. Each place is then edited by its own editor, '
                 'which sees only that place and your sentence, so write each sentence so that it can be done from '
-                'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + form)
+                'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + _new_names_note(state) + form)
     known = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']} | \
         {q['name'].split('.')[-1] for q in state['places']}
     files = [x for x in items if re.fullmatch(r'\s*[\w./-]+\.py(:\d+(-\d+)?)?\s*', x)]
@@ -3050,7 +3111,7 @@ def _specifier(root, state, args):
                 + '\nThe places: ' + ', '.join(plan_names) + '.')
     if not pairs:
         return 'No place and sentence were read. ' + form + '\nThe places: ' + ', '.join(plan_names) + '.'
-    saved, unknown, added = [], [], []
+    saved, unknown, added, long_ = [], [], [], []
     for name, sentence in pairs:
         hit = _match(state['places'], name, fuzzy=False)
         if hit is None:
@@ -3067,8 +3128,23 @@ def _specifier(root, state, args):
                 return ((listed.replace('Send one name to read it.', '') if listed else f'{name} is a file.')
                         + '\nA sentence belongs to a function or class: send it with that name. ' + form)
             elif not found:
-                unknown.append(name)
-                continue
+                owner = _new_definition_owner(root, name) if not NO_CHANGE.match(sentence) else None
+                if owner is None:
+                    unknown.append(name)
+                    continue
+                # fastapi_15800 (h1, h2, s1): the new `APIRouter.frontend` was refused as 'not in the repository' and
+                # the specifiers hung it on unrelated places; fastapi_14448 (s1): a new helper _unwrap_chain too. A new
+                # method's sentence goes to its class, a new function's to its file's top level: the editor sends the
+                # new definition whole and it is added at the end of the class or file.
+                c, short = owner
+                kind = 'method' if c['name'] != MODULE else 'function or class'
+                sentence = f'Add the new {kind} `{short}` (send it whole; it is added at the end): {sentence}'
+                found = [c]
+        if len(sentence) > MAX_SENTENCE:
+            # s1 (fastapi_14448, fastapi_15800): sentences of 649-947 characters were cut at 600 without a word, and
+            # the editor never read the end of the change
+            long_.append(f'{name} ({len(sentence)} characters)')
+            continue
         if hit is None:
             _add_place(state, found[0], 'added by the specification')
             hit = next(q for q in state['places'] if (q['rel'], q['name']) == (found[0]['rel'], found[0]['name']))
@@ -3080,7 +3156,11 @@ def _specifier(root, state, args):
             if e['status'] == 'todo':
                 e['status'] = 'skipped'
         else:
-            e['intent'] = sentence[:600]
+            old_ = e.get('intent') or ''
+            # a new member and a change of its class, or two sentences for one place in one call, are both kept
+            more = old_ if _specified(e) and old_ != 'no change' and sentence not in old_ and (
+                sentence.startswith('Add the new ') or old_.startswith('Add the new ') or hit['handle'] in saved) else ''
+            e['intent'] = (more + ' Also: ' + sentence) if more else sentence
             if e['status'] == 'skipped':
                 e['status'] = 'todo'
         saved.append(hit['handle'])
@@ -3091,7 +3171,15 @@ def _specifier(root, state, args):
     if added:
         out.append('Added to the plan: ' + ', '.join(added) + '.')
     if unknown:
-        out.append('Not in the repository (nothing saved for them): ' + ', '.join(unknown) + '.')
+        out.append('Not in the repository (nothing saved for them): ' + ', '.join(unknown) + '. A new method is named '
+                   "with its class ('<Class>.<new name>'), a new function with its file ('<path>.py::<new name>').")
+    if long_:
+        out.append(f'Too long, at most {MAX_SENTENCE} characters (nothing saved for them): ' + ', '.join(long_)
+                   + '. Send them again shorter: what changes, not how every line is written.')
+    if unknown or long_:
+        # s1 (fastapi_15800): a refused pair still got 'The specification is complete', and its change was lost
+        out.append(form)
+        return '\n'.join(out)
     if missing:
         out.append('Still without a sentence: ' + ', '.join(missing) + '. ' + form)
         return '\n'.join(out)

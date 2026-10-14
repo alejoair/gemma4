@@ -15,6 +15,7 @@ if __name__ == '__main__':
 
 Place = namedtuple('Place', 'rel name start end reason')
 MAX_CALLERS = 5
+MAX_USES = 30      # a property read as x.<name> in more places than this has a common name: its readers are not shown
 MAX_SAME_NAME = 3   # a plain name defined in more places than this (get, __init__) is not a copy
 SAME_PATTERN = 0.7  # a sibling whose body matches this much of the chosen one's (tokens) repeats its logic
 MAX_PATTERN = 3
@@ -37,6 +38,7 @@ class Table:
         self.bases = {}      # (rel, class qualname) -> [base names]
         self.exports = {}    # name -> [rel of __init__.py]
         self.reads = {}      # attribute name read as self.<name> -> [(rel, reader qualname, line)]
+        self.uses = {}       # attribute name read as <other expression>.<name> -> [(rel, reader qualname, line)]
         for rel in _repo.iter_py(root, docs=docs):
             tree = _code.parse(_repo.read_text(root, rel))
             if tree is None:
@@ -56,11 +58,12 @@ class Table:
                         o = owner[node.lineno] if node.lineno < len(owner) else None
                         self.calls.setdefault(name, []).append((rel, o.name if o else None, node.lineno))
             for node in ast.walk(tree):
-                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) \
-                        and isinstance(node.value, ast.Name) and node.value.id == 'self':
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
                     o = owner[node.lineno] if node.lineno < len(owner) else None
-                    if o is not None:
-                        self.reads.setdefault(node.attr, []).append((rel, o.name, node.lineno))
+                    if o is None:
+                        continue
+                    own = isinstance(node.value, ast.Name) and node.value.id == 'self'
+                    (self.reads if own else self.uses).setdefault(node.attr, []).append((rel, o.name, node.lineno))
             if rel.endswith('__init__.py'):
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
@@ -157,6 +160,22 @@ def related(table, chosen):
                        and o != name]
             for r, o in list(dict.fromkeys(readers))[:MAX_CALLERS]:
                 put(r, table.get(r, o), f'reads {short}')
+            # its readers outside the class (dependant.is_gen_callable in utils.py): fastapi_14448's reference also
+            # swaps two branches of _solve_generator, which reads two of the changed properties, and no run planned or
+            # even showed it (the analysis of s1: with that swap added, its patch passes). Shown, not planned; the code
+            # that reads more of the chosen properties first. Common attribute names (read in many places) are skipped.
+            uses = [u for u in table.uses.get(short, []) if (u[0], u[1]) != (rel, name)
+                    and not _repo.is_doc_path(u[0]) and not u[1].startswith(cls + '.')]
+            if 0 < len(uses) <= MAX_USES:
+                props = {n.split('.')[-1] for r, n in chosen if r == rel and n.startswith(cls + '.')}
+                both = {(r, o): sum(1 for p in props for u in table.uses.get(p, []) if (u[0], u[1]) == (r, o))
+                        for r, o, _ in uses}
+                first = {}
+                for r, o, line in uses:
+                    first.setdefault((r, o), line)
+                order = sorted(first, key=lambda k: (-both[k], k[0] != rel, k[0], first[k]))
+                for r, o in order[:MAX_CALLERS]:
+                    put(r, table.get(r, o), f'uses {short} (line {first[(r, o)]})')
         plain = [(r, s) for r, s in same if not short.startswith('__')]
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:

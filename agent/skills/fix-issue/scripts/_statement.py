@@ -125,8 +125,16 @@ def model_terms(items):
         if term and term.lower() not in STOP and len(term) > 1 and not term.isdigit():
             out[term] = max(out.get(term, 0), weight)
 
+    items = list(items)
     for item in items:
         item = item.strip().strip('`\'"「」')
+        url_py = re.findall(r'https?://\S*?/([\w./-]+\.py)\b', item)
+        # h2 (rich_3469): a term 'Fixes https://github.com/Textualize/rich/issues/3027' gave textualiz, http, github,
+        # com, and rich/__main__.py's top level came first; a .py path inside a URL is kept
+        item = re.sub(r'(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?|refs?|see)\s*:?\s*(?=https?://|#\d)', '', item)
+        item = re.sub(r'https?://\S+|(?<!\w)#\d+\b', ' ', item).strip()
+        for path in url_py:
+            items.append(path.split('/blob/', 1)[1].split('/', 1)[-1] if '/blob/' in path else path)
         if not item:
             continue
         if re.fullmatch(r'[\w./-]+\.py', item) or ('/' in item and ' ' not in item):
@@ -136,13 +144,21 @@ def model_terms(items):
         words = re.findall(IDENT, item)
         if re.fullmatch(IDENT + r'(\.' + IDENT + r')*(\(\))?', item):      # a name, dotted or called
             for w in words:
-                add(w, 5 if _shape(w) or w[0].isupper() else 3)
+                add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else 5 if _shape(w) or w[0].isupper() else 3)
             continue
         for w in words:
-            add(w, max(2, _shape(w)))
+            add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else max(2, _shape(w)))
         if 2 <= len(words) <= 4 and re.fullmatch(r'[A-Za-z0-9 -]+', item):
             add('_'.join(w.lower() for w in words), 3)
     return out, list(dict.fromkeys(found))
+
+
+# the standard library's and the builtins' names (DeprecationWarning, warnings) among the model's terms: they match the
+# code that already uses them, not the code to change (fastapi_14583, h1-s1: the existing warnings came first)
+LIBRARY_NAMES = {n for n in dir(builtins) if isinstance(getattr(builtins, n), type)
+                 and issubclass(getattr(builtins, n), BaseException)} | {
+    'warnings', 'warn', 'logging', 'typing', 'functools', 'inspect', 'asyncio', 'os', 'sys', 'traceback'}
+LIBRARY_WEIGHT = 1
 
 
 def paths(text):

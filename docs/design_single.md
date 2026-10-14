@@ -1495,8 +1495,8 @@ requests_7328). The user's reading: a much stronger model that does no better po
   (the edit check can take longer than that). That call wrote its edit over the restored file.
 
 Fixes:
-- `_state.lock()` never goes on unlocked. A call waits up to 200 s for the call before it (the harness kills a call at
-  its 240 s command timeout, which releases the lock). If that call is still running after the wait, this call does
+- `_state.lock()` never goes on unlocked. A call waits up to 500 s for the call before it (the harness kills a call at
+  its 600 s command timeout, which releases the lock; s2: one edit check of requests took 230 s). If that call is still running after the wait, this call does
   nothing and says so.
 - The proxy asks the upstream model for one tool call per turn (`disable_parallel_tool_use`; `--parallel` keeps the
   old behaviour), as the competition model makes them. h1-s1 are therefore not evidence about the design's limits.
@@ -1506,3 +1506,50 @@ Fixes:
 |---|---|---|
 | B11 doubting tool output | closer | an answer that says "Undone" is now true of the files and the patch |
 | W5 familiar formats | neutral | no format change |
+
+### System causes of the failures every model shared (2026-10-14, two analysis agents on the h1, h2 and s1 traces)
+
+- **fastapi_14448: a reader of the changed properties was never shown.** The reference also swaps two branches of
+  `_solve_generator` (utils.py), which reads `dependant.is_gen_callable` and `dependant.is_async_gen_callable`.
+  `_impact.related()` knew only `self.<name>` reads in the same class. So no plan held that function, and neither did
+  the specifier's view. With that 4-line swap added, s1's patch is judged resolved (8/8 FAIL_TO_PASS). Fix: the readers
+  of a chosen property outside its class (`<expr>.<name>`, at most 30 in the repository, else the name is common) are
+  shown as "uses <name> (line N)", not planned. The functions that read more of the chosen properties come first. The
+  specifier's view of a place left out of the plan opens at the line that calls or reads the planned code.
+- **fastapi_15800 and fastapi_14448: new code could not be a place.** Specifiers named `APIRouter.frontend`,
+  `FastAPI.frontend` and a helper `_unwrap_chain`, and got "Not in the repository". In the same answer the script said
+  "The specification is complete", so the new code's sentence was lost, or hung on unrelated places. Fixes:
+  - `<Class>.<new>` on an existing class, or `<file>.py::<new>` on an existing file, goes to that class or that file's
+    top level as "Add the new method `x` (send it whole; it is added at the end): …". The editor's whole-definition form
+    already adds a new name at the end of the place.
+  - The view says which new names the issue asks for and how to name them.
+  - The editor's window for a new member opens at the class's end.
+  - After an edit, the window opens at the changed lines.
+- **No silent loss.**
+  - A refused pair (an unknown name, or a sentence over 1,500 characters) is answered with the form, and the
+    specification is not called complete.
+  - Sentences were cut at 600 characters without notice; s1 sent 649-947. The cap is now 1,500, and the specifier is
+    told when it is exceeded.
+  - Two sentences for one place in one call are both kept.
+- **fastapi_14583 and rich_3469: the ranking.** The reference places ranked #119-#430.
+  - `v1` was split into `v` + `1`, both too short to count. `v1`, `http2` and `utf8` are now tokens of the identifiers
+    and of the query.
+  - A file the model guessed counted double, like a file the statement names. h1: 8 of 10 candidates came from
+    `temp_pydantic_v1_params.py`. A guessed file now counts a quarter more.
+  - Standard-library and builtin exception names among the model's terms (`DeprecationWarning`, `warnings`) matched
+    the code that already warns. They now weigh 1.
+  - URLs in the model's terms gave `textualiz`, `github` and `com`, which ranked `rich/__main__.py` first. URLs and
+    issue references are removed from the terms; a `.py` path inside one is kept as a path.
+  - A second item "Fixes https://…" is read as the statement's second line, so the one-line warning no longer fires.
+
+  The agents expect neither task to pass: the tests of fastapi_14583 want message texts that only the tests contain,
+  and rich_3469 is infeasible here (official_feasible 0).
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 reasoning about code in front of it | closer | the reader whose branch order matters is in the specifier's view, at the line |
+| W1 choosing from a short list | closer | the candidates are less crowded by one guessed file and by existing warnings |
+| B11 doubting tool output | closer | "complete" is no longer said when a sentence was refused or cut |
+| W2 writing whole functions | closer | a new method or helper is sent whole, as a place of its own |
+| B8 following many rules or forms | farther (small) | one more name form (`Class.new`, `file.py::new`); stated in the view only when the issue asks for new names |
+| B7 the middle of a long context | farther (small) | up to 5 more places in the specifier's view; places left out of the plan show 30 lines at most |

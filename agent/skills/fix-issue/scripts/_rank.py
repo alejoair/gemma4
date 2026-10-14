@@ -44,10 +44,21 @@ def parts(ident):
     return [p.lower() for p in PART.findall(ident)]
 
 
+DIGIT_PART = re.compile(r'(?<![A-Za-z])[A-Za-z]{1,6}[0-9]+(?![0-9])')
+
+
+def digit_parts(ident):
+    """v1, http2, utf8 in pydantic_v1, is_http2, to_utf8: the parts split them into 'v' + '1', and both are too short
+    to count (fastapi_14583: the term v1 matched nothing of annotation_is_pydantic_v1)."""
+    return [m.lower() for seg in ident.split('_') for m in DIGIT_PART.findall(seg) if m.lower() == seg.lower()]
+
+
 def tokens(ident):
-    """The index tokens of one identifier: its stemmed parts, and the whole name (lower case) when it has several."""
+    """The index tokens of one identifier: its stemmed parts (and v1, http2), and the whole name (lower case) when it
+    has several."""
     ps = parts(ident)
-    out = [stem(p) for p in ps if len(p) > 1]
+    whole = ident.lower().strip('_')
+    out = [stem(p) for p in ps if len(p) > 1] + [d for d in digit_parts(ident) if d != whole or len(ps) <= 1]
     if len(ps) > 1:
         out.append(ident.lower().strip('_'))
     return out
@@ -159,6 +170,8 @@ class Index:
         for term, w in terms.items():
             for ident in IDENT.findall(term):
                 ps = parts(ident)
+                for d in digit_parts(ident):
+                    put(d, w if d == ident.lower() else w * 0.5)
                 if len(ps) <= 1:
                     for p in ps:
                         if len(p) > 1:
@@ -188,10 +201,13 @@ class Index:
                 matched.append((s, tok))
         return total * doc.prior, [t for _, t in sorted(matched, reverse=True)]
 
-    def rank(self, terms, paths=(), n=10):
-        """The n best documents as (score, doc, matched tokens). Files the statement names count double."""
+    def rank(self, terms, paths=(), n=10, guessed=()):
+        """The n best documents as (score, doc, matched tokens). Files the statement names count double; files the model
+        guessed (its search terms) count a quarter more: h1 (fastapi_14583) guessed temp_pydantic_v1_params.py, and 8 of
+        the 10 candidates came from that file."""
         q = self.query(terms)
         named = [p for p in paths if p]
+        guessed = [p for p in guessed if p and p not in named]
         out = []
         for doc in self.docs:
             s, matched = self.score(doc, q)
@@ -199,6 +215,8 @@ class Index:
                 continue
             if any(names_file(p, doc.rel) for p in named):
                 s *= 2
+            elif any(names_file(p, doc.rel) for p in guessed):
+                s *= 1.25
             out.append((s, doc, matched))
         out.sort(key=lambda x: (-x[0], x[1].rel, x[1].start))
         return out[:n]

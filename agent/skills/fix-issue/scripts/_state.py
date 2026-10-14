@@ -71,12 +71,13 @@ def events():
 _LOCK = []
 
 
-def lock(wait=200):
+def lock(wait=500):
     """Holds the state directory for this call (released when the process ends, also when the harness kills it at its
     command timeout). Two calls at once (the model may send parallel tool calls) would otherwise read, change and write
     the journal and the files over each other: s1, requests_7328, two edits sent together, one undone by the tests
     while the other went on unlocked, and the undone change stayed in the patch. A call waits for the one before it
-    and never goes on unlocked: False when the other is still running after `wait` seconds (the caller does nothing)."""
+    (up to 500 s: eval_config.yaml kills a call at 600 s) and never goes on unlocked: False when the other is still
+    running after `wait` seconds (the caller does nothing)."""
     if fcntl is None or _LOCK:
         return True
     fh = open(path('lock'), 'w')

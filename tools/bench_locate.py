@@ -78,6 +78,7 @@ def main():
     ap.add_argument('tasks')
     ap.add_argument('repos')
     ap.add_argument('-k', type=int, default=10)
+    ap.add_argument('--per-file', type=int, default=5, help='candidates kept per file, as step.py (PER_FILE); 0: all')
     ap.add_argument('--show', action='store_true')
     ap.add_argument('--only', default='')
     ap.add_argument('--impact', action='store_true',
@@ -94,7 +95,15 @@ def main():
         gold, new = gold_places(root, task['patch'])
         text = _statement.clean(task['problem_statement'])
         t = time.time()
-        ranked = _rank.Index(root).rank(_statement.terms(text), _statement.paths(text), n=a.k)
+        ranked = _rank.Index(root).rank(_statement.terms(text), _statement.paths(text), n=100000)
+        if a.per_file:          # as step.py lists them: at most per_file candidates from one file
+            count, kept = {}, []
+            for x in ranked:
+                if count.get(x[1].rel, 0) < a.per_file:
+                    count[x[1].rel] = count.get(x[1].rel, 0) + 1
+                    kept.append(x)
+            ranked = kept
+        ranked = ranked[:a.k]
         took = time.time() - t
         names = [(d.rel, d.name) for _, d, _ in ranked]
         pos = [names.index(g) + 1 for g in gold if g in names]
