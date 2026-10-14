@@ -8,24 +8,25 @@ if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
     raise SystemExit(0)
 
-MAX_FAILS = 2        # failed edits of one place before it is left at its last verified state
-EDIT_STOP = 340      # seconds after the start: no edit is accepted later (the run has 420 s, a check up to 60)
-TIME_LIMIT = 420     # eval_config.yaml max_time_minutes (7) in seconds: keep the two in step
-CALL_LIMIT = 30      # eval_config.yaml max_tool_calls
+MAX_FAILS = 4        # edits of one place undone by the tests (or refused) before it is left at its last verified state
+                     # (2 until c4: fastapi_14448's editor was closed after two undone edits while each failing test
+                     # brought its next edit closer to the fix; the same error three times still closes it)
+MAX_SLIPS = 4        # edits that did not compile: a typo is a slip, not a wrong change (a14: the third, correct
+                     # version of a one-line edit was never run after two typos closed the place)
+CALL_LIMIT = 200     # eval_config.yaml max_tool_calls (not binding: time is the limit)
 CALL = 'run_skill_script with skill_name fix-issue, file_path step.py and args '
 
 # The forms use single quotes: every answer reaches the model as JSON, where a double quote reads as \" (B15)
 FORMS = {
-    'S0': "['<the issue statement, or its first paragraph>', '<search term>', '<search term>', ...]",
+    'S0': "['<the whole issue statement (its first 40 lines if it is longer)>', '<search term>', '<search term>', ...]",
     'D1': "['<candidate name>'] or ['<candidate name>', '<candidate name>'] (1 to 3 names from the list), or "
-          "['<file>::<Name>'] for code not in the list",
+          "['<file>::<Name>'] for code not in the list, or ['<a name or text to find>']",
     'D2': "['P<n>: <what changes there>', 'P<m>: <what changes there>'] (one item per place to edit), or ['back'] "
           "to choose other candidates",
     'D3': "['<place name>', '<the whole new function or class>'] or ['<place name>', '<first line number>', "
           "'<last line number>', '<new lines>'], or ['skip'] if the place needs no change, or ['back'] to choose other "
           "code",
-    'D4': "none: call submit_patch now. Or args ['back'] to choose code for a requirement that nothing changed "
-          "covers, or ['<place name>', '<the whole new function or class>'] to edit a place again",
+    'D4': "",
 }
 
 
@@ -34,28 +35,67 @@ def new(now=None):
             'current': None, 'last': None, 'repeats': 0, 'edited': []}
 
 
-def budget_line(state, now=None):
-    """Time and calls used, and when edits close (models cannot see their budget: V10, 6 of 10 runs ended on it). The
-    calls are those the script received: malformed ones never reach it, so the real count is higher."""
-    used = (now or time.time()) - state['t0']
-    line = (f'Time used: {used / 60:.1f} of {TIME_LIMIT / 60:.0f} min; edits close at {EDIT_STOP / 60:.1f} min, then '
-            f'only submit_patch is left. Calls used: at least {state.get("calls", 0)} of {CALL_LIMIT}.')
-    return line
-
-
-def next_call(state):
-    """The exact next call, the last line of every answer."""
+def next_call(state, role='single'):
+    """The exact next call, the last line of every answer. role: 'single' (one agent does everything), 'coordinator'
+    (chooses, then hands each place to the edit_place tool) or 'editor' (edit_place: one place, then one sentence)."""
     step = state['step']
-    if state.get('time_up'):
-        return 'NEXT: call submit_patch now, with no arguments. Edits are closed.'
+    if role == 'specifier':
+        if state.get('spec_done') or step not in ('D3', 'D4'):
+            return 'NEXT: no call: reply with one sentence for the coordinator.'
+        forms = state.get('new_forms') or []
+        extra = (f", '{forms[0]}', '<what the new code does>'" if forms else '')
+        return ("NEXT: call run_skill_script with skill_name fix-issue, file_path spec.py and args ['<place name>', "
+                f"'<what changes there, or no change>', ...{extra}] (one pair per place"
+                + (', and one per new method or function the issue asks for)' if forms else ')'))
+    if role == 'coordinator' and step == 'D3' and not state.get('spec_done'):
+        return ("NEXT: call the tool specify_fix with request 'the plan' (it reads the code of every place and writes "
+                "what changes at each).")
+    if role == 'editor':
+        if state.get('editor_done') or step != 'D3' or state.get('current') is None:
+            return ('NEXT: no call: reply with one sentence for the coordinator (what changed at the place, or why '
+                    'nothing did, naming other code if the change belongs there).')
+        pid = state['plan'][state['current']]['place']
+        pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
+        call = CALL.replace('file_path step.py', 'file_path edit.py')
+        if _new_file(state) and not state.get('editor_review'):
+            return f"NEXT: call {call}['{_new_file(state)}', '<the whole content of the file>'], or ['skip']"
+        if state.get('editor_review'):
+            return (f"NEXT: if the change at {pid} is complete, no call: reply with one sentence for the coordinator. "
+                    f"Otherwise call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', "
+                    "'<first line number>', '<last line number>', '<new lines>'].")
+        return (f"NEXT: call {call}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
+                f"'<last line number>', '<new lines>'], or ['skip']")
+    if role == 'coordinator' and step == 'D3' and state.get('current') is not None:
+        pid = state['plan'][state['current']]['place']
+        pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
+        # the place a new editor will open: an open.py call naming it starts a new editor, another place is a read
+        # (step.py _editor_open)
+        if state.get('requested') != pid:
+            state['requested'], state['requested_used'] = pid, False
+        return f"NEXT: call the tool edit_place with request '{pid}' (it opens that place and edits it)."
     if step == 'D4':
-        return 'NEXT: ' + FORMS['D4']
+        # local run of fastapi_14448: "NEXT: none: call submit_patch now" next to "NEXT: call run_skill_script ...
+        # args" everywhere else made the model send args ['submit_patch'] to the script 20 times
+        return ("NEXT: call the tool submit_patch, with no arguments (it is its own tool, not an argument of "
+                "run_skill_script). Or, before that, run_skill_script with args ['back'] to choose code for a "
+                "requirement that nothing changed covers.")
+    if step == 'D3' and state['current'] is not None and _new_file(state):
+        return f"NEXT: call {CALL}['{_new_file(state)}', '<the whole content of the file>'], or ['skip']"
     if step == 'D3' and state['current'] is not None:
         pid = state['plan'][state['current']]['place']
         pid = next((p.get('handle', pid) for p in state['places'] if p['id'] == pid), pid)
         return (f"NEXT: call {CALL}['{pid}', '<the whole new function or class>'] or ['{pid}', '<first line number>', "
                 f"'<last line number>', '<new lines>'], or ['skip']")
     return f'NEXT: call {CALL}{FORMS[step]}'
+
+
+def _new_file(state):
+    """The path of the open place when it is a file still to create (step.py _add_new_file_place), else ''."""
+    if state.get('current') is None or not state.get('plan'):
+        return ''
+    e = state['plan'][state['current']]
+    p = next((q for q in state['places'] if q['id'] == e['place']), None)
+    return p['rel'] if p and p.get('new') and e['status'] == 'todo' else ''
 
 
 def _key(state, args):
@@ -88,10 +128,6 @@ def remember(state, key, answer):
         del answers[k]
 
 
-def time_is_up(state, now=None):
-    return (now or time.time()) - state['t0'] > EDIT_STOP
-
-
 def start(state, requirements, candidates):
     state.update(requirements=requirements, candidates=candidates, step='D1')
 
@@ -113,6 +149,7 @@ def requirement_back(state, candidates):
 def set_plan(state, entries):
     """entries: [(place id, intent)] already checked against the places."""
     state['plan'] = [{'place': p, 'intent': i, 'status': 'todo', 'fails': 0, 'errors': []} for p, i in entries]
+    state['spec_done'], state['spec_shown'], state['spec_views'] = False, False, 0   # a new plan is specified again
     state['current'], state['step'] = 0, 'D3'
 
 
@@ -146,9 +183,12 @@ def edit_failed(state, i, error):
     """A failed edit of plan entry i. Returns 'retry' (same place again) or 'skipped' (the place stays at its last
     verified state and the next place comes) after MAX_FAILS failures or the same error three times."""
     e = state['plan'][i]
-    e['fails'] += 1
     e['errors'].append(error)
-    if e['fails'] >= MAX_FAILS or e['errors'][-3:].count(error) >= 3:
+    if 'compile' in error:
+        e['slips'] = e.get('slips', 0) + 1
+    else:
+        e['fails'] += 1
+    if e['fails'] >= MAX_FAILS or e.get('slips', 0) >= MAX_SLIPS or e['errors'][-3:].count(error) >= 3:
         if e['status'] != 'done':                     # a done place keeps its verified edit
             e['status'] = 'skipped'
         advance(state)

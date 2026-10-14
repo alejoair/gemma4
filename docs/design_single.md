@@ -826,3 +826,799 @@ unchanged code in the eval sandbox (as in V3). Row in `VERSIONS.md`.
   in 10 tasks; 14986 read `fastapi/applications.py` in 16 slices and timed out with an empty patch; 14851 read 12
   slices and opened 14 names without an edit; 3 empty patches against 1 in V13b. The check table had marked B9 "farther
   (small)": the trace shows it is not small. The read form needs a bound that the model sees and the script enforces.
+
+### Finding instead of reading (2026-10-10, after V14): what the 51 reads were for, and the fix
+
+**What the reads were** (every V14 call read with the model's own words, `tools/trace_calls.py`): 50 range reads in
+6 tasks (14986: 16, 14851: 12, rich_3521: 10, 15800: 6, 14448, httpx_3672, rich_3469: 2 each). They were not reading:
+they were **a search done by hand**, and the model said so:
+- fastapi_14986: "I need to find where `root_path_in_servers` is defined" → 16 slices of `fastapi/applications.py`,
+  then "Found it! at line 663", then 2 more for its default; timed out with an empty patch.
+- fastapi_14851: "I'll search for `super().__init__` … but I can't. I have to read" → 12 slices of `FastAPI.__init__`
+  and `APIRouter.__init__`; also "where is `add_event_handler` defined" (Starlette's `Router`, a library base class).
+- rich_3521: "I'll search for `test_split_cells` in tests/test_segment.py" → 8 slices of the test file.
+- rich_3469 (a statement with no content): "Let me search for `pad(1)` in the whole repository. No, I can't."; 20 names
+  opened one after the other.
+
+**Why a cap is not the fix.** A cap on reads moves the browsing to names (rich_3469) and is arbitrary. The cause is
+that a read was the only answer that decides nothing: it showed code, left the same decision open and cost nothing,
+so it could be repeated without end (B9). And the need behind it, search, had no form.
+
+**The design.** Code outside the window is reached by finding it, and its code is shown only once it is chosen:
+1. **Search** (step.py `_search`, `_search_view`): a name the repository does not define, a text, or
+   `['search', '<text>']` / `'search <text> in <file>'` gives the functions and classes whose lines hold it, each with
+   its matching lines numbered (grep's answer, W5), the files of the current work first; the tests' matching lines as
+   read-only lines; a library name also shows the library's definition. The answer is a candidate list: choosing is
+   the next call (W1).
+2. **A line range** (`_range_request`): inside the open place, or inside a listed place, it opens that place with those
+   lines in view (the window is the place's code: W3); elsewhere it gives the functions and classes at those lines,
+   to choose from; in a test file it shows the test functions that hold them, whole and read only, and the current
+   step again (tests are evidence, never places).
+3. **Naming code** means the same in every step (B12): a listed place opens; other code is chosen, and it and its
+   related code replace the places not edited yet (`_choose_code`; the edits made stay, the dropped places are named).
+   An edit that names code which is not a place chooses it and applies the edit (`_edit_of_other`; V14 sent 6 edits of
+   code that was no longer a place).
+4. **The window carries what the reads looked for**: the imports the place uses (not only "lines 1-43"), and the
+   library code it calls, including a method that only a library base class defines (`_library_uses`; 14851's
+   `self.add_event_handler` → `starlette.routing.Router.add_event_handler`, shown as code).
+5. **Every look is logged** (`look` events in the state log: search, range, range in a place, test, name, file, edit of
+   other code), so each trace shows which needs the window still misses (the permanent loop: a need found in a trace
+   goes into the window, not into a new form).
+
+No count limits anything: a search costs the places not edited yet, and the time to edits stays the only budget.
+Accepted risk, to be measured: a range inside a long open place pages through it (the place under decision, W3).
+
+Dry runs on fastapi_14986, fastapi_14851 and rich_3469, and a replay of all their V14 calls through the new script:
+no script error; 14986's search for `root_path_in_servers` answers with lines 663, 678, 886 and 1110 in one call;
+14851's `search super().__init__ in fastapi/routing.py` answers `APIRouter.__init__` line 906; `APIRouter.on_event`'s
+window shows Starlette's `add_event_handler` code; rich_3469's `pad(1)` lists `Panel._title` and `Panel._subtitle`.
+
+Check against `docs/llm_checklist.md`:
+
+| Item | Verdict | Why |
+|---|---|---|
+| W1 | **closer** | Every look ends in a choice from a short list of names with the lines that make the right one recognizable |
+| W2 | neutral | Edits unchanged |
+| W3 | **closer** | The window shows the imports the place uses and the library code it calls; ranges in a place show those lines in it |
+| W4 | **closer** | After a look the NEXT is always the choose call; after opening, the edit call |
+| W5 | **closer** | Search answers are grep's numbered lines |
+| W6 | **closer** | The model finds code with its own words (a parameter name, `super().__init__`, `pad(1)`) |
+| W7 | neutral | — |
+| B1 | **closer** | Line numbers are no longer needed to see code (a range still works, never required) |
+| B2 | neutral | — |
+| B3 | neutral | — |
+| B4 | neutral | `search` is a word the model already wrote; no new tool or argument |
+| B5 | neutral | No answer quotes the call; a search answer names the text searched, as a fact |
+| B6 | neutral | — |
+| B7 | **farther (small)** | Windows grow by the used imports and library entries. Reason: they replace reads of 80 lines each; library entries are one line unless the definition is 15 lines or fewer, at most 4 |
+| B8 | neutral | The read form is gone, the search form is new; the edit step accepts the same kinds of answer (edit, skip, back, a name) |
+| B9 | **closer** | No answer shows code that no decision asked for; every look replaces the plan left or opens a place |
+| B10 | neutral | — |
+| B11 | **closer** | The dropped places are named in the answer; nothing is lost silently |
+| B12 | **closer** | A name means "choose this code" in every step; a range always means "the code that holds these lines" |
+| B13 | **closer** | Search results put the files of the current work first |
+| B14 | neutral | — |
+| B15 | neutral | — |
+| B16 | **closer** | An edit of code that is not a place is applied to it (chosen first); a range never edits |
+| P1 | neutral | Library code and tests are labelled read only |
+| P2 | **farther** | The window gains blocks and the look answers change. Reason: the reads had no other cure; measured in one run against V14 |
+| P3 | neutral | — |
+| P4 | neutral | — |
+| P5 | **closer** | "Questions are not answered in this step" next to a read form is gone; the prompt, SKILL.md, windows and refusals give the same forms |
+| P6 | neutral | — |
+| P7 | **farther (small)** | Library entries may be noise. Reason: only code the place calls, not the signature's annotations nor the standard library |
+| P8 | **closer** | The answer says which places are no longer planned |
+| P9 | neutral | — |
+| P10 | neutral | — |
+| F1–F9 | neutral | Edit feedback unchanged |
+
+### V15 on Kaggle (2026-10-10): what finding instead of reading did
+
+1/10 real (rich_3006). fastapi_14851 counts as resolved with a 663-character patch (APIRouter keeps `on_startup` and
+`on_shutdown` itself instead of passing them to Starlette's Router), but its hidden tests passed with an empty patch in
+V14, so it is not evidence. Row in `VERSIONS.md`. Per-answer counts: `tools/trace_looks.py`.
+
+- **Worked**: no range read in any task (V14: 50); 9 of 10 patches non-empty (V14: 7); 5 searches, each answered
+  with a list; malformed calls 7%.
+- **Did not work: the browsing moved to names**, the risk the checklist table marked under B9 ("closer (partial)").
+  27 choices by name; fastapi_14851 chose code 15 times in a row (APIRouter.__init__ 3 times, APIRouter.on_event 4,
+  `_merge_lifespan_context` 3) and made its one kept edit at 4.5 min; rich_3469 (a statement with no content) 7. A
+  choice replaced the places not edited yet, but that cost nothing the model valued, so it was not a decision: the
+  same code was chosen again a few calls later, which also says the windows are lost to compaction or not read.
+- **Script faults found and fixed**: (1) an edit naming `fastapi/_compat/v1.py top level` was applied to the place
+  `fastapi/_compat/may_v1.py top level` through a near-spelling match: near spellings are now tried only for text that
+  is no path and names no code of its own; (2) a search for `" "` lost its quotes, became empty and matched 39,000
+  lines: a search keeps the model's text when cleaning leaves fewer than 2 letters, and an empty search is refused;
+  (3) `lifespan` chose an example in `docs_src`: a bare name defined only in docs is found, not chosen; (4)
+  `APIRouter.add_event_handler`, inherited from Starlette's Router, was refused: it is now shown as library code,
+  read only, with the current step again.
+- **The run itself took 68 minutes**; Kaggle kept the kernel in "running" for about 8.8 hours before and after it.
+
+Open: re-choosing code already seen. The next step is to find out from the traces why the model chooses the same
+code again (the window compacted away, or a window that does not answer what it looks for) before any change.
+
+### Local run L1 (2026-10-11): rich_3006 with the 26B A4B, monitored call by call
+
+`tools/local_eval.py` (new): the competition harness (swegemma 0.2.11, subprocess sandbox, the same compaction and
+budgets as `tools/kaggle_eval.py`) with the model served by the gateway (`gemma-26b`, reasoning budget 512, MTP on).
+
+Result: **resolved** (the right edit, `==` → `is`, at 28 s; submit_patch at 56 s), but the agent went on for 27 more
+calls until the 30-call budget. Every call was read; the faults of the system:
+1. **The model did not know its edit was made.** It opened the place again after submitting, saw `is` in the code and
+   wrote "I haven't actually applied the fix yet" and "the code already has `is` … maybe the issue was already fixed";
+   20 calls of doubt and one more edit followed. The window showed the code as it is now, with nothing saying what the
+   patch changed there (the progress line says only "+1 -1"). → A place the patch changes shows that change, as git
+   diff lines, before its numbered code (`_patch_here`).
+2. **It wanted to see or add tests** ("Also added the sample code as a test" in the statement): `tests/` and
+   `tests/test_repr.py` were answered "Nothing left to do in this step", 6 calls. → A test directory or test file
+   without line numbers is answered with the facts: test files are not changed (the hidden tests replace them), every
+   edit was checked with the existing tests that use the changed code, and a test file with two line numbers shows a
+   test (`TESTS_NOTE`).
+3. **A search inside a file**, `['rich/repr.py', 'param.empty']` (6 calls), was taken as the file name alone. → `[file,
+   text]` is the text searched in that file.
+4. It called step.py after submit_patch (the harness does not end the task there; only the last submission counts).
+   Mostly a consequence of 1; not changed.
+
+Check against `docs/llm_checklist.md`:
+
+| Item | Verdict | Why |
+|---|---|---|
+| W3 | **closer** | The window shows what the patch already changed in the place |
+| W5 | **closer** | The change is shown as git diff lines |
+| W6 | **closer** | `[file, text]` is read as the model meant it |
+| B4 | **closer** | One more natural spelling of a search is understood instead of refused |
+| B7 | farther (small) | A changed place's window grows by its diff lines. Reason: without them the model edited again |
+| B9 | **closer** | 'tests/' gets a fact and the current step, not a dead end that invites more tries |
+| B11 | **closer** | What is done is stated from git, not left to the model's memory |
+| B12 | **closer** | "Nothing left to do" no longer answers a request the model can rephrase forever |
+| F5 | **closer** | Knowing what is done: the place's own diff |
+| F9 | neutral | The tests note is facts plus one form |
+| others | neutral | No new form; the edit and choose forms are unchanged |
+
+L2 (same task, after the fixes above): resolved, submit_patch after 11 calls (L1: 30); after reopening the place the
+model wrote "the change is already in the buffer" (the diff note worked). It still went on after submitting, set on
+adding a test ("Also added the sample code as a test" in the statement), and searches for text that nothing holds
+(`inspect.Parameter.empty`) were answered "Not run: this step edits the open place" or "not a name from the candidate
+list", which read as wrong forms. Fixes: the tests note states the decisive fact (the harness removes every change to
+a test file from the patch, so a test written here never counts); a name or text nothing holds is answered "Nothing in
+the repository holds X (library and standard-library code is not searched)", in every step; several texts at the
+choose step are searched in turn. Checklist: F9 closer (a fact instead of advice), B12 closer (no answer that reads as
+a wrong form), B5 farther (small): the answer names the text searched; reason: without it the answer does not say what
+was not found, and it is a fact about the repository, not a quote of a failed form.
+
+L3 (same task): the tests note never reached the model at the finish step: `d4` passed a test path to `d3` and then
+overwrote its answer with "Nothing left to do in this step"; the model asked for `tests`, `tests/test_repr.py`,
+`test_repr`, `tests/test_pretty.py` and looped on the last until the budget. And the cause of the test-writing was the
+script's own requirement: the copied statement's sentence "Also added the sample code as a test." (what the PR author
+did) was a requirement shown in every window. Fixes: `d4` keeps `d3`'s answer when nothing is opened; the statement
+cleaning drops sentences where the author says they added or wrote tests (in the 129 dev statements this removes only
+such remarks: "I added a test case which reproduced …", "Adds some additional tests …"; a sentence that adds behaviour
+and also updates tests, fastapi_14479, is kept), and "with the suggested change". Checklist: B12 closer (no
+requirement asks for what can never count), P7 closer (no window repeats a remark that bears on no decision), F9
+neutral.
+
+L4 (same task): **resolved in 48 s, 4 calls reached the script, and the agent stopped after submit_patch** (L1: 204 s,
+30 calls, budget-stopped). The model read the tests note and submitted. Left: the requirement still held "Also added
+the sample code as a test." (5 words between "added" and "test"; the filter allowed 4): now up to 6, which in the 129
+dev statements still removes only the authors' remarks about tests. Also seen: 2 calls whose args mixed JSON and the
+answer forms' single quotes (`"auto.do_replace.auto_rich_repr', '        def ..."`) and were rejected by the ADK
+before reaching the script ("Argument 'skill_name' is required"): a B4/B15 cost of the single-quoted forms, to watch.
+
+L5 (same task): the requirement is clean now; resolved, submit_patch at 45 s. Two more needs seen in every local run:
+(1) **args packed with the forms' single quotes** (`"Name', '<code>"`, one string): split into the intended items
+(`_args.split_single_quoted`; a line edit `"Name', '79', '79', '<lines>"` too); (2) **code to run** (a reproduction
+starting with imports, `python -c …`, `pytest …`, `ls`): answered with the facts (no shell or Python command here; the
+existing tests that use the changed code ran after the edit; the hidden tests with the issue's example run after
+submit_patch) and the current step, instead of an echo of the code ("Nothing in the repository holds import inspect
+…") or "Nothing left to do". Checklist: B4 closer (a natural mis-quoting is repaired), B5 closer (no failed input is
+quoted back), B12 closer, F9 neutral (facts), W3 neutral. Open, for the design: the model wants to run the issue's
+example after an edit (all five runs); the script could run the statement's example itself after an edit and report
+it (F2: expected vs actual) — to be weighed against the D3 redesign's removal of `python -c` (it was used to explore).
+
+### Windows that fit the history (2026-10-11): the compaction was erasing every window
+
+Local batch, task 1 (requests_7328, the 26B): the model opened `SessionRedirectMixin.resolve_redirects` 8 times in a
+row and never edited it. The gateway log shows why: prompts of 12,074 → 15,995 tokens, then a compaction summary, then
+10,777 → 14,003 → 17,862 and another summary, every 2-3 calls. A window was about 10,000 characters (3,500 tokens: the
+code 5,785 characters, imports 876, used code 1,026, the task 526, a test 872, the forms 1,126); the harness keeps the
+last 5 events after compacting, so the kept history alone was near the 14,336-token threshold and each new window
+triggered the next compaction, which removed it. The 31B in V15 was in the same state: **mean prompt 10-11k tokens
+and maximum 15.5-17k in 9 of 10 tasks; the one resolved task (rich_3006) peaked at 8k and never compacted.** The
+"browsing by names" of V15 (14851 chose the same code 3-4 times) is the same effect: the window it had chosen was gone.
+
+Fix: every window fits about 6,000 characters (resolve_redirects: 10,211 → 6,061): the code of a long place is 45
+lines around what the requirements name (a place up to 75 lines whole; a range inside the place shows other lines,
+`_range_request`), the imports it uses are one line of names and modules, 4 used definitions in 900 characters (2 of
+them library code), 2 callers, the statement's example and the existing test 8 lines each, the answer forms on one
+line; the answer cap is 7,000 characters.
+
+| Item | Verdict | Why |
+|---|---|---|
+| B7 | **closer** | The history stays under the compaction threshold, so the window the model is deciding on stays in its context |
+| P7 | **closer** | Less of each window is context that bears on no decision (30 import lines, 8 definitions) |
+| P8 / F5 | **closer** | Compaction summaries, which lose the window and the state, happen less often |
+| W3 | **farther** | Less of a long place and of its context is shown at once. Reason: a window that the compaction removes shows nothing; the rest of the place is one range away |
+| B9 | farther (small) | Ranges inside a long place may be used more. Reason as W3; they stay inside the place under decision |
+| W4 | neutral | The forms are the same, on one line; NEXT unchanged |
+| others | neutral | — |
+
+Second cut (same day, after the first rerun of requests_7328 still compacted every 3-4 calls: each window added about
+2,200 tokens, of which about 550 are the model's own kept thoughts; `include_thoughts: false` would turn thinking off
+in the ADK bridge, so the thoughts stay): the window is about 5,000 characters (resolve_redirects 10,211 → 5,015): the
+code whole up to 60 lines, else 40 around the requirements' names; used code and callers one line each with
+location and a short signature (short own members up to 6 lines as code); imported names in one line; the
+statement's behaviour sentences cut at 350 characters and its example dropped (the statement is in the system
+instruction, never compacted); the existing test 6 lines; the forms line says only what NEXT does not. Checklist as
+above (B7, P7 closer; W3 farther, same reason); W4 neutral: NEXT still gives the edit forms in full.
+
+### The decision window (2026-10-11): a critical look at what each window costs
+
+Measured with the model's own tokenizer (llama-server `/tokenize`), as the ADK sends it (the answer JSON-encoded):
+the 5,000-character window of `resolve_redirects` was **1,500 tokens**: progress, head and code 806 (the line numbers
+alone 187 of the code's 596: a padded `" 184|"` is about 5 tokens), used code 142, callers 82, imports 66, the task
+91, a test 126, the forms line 79 and NEXT 78. A turn also keeps the model's own thoughts (about 512 tokens with
+`include_thoughts: true`, which must stay: false turns thinking off). With 3,200 tokens of system instruction and task
+message, about 1,000 of summary and the last 5 events kept after each compaction, a turn of about 2,100 tokens meant a
+compaction every 3-4 calls.
+
+What a window is for: one decision, what to write at this place. Three kinds of content were mixed in it: decision
+material (the code, the goal), navigation affordances (used code, callers, imports, forms) and status (progress, the
+patch's change). The principle now: **what does not change goes in the system instruction, which is never compacted;
+each answer carries only what this decision needs, measured in tokens.**
+- Head: the place, and **one goal line**: the requirement that shares the most words with the place (the issue in
+  full is in the system instruction, above every compaction).
+- Code: whole up to 52 lines, else 32 around the requirements' names (a range inside the place shows the rest);
+  numbers without padding (`184|`), which saves about 40 tokens per window.
+- Related code: up to 3 used definitions **that share the issue's words** (none that share none) and 1 caller, one
+  line each.
+- A test that uses it: only for a chosen place and only the first time it is shown.
+- Dropped from every window: the requirement list and the statement's sentences (system instruction), the imports
+  line (adding an import is `<file> top level`, said once in the system instruction), the forms line (NEXT and the
+  system instruction), the "added because it is related" sentence (now part of the head). The budget line is shorter.
+
+Result: `resolve_redirects` **884 tokens** (from about 3,500 this morning), the choose step's answer with the places
+list and the first window 1,189.
+
+| Item | Verdict | Why |
+|---|---|---|
+| B7 | **closer** | Turns of about 1,500 tokens instead of 4,000: the window stays in the history |
+| P6 | neutral | The goal is the second line; NEXT is the last; the full task is in the system instruction |
+| P7 | **closer** | Only context that shares the issue's words is shown |
+| P8 / F5 | **closer** | Fewer compactions, so less state is lost |
+| W1 | neutral | — |
+| W3 | **farther** | Less code and context at once. Reason: a window that is compacted away shows nothing; the rest is one in-place range away |
+| W4 | neutral | NEXT unchanged |
+| W5 | neutral | `184|code` is still the numbered format |
+| W6 | neutral | The goal is the issue's own sentence |
+| B1 | neutral | Line numbers still shown on every code line |
+| B8 | neutral | No form added or removed |
+| B12 | **closer** | The prompt's description of the window matches the window |
+| others | neutral | — |
+
+First run with the decision window (requests_7328): prompts grew 1,400-1,500 tokens per call instead of 2,200, but the
+model read `Session.send` (76 lines, 32 shown) in 6 ranges, and each range answer repeated the whole window. A range
+inside the open place now answers only those lines (at most 60, inside the place) and NEXT (`_place_lines`).
+Checklist: B7 closer (no repeated window), W3 closer (the lines asked for, at once), B9 neutral (the reads stay inside
+the place under decision; still counted in the `look` log).
+
+Same run: the repeat guard took a range read three times (`['Session.send', 732, 737]`) as a loop and moved on,
+which marks the open place skipped; Session.send and then resolve_redirects were skipped undecided and the plan went
+back to choosing. A range read is now never a repeat (its answer is short, and the lines may have been compacted
+away). Checklist: F7 neutral (loops of edits and choices are still moved on), B12 closer (a read never changes the
+plan).
+
+Same run, end: the model sent the same failing edit of Session.send 5 times, alternating with re-choosing it, so the
+repeat guard (last 3 calls) never saw a repeat; each try ran the tests again (about 20 s) and was undone by the same 3
+failures. An edit the tests undid is now remembered (place, the tests it broke); the same edit sent again is answered
+at once with those facts and the current step, without running it (F6 closer: no third try of the same thing; F9
+neutral: facts; B5 farther (small): the answer names the failing tests again; reason: they are the fact that makes a
+different change necessary). The run ended with an empty patch: the model localized the change in Session.send while
+the fix is in resolve_redirects (the place it had lost to the repeat-guard skip, fixed above).
+
+Question raised by the user: would ADK sub-agents avoid the compaction? Recorded options: `agent_tool` (a sub-agent in
+a fresh session; only its final text reaches the parent; its calls count against the 30-call budget) as an editor per
+place would start every window with a clean context, and the procedure's state already lives in step.py's journal, not
+in the history; a `SequentialAgent` does not help (each stage accumulates its own history; V5 used one and failed for
+browsing, not for the architecture). Decision: first measure the decision window; if tasks still compact, try an
+`agent_tool` editor per place locally.
+
+Budget (2026-10-11, the user's question): `max_tool_calls` 30 and `max_turns` 40 were ours (a safety net,
+design v1); the harness default is 100 calls and the competition's real limit is time (12 h for about 120 tasks, about
+6 min each). With a faster model the call cap ended runs before the time did (L1: 30 calls at 3.2 min). Now 60 calls
+and 80 turns, 7 min unchanged, so time decides. (Also checked: the competition's compaction uses
+`compaction_interval 5`, ours 15; it counts user invocations, one per task, so the token threshold of 14,336 is the
+trigger in both.)
+
+Then (the user's point): a call cap only ends a run before its time; time alone is the competition's limit. Now
+`max_tool_calls` 200 and `max_turns` 300 (not binding), and the budget line shows only the time (B10: the binding
+budget; a call count against a cap that never binds is noise). Also: `<file> top level` (how the system instruction
+says to add an import) was answered "Nothing in the repository holds …" in the edit step (the name pattern refused the
+space), and choosing it replaced the plan: the top level of a file the plan works in now joins the plan.
+
+fastapi_14448 (local batch, task 4): at the finish step the model sent args `['submit_patch']` to the script 20 times:
+the D4 NEXT read "NEXT: none: call submit_patch now" while every other NEXT reads "call run_skill_script … args", and
+the script answered each repeat with "call submit_patch", which the model took as what it was doing. The D4 and
+time-up NEXT lines now say "call the tool submit_patch, with no arguments (it is its own tool, not an argument of
+run_skill_script)", and args naming submit_patch are answered with that fact (never counted as a repeat). Checklist:
+W4 closer (an unambiguous next call), B12 closer, F7 closer (the loop ends with the right call). Also: code in a file
+the plan works in joins the plan instead of replacing it (the model chose four `Dependant` members in turn, each
+dropping the others), and the budget line is gone from the answers (the user's decision: the script closes edits at
+5.7 min and the harness keeps the diff, so the model does not manage time; B10 is now met by the script, not by the
+model). `tools/local_eval.py` can dump every request as sent (`SWE_DUMP_REQUESTS`): the fixed part of each request is
+about 4,075 tokens (our prompt ~1,500, ADK's skill text ~450, the task message ~1,470 with a 700-token directory tree,
+tool definitions 646), 28% of the compaction threshold.
+
+### The agent_tool variant (2026-10-11): a coordinator and an editor per place
+
+`variants/agent_tool/` (built with `tools/build.py <dir> --variant agent_tool`, copied over `agent/`): the root agent
+`issue_fixer` (prompt `prompts/coordinator.md`, step.py in the `coordinator` role from `_role.py`) starts, chooses and
+then calls the tool `edit_place` (an ADK AgentTool, `sub_agents/edit_place.yaml`) once per place, and `['status']`
+after each; `edit_place` runs in a fresh session (ADK: a new Runner and session; the parent's state, including
+`problem_description`, is copied in, so its instruction carries the issue) and works through `edit.py` (step.py in
+the `editor` role): it opens its place, edits, skips or reads lines of it, and when the place is decided the script
+tells it to reply with one sentence and make no more calls. Only that sentence enters the coordinator's history, so
+neither history comes near the compaction threshold. Read in ADK's `tools/agent_tool.py`: the child has no
+compaction (a looping editor could reach the 32k context), its tool calls count against the same budget, plugins are
+inherited.
+
+First runs (26B, local):
+- rich_3006: resolved in 87 s; the editor started from 1,568 prompt tokens and made the edit in one call.
+- requests_7328, read call by call: (1) one editor call hit the 4,096-token output limit while thinking (the rare
+  local budget fault) and its half reasoning became its reply; (2) the coordinator did not understand that the
+  editor decides the change ("how does it know what to edit it to? maybe I should provide the edit in the
+  request?"): its prompt now says that the editor, which has the issue too, decides and makes the change, and the
+  coordinator only names the place; (3) the second editor read the same 15 lines of Session.send 5 times, and its
+  reasoning advanced at every call: **with a 512-token thinking budget the model uses repeated reads to go on
+  thinking**; on the fourth read it found the self-reference (no redirect: `r0.history = [r0]`). In the variant the
+  editor's thoughts never reach the coordinator, so the editor can think more without filling any history: its
+  `thinking_budget` is now 1,024 (the coordinator keeps 512). Re-reads are not answered "decide now" in the editor.
+
+Checklist: B7 closer (no history reaches the threshold), W7 closer (room to think where the decision is made), P7
+closer (each editor sees its place only), B4 and B8 farther (one more tool and one more script name; reason: the only
+way to give a clean context from a declarative config), W4 neutral (both roles end every answer with their own NEXT).
+
+requests_7328 with the variant, end: the editor (after 14 thinking re-reads) kept an edit of Session.send, went on by
+itself to resolve_redirects and removed `resp.history = hist[1:]` (the reference replaces it with
+`resp.history = hist[:]` before the append; removing it breaks `len(resp.history) >= max_redirects`): not resolved,
+but at the right place. The coordinator then wrote a `python3 -c "…"` call that ran to the 4,096-token output limit;
+the cut JSON made the harness end the task ("Sandbox execution error: Expecting value") with the patch kept. The
+tools each agent can call are fixed by its definition (no shell in either); the `python3 -c` text was args to
+run_skill_script, which the script answers with the facts (RUN_NOTE), but the reply was cut before it arrived. So no
+prompt sentence about it (the user's point: tool limits belong to the agent definition, not the prompt).
+
+### Run a04 (2026-10-11): requests_7328 with the agent_tool variant, read text by text
+
+Commit 02581ca, local 26B A4B, reasoning budget 1,024. Result: not resolved, 41 tool calls, 50 model calls, 430 s;
+the patch only deletes `hist.append(resp)` and `resp.history = hist[1:]` (the reference keeps the append and assigns
+`resp.history = hist[:]` before it). All 50 requests were read in full from `/_monitor/conversation`.
+
+**What the model did well (keep it):**
+- Coordinator S0 → D1 in 2 calls: it copied the statement, chose `SessionRedirectMixin.resolve_redirects` from the 10
+  names, with the evidence lines `184: resp.history = hist[1:]` (W1, W6).
+- Editor, first window (1,458 → 2,665 tokens of prompt): it read the numbered code and traced the loop by hand
+  (R1, R2, R3 and `hist[1:]`), the right lines (W3, W5).
+- After seeing its own diff it found its error at once: "Wait, I just deleted `hist.append(resp)` … `hist` will
+  always be empty" and sent `hist.append(resp); resp.history = hist[:-1]`, which is equivalent to the reference fix
+  (F1: the -/+ diff shows where the error is).
+- With a failing test it read the names and changed the edit (F2).
+- Coordinator replies were short and followed NEXT when NEXT was a single call (W4).
+
+**What went wrong, and whose fault it is:**
+
+| # | Text the model saw / wrote | Cause | Checklist |
+|---|---|---|---|
+| 1 | Editor thinking cut mid-trace ("So `R3.history` is `[R2`") and then the call `183,184,DELETE` | the thinking budget ended in the middle of the simulation; the call came from the half-done reasoning | W7, P5 |
+| 2 | "Your work on SessionRedirectMixin.resolve_redirects is finished. Reply now" right after the first accepted edit; the correct fix sent next was refused 5 times with the same text | **system**: the editor closes on the first accepted edit; it cannot correct what it sees in its own diff | F1, F6, B12 |
+| 3 | "Your work on  is finished … what changed at ," (empty name) | **system bug**: the name of the editor's place is empty after the edit | B12 |
+| 4 | Coordinator: "I need to see the code … I'll try `src/requests/sessions.py:160-281`" (2 wasted calls) | the coordinator prompt still describes the "look elsewhere" forms of the single agent; it wants to understand before delegating | B9, B12 |
+| 5 | Session.send editor sent `SessionRedirectMixin.resolve_redirects` and the script reopened that other place | **system**: `_editor_scope` treats any one-item place name as "a new editor opens its place" | B12, P8 |
+| 6 | `['Session.send','722,735']` answered "The edit was not read: it has 2 items" (5 times) | **system**: a range in one item with a comma is not read as a range; and the open place was the wrong one (#5) | B4, B1 |
+| 7 | "The same call came three times, so SessionRedirectMixin.resolve_redirects keeps its code" while "Open now: Session.send" | **system**: contradictory state lines | B12 |
+| 8 | Thinking degenerated into "I'll try to use `Session.send` with the first line number and the last line number." repeated tens of times, then `finish_reason=length` at 4,096 tokens | loop after 10 identical answers that contradicted its request | B5, F7, B14 |
+| 9 | Second Session.send editor: a correct-looking edit was undone by 4 tests, then "Time for edits is over" at 340 s | the time had gone in #2–#8 | B10 (not shown to the model, by design) |
+| 10 | Coordinator summary "The issue was fixed by moving the fix…" accepted; then submit_patch | it believes the editor's sentence (the status shows the real diff, but it did not doubt it) | B11 |
+
+**Conclusions.** The model's reasoning about the code was right twice (it found the bug and the equivalent fix); the
+task was lost by the interface: an editor that closes before the model can correct its edit (#2), the wrong place
+reopened (#5), a range form not read (#6) and contradictory status lines (#3, #7). Those produced the loop (#8) and ate
+the time (#9). Fixes to make: keep the place open after an accepted edit, with the diff, until the model replies or
+skips; a one-item name of another place in the editor role gets "Only X is edited here"; read `a,b` / `a-b` in one
+item as a range; never print an empty name; the coordinator prompt without the choose-step forms.
+
+**Fixes after a04 (2026-10-11)** and their check against `docs/llm_checklist.md`:
+1. Editor role: an accepted edit keeps the place open, with its diff and the code as it is now; the editor replies
+   when the change is complete or sends a corrected edit. The coordinator's next call moves the work on.
+2. Editor role: another place's name, while the editor's own place is undecided, answers "Only X is edited here"
+   with the own window; it no longer reopens the other place.
+3. A range in one item (`722,735`, `722-735`, `722:735`, `722..735`, `722 to 735`) is read as two line numbers.
+4. The editor's first call (often the coordinator's last call word for word) is never answered as a repeat, so the
+   editor always gets its place; an empty place name prints "this place".
+5. Coordinator prompt: it does not see or write the places' code; the find forms are only for choosing.
+6. (The user's) **No time limit inside the script**: `EDIT_STOP` (340 s) and the "Time for edits is over" answer were
+   removed; in a04 it refused the second editor's edits at 350 s. The harness's own 7 min budget stays.
+
+| Item | Effect | Why |
+|---|---|---|
+| F1 | closer | the diff shows where the error is and the model may act on it (a04: it found its own deletion) |
+| F6 | neutral | a correction is a new edit; the failed-edit memory and the three-repeat move-on still apply |
+| B12 | closer | no "finished" next to "send an edit", no other place opened, no empty names |
+| B4, B1 | closer | a common range spelling is accepted instead of refused |
+| W4 | farther | NEXT after an accepted edit offers two outcomes (reply or correct): the reason is F1, the correction is the case a04 lost |
+| B9 | farther (small) | the editor can keep editing an accepted place; bounded by the repeat guard and the harness's time |
+| B10 | neutral | the model never saw the time; the harness still ends the run at 7 min |
+| P5 | closer | the coordinator prompt no longer offers find forms in the edit step |
+
+## Redesign: microtasks with the context each role needs (2026-10-12, the user's)
+
+**Why.**
+- In V18-V19 the editors spent 88-95% of each task's time and 60-75% of their calls reading.
+- 289 reads in three tasks went to the other planned places, the callers, the code the place uses, and ranges of long
+  places (`docs/feedback_audit.md`, "What the editor reads").
+- That reading was understanding the fix, not writing it. The only resolved task (rich_3521, V18) had a change that
+  fit in one function: 3 reads, 6 minutes.
+- The user's rule: if the files a fix needs do not fit, the task is not specific enough; the tasks must be smaller,
+  with less context.
+
+**Roles and their context.**
+
+| Role | Agent | Gets | Does not get | Size |
+|---|---|---|---|---|
+| Find | coordinator (`step.py`) | the statement; names, signatures and matching lines | code bodies | ~2k tokens |
+| Choose | coordinator | requirements, candidates with evidence | code bodies | ~2k |
+| **Specify** | **`specify_fix`** (new agent_tool, fresh context, thinking 4096), `spec.py` | the statement (system instruction); the numbered code of every planned place, with the lines that call it and the signatures it uses, all at once | editing, tests, search history | ~3-8k |
+| Edit one microtask | `edit_place`, `open.py`/`edit.py` | its place's code (the part the specification names, at most ~90 lines), the specification sentence, the requirement lines, the signatures it uses | other places' code, reads of any kind, the whole statement's reasoning | ~1-2.5k |
+| Review | script | the diff and the failing test with its line and error | — | ~0.5-1k |
+| Propagate | script | after a rename or removal: each use of the old name, with the function that holds it | — | ~0.3k per use |
+| Finish | coordinator | the requirement coverage map | — | ~1k |
+
+**Rules.**
+- **The specifier sees the whole plan at once** and writes one sentence per place: what changes there, or
+  'no change'.
+  - It can add code the plan lacks by naming it; the script adds it as a place and shows its code.
+  - A place it marks 'no change' is not handed to an editor.
+- **The editor receives one specified change.** It cannot read other code.
+  - A name, file, range or search gets one fixed answer: the change is specified; edit with what is shown, or reply
+    with one sentence naming the code that is missing.
+  - The one exception is a range inside its own place when the place is longer than the window.
+  - Edits of other code by name stay accepted (they join the plan).
+- **The coordinator no longer explains the fix.** Its steps are: start, choose, specify (`specify_fix`), edit each
+  specified place (`edit_place`), finish.
+
+**Checklist.**
+
+| Item | Effect | Why |
+|---|---|---|
+| W1 choosing from a short list | neutral | find and choose unchanged |
+| W2 whole functions | neutral | edit forms unchanged |
+| W3 code in front of it | closer | the specifier gets all the plan's code at once; each editor gets the code of its change |
+| W4 a fully filled next call | neutral | every answer still ends with NEXT |
+| W7 better calls after thinking | closer | the step that needs understanding gets a 4096 thinking budget |
+| B7 middle of a long context | closer | editor windows shrink to ~1-2.5k tokens; the specifier's view is one answer of ≤ 8k |
+| B8 many forms | closer | the editor loses every read form |
+| B9 reading instead of editing | closer | no reading in the editor; the reading is one prepared view for the specifier |
+| P3 open-ended prohibitions | farther | "no reads" is a prohibition; stated with its reason (the change is specified) and a way out (reply naming the missing code) |
+| new risk: free text | farther | the specification is free text, the step that failed with the local 12B (4 of 5 runs, 10-09); accepted because the 31B now writes one sentence per listed place, with all the code in view, in a fresh context with a 4096 thinking budget; measured in the next Kaggle eval |
+
+**First local runs of the microtasks (2026-10-13, fastapi_14448, local 26B with thinking 512), m1-m10.**
+- System faults found and fixed, one per run:
+  - before the specification, the coordinator's searches, files and multiple names were refused with the old "its
+    editor reads it" text; they are now answered as at the choose step;
+  - a repeated coordinator call showed it an editor's window, and the repeat move-on skipped an unspecified place;
+  - code the coordinator named after the specification replaced the plan; it now joins it, keeping the sentences;
+  - the specifier's parsing: a name alone, names copied from the view, annotated names, file paths (read as the class
+    FastAPI), one-word sentences;
+  - an all-"no change" specification sent the plan back to choosing; it is not accepted now;
+  - an editor whose edit was kept and reached for other places now gets the reply to send;
+  - a new editor opened without a status call is told apart when the previous place is done;
+  - a third 'the plan' gets a reminder, not the whole view.
+- m10, the first run with no system fault, took 5.7 minutes:
+  - the specifier wrote the code of the four `Dependant` methods;
+  - the editors applied it;
+  - the patch passes 24 of 28 hidden tests, the same as V18's 31B run, which took 45 minutes.
+- The four failures are cases no sentence covered: class instances with a wrapped `__call__`, and a generator with an
+  async wrapper.
+
+### Local runs p1-p2 (2026-10-13, gemma-26b, agent_tool variant): requests_7502, drawn at random
+
+The task: "Fix `_encode_files` detection for `__getattr__`-based file wrappers" (one line); the reference replaces
+`isinstance(fp, _SupportsRead)` with `... or hasattr(fp, "read")` in `RequestEncodingMixin._encode_files`.
+
+- **p1** (stopped after 38 model calls). Choosing took 2 calls, the specification 6, the edit 2: the right change at
+  3:30 min. Then the coordinator did not submit: after "nothing here can be checked automatically" it tried `pytest`,
+  `ls tests` and called `specify_fix` again, twice; each new specifier got the whole view of code already fixed, read
+  `prepare_body` and `_encode_files` again and again (one reply cut at 8192 tokens) and proposed a change of
+  `prepare_body` that the reference does not make. Faults of the system, fixed:
+  1. `['_SupportsRead']` from the specifier was answered "No place and sentence were read": it is an import alias
+     (`from ._types import SupportsRead as _SupportsRead`). `_resolve` now follows import aliases
+     (`_import_alias`), and a name that nothing defines is answered "Nothing in the repository defines X".
+  2. `specify_fix` called again with nothing new (the specification done, its places edited, no pair in the call) is
+     answered with the sentences and their state and a sentence to give back; a call with pairs is still read (in
+     V20 a second specifier added a needed place).
+  3. The finish view says the hidden tests, with the issue's own test, run after `submit_patch` and that tests are
+     not written here.
+- **p2** (all fixes): submitted after 12 tool calls in 1.6 min, the patch equal to the reference's code. The local
+  verdict was "not resolved" (exit code 1); run by hand with the test patch: `test_post_named_tempfile` passes with
+  the patch and fails without it; the whole suite has 12 failures with and 13 without the patch, the 12 being
+  network tests (connect timeouts, proxies) that fail on the original too, as the container has no network. So the
+  task is solved; the local judge cannot pass requests tasks. Two smaller faults, fixed:
+  1. `['src/requests/models.py', '<sentence>']` from the specifier was answered "Not in the repository": now its
+     functions and classes are listed and the sentence is asked for one of them.
+  2. "no fact of the code to show for it here" under each requirement made the coordinator want to write a test;
+     the line is gone when there is no fact.
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | no "cannot be checked" line that reads as "unverified"; the finish says how the patch is judged |
+| B9 deciding when to stop exploring | closer | a second specify_fix with nothing new ends at once instead of a full view |
+| W6 names of code | closer | an import alias resolves to its definition |
+| B12 contradictions | closer | "not in the repository" for a file that is in it is gone |
+
+### Local runs p3-p4 (2026-10-13, gemma-26b, agent_tool): rich_3296, drawn at random
+
+The task: "fix(syntax): include padding with background color override" (a PR text with images); the reference changes
+the `Padding` style in `Syntax.__rich_console__` from `self._theme.get_background_style()` to `self._get_base_style()`
+(which adds the `background_color` override).
+
+- **p3** (stopped after 12 specifier calls, no sentence written): the specifier's view had two faults.
+  1. `self.padding` (an attribute that `Syntax.__init__` assigns) was shown as `Table.padding`, a property of another
+     class: the `self` lookup fell back to any class's member of that name. A `self` attribute that the place's own
+     class assigns is now an instance attribute and resolves to nothing.
+  2. The fix needs `Syntax._get_base_style`, a member of the place's class that the place does not call; the view
+     showed only what the place uses. Up to 2 members of the place's class that use what the place uses (the same
+     calls and attributes; `_get_base_style` calls `self._theme.get_background_style()` like the place) are now shown,
+     the issue's words breaking ties; scoring by the issue's words alone picked `from_path` and `highlight` (large
+     bodies match many words).
+  The specifier read `__rich_console__` again and again; two replies were cut at 8192 tokens, and four model calls in
+  a row had the same prompt size (5,550): the harness retried replies that did not enter the history (to be looked at).
+- **p4** (both fixes): the specification in 2 calls ("use `self._get_base_style()`"), the edit at 59 s, equal to the
+  reference. At the finish the coordinator again tried to write a test (`reproduce_issue.py`, `tests/test_syntax.py`,
+  refused). The run then hung waiting on the model: the tunnel to the local server went down (Cloudflare 1033), so
+  the run was stopped and its patch taken from the sandbox. By hand: `test_background_color_override_includes_padding`
+  fails without the patch and passes with it; the whole suite has 15 failures without and 14 with it, the 14 being
+  the same on the original code (environment). So the task is solved.
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 reasoning about code in front of it | closer | the view holds the member that the fix needs |
+| B11 doubting tool output | closer | no definition of another class shown as the place's own attribute |
+| B7 the middle of a long context | neutral | at most 2 more short entries |
+
+Open after p1-p4: at the finish the coordinator still wants to write or run a test (p2, p4), each attempt refused at
+once; the step is cheap but the wish comes back. The local judge cannot score requests tasks (no network) and the
+rich suite has 14 environment failures: a local "not resolved" must be checked by hand against the test patch.
+
+### Kaggle V21 (2026-10-13, the 31B, 6 tasks): 1/6 by the harness, 3/6 correct by hand
+
+- rich_3521 resolved. requests_7502 and rich_3296: correct patches (checked with the test patch: the new test passes,
+  nothing that passed on the original fails), but the harness's verdict needs the whole test file to pass, and these
+  files fail in this environment on the original code too (TLS/network tests; pygments-dependent ANSI output). A
+  local or Kaggle "not resolved" is checked by hand before it counts as a failure of the agent. `tools/kaggle_eval.py`
+  now keeps the whole hidden-test output (`tests_<task>.txt`) and prints its FAILED/ERROR lines (it was cut at 700
+  characters).
+- fastapi_14986: the specifier wrote "remove lines 1108-1112" (the root_path handling) instead of moving it to a
+  per-request copy of the schema. Three existing tests failed on their asserts; the answer offered "send the same edit
+  again: it is then kept", and the editor did, twice (also in `get_swagger_ui_html`). **The 10-13 assert rule was
+  wrong as written**: a failing assert of an existing test is usually right. Now the rule applies only when the new
+  value each test rejects appears in the issue's text (as in "returns '3 B'"); otherwise the edit is undone and no
+  resend is offered.
+- fastapi_14448: the same 4 hidden failures as local m10 (an async `__call__` of a class instance behind a wrapper).
+- httpx_3672: 60-min stop. The fix spans interdependent places (parser rename and keep_alive, connection loop, server
+  close); each place is verified alone, so half a fix left servers open and the next tests failed with
+  `OSError: [Errno 98] Address already in use`; correct edits were undone again and again. Open, proposed: when the
+  specification covers several places, verify them together after the last one (or treat a failure that is an
+  environment error such as EADDRINUSE as "not checked" instead of "broken").
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the escape from a test verdict needs the issue's own value; existing tests are trusted otherwise |
+| B5 repeating a failed call | closer | resending an undone edit is no longer offered unless the issue writes the value |
+
+### Evaluating the hidden tests locally and on Kaggle (2026-10-13, the user's request)
+
+Two faults made the dev evaluation wrong, locally and on Kaggle:
+1. **The sandbox imported the installed package, not the task's code.** swegemma's subprocess sandbox (used by
+   `local_eval.py` and `kaggle_eval.py`) skips the editable install, sets PYTHONPATH to the workspace root and adds the
+   host's site-packages. For a `src/` layout (requests, httpx) the tests imported the host's copy (a dependency of the
+   harness itself), so no patch could change their result: the reference patch of requests_7502 failed its own new test,
+   and V21's httpx_3672 failed collection on the installed httpx. `tools/eval_env.py` puts `<workspace>/src` first.
+   (The skill's own test runs, `_tests._env`, already put `src/` on the path.)
+2. **The harness's verdict needs the whole test files to pass**, including tests this environment fails on the
+   original code (requests' TLS/network tests, rich's pygments-dependent output). `tools/judge.py` compares with the
+   reference patch and the original code in the same sandbox (SWE-bench's FAIL_TO_PASS / PASS_TO_PASS) and caches the
+   two baseline runs per task.
+
+Judged again, V21's six patches: 4/6 resolved (rich_3521, requests_7502, rich_3296, httpx_3672); fastapi_14448 fails 4
+of its 8 FAIL_TO_PASS tests; fastapi_14986 fails 3 and breaks a PASS_TO_PASS test.
+
+### Port clashes in the skill's test runs (2026-10-14)
+
+`_tests.run` started one pytest process per test file at once. httpx's test files start servers on one fixed port, so
+the processes failed each other with `OSError: [Errno 98] Address already in use`, while the run on the original code
+(one process) passed: every edit of httpx_3672 counted as breaking 7-12 tests and was undone (V20, V21 with the 31B,
+and a local run with another model through the proxy). Now a run whose output shows a port clash runs again one file
+after the other (each file with its own 30 s deadline) and the task keeps running serially. Checked on httpx_3672's
+snapshot: test_client, test_pool, test_network went from clashing to 20 passed, 0 failed (about 55 s a check).
+
+### The tests audits and the rewrite of the skill's test runner (2026-10-14)
+
+Four agents audited the tests (the user's request: the system is evaluated by tests, so the tests must be right): the
+skill's in-edit runner (`_tests.py`), the evaluation judge, a check with known answers (each task's reference patch and
+an empty patch), and the 129 tasks' hidden tests. Findings on the runner that gave wrong verdicts, all reproduced:
+- an edit that broke importing the package was "Kept, not checked" (conftest failed before any test ran);
+- a typo'd import was stubbed away and passed; a stub written once shadowed every later run, and stubs replaced
+  installed packages (a stub for email_validator broke pydantic and every fastapi test file);
+- the original code ran only the first 10 failing ids, in one batch, alone: failures beyond 10, order- or
+  load-dependent tests, a base run cut by its deadline and one id with a space (`test_p[a b]`, cut at the space,
+  aborting the batch) all gave false BROKEN; a prefix match hid a test file that the edit made uncollectable;
+- the lexical selection found no test for fastapi_14448's places, which 115-598 tests run;
+- coverage counted lines run by tests that then failed; files written by tests entered the patch;
+- one edit of a rename that spans files (httpx_3672) was BROKEN in every order; parallel test files clashed on a port.
+The runner now reads per-test outcomes from a pytest plugin (streamed, ids relative to the working directory),
+runs the original code on the same groups (cached per groups and stubs), finds stand-ins on the original code only and
+only for modules the tests import, checks that the changed modules import, confirms a new failure alone and on the code
+just before the edit, selects tests from a once-per-task call map (which tests call which function), keeps an edit whose
+failures are AttributeError/ImportError/NameError on a name it renames while other planned places are still to edit,
+runs clashing test files one after the other, removes files tests write, strips proxy variables and limits memory.
+Check with the reference patches (12 tasks): no reference edit is BROKEN any more (before: fastapi_15800 in forward
+order, false timeouts in requests, the httpx rename); fastapi_14448's models.py edit is now checked by 91 tests that run
+its lines (before: no test selected). The judge side (JUnit outcomes, required tests, doubled baselines, official
+feasibility, fingerprinted cache, failed applies) is described in CLAUDE.md ("How a patch is judged").
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the verdicts the model reads are now right on known answers; false BROKEN and false "Kept and checked" removed |
+| W5 familiar formats | neutral | the answers keep pytest's marked line and E lines |
+| B5 repeating a failed call | closer | correct edits are no longer undone, so the model is not pushed to resend them |
+
+### Proxy runs with a stronger model, round h1 (2026-10-14, 10 dev tasks, the rewritten test runner)
+
+Judged 4/10 (harness 3/10, official_feasible 8/10): rich_3521, rich_3006, fastapi_14851 and **httpx_3672 (first time
+resolved by any run; 31 min, the port-clash fix and the pending rename kept its edits)**. Not resolved: fastapi_14986
+(escaped the HTML with html.escape where the tests want JSON escaping), requests_7328 (a wrong specification that the
+existing tests rightly rejected), fastapi_14448 (the same 4 wrapped-async tests), fastapi_15800 (a large feature: 60
+new tests), fastapi_14583 and rich_3469 (wrong place: vague statements). No internal error, no repeated call; the import
+check caught an edit that used `os` without importing it in fastapi_15800, but its answer said "2 existing tests
+failed" (fixed: it now says the module does not import and how to add the import). The coordinator's attempts to read
+code (9 in httpx_3672) are refused at once. The failures left are of the model's reasoning, not of the tests.
+
+### Rounds h2 and s1 (2026-10-14): Sonnet no better than Haiku, and why that was the system
+
+h2 (Haiku, build after h1's fixes): judged 5/10 (requests_7328 resolved as well). s1 (Sonnet, the same build): judged
+5/10, the same five tasks failing as with Haiku (fastapi_14448, fastapi_15800, fastapi_14583, rich_3469 and
+requests_7328). The user's reading: a much stronger model that does no better points at the system. It did:
+- **Parallel calls.** Every task of h1, h2 and s1 had turns with several tool calls, up to five `edit_place` at once,
+  all on the one journal and the one working tree. The competition model made none in V20-V21 (Kaggle traces).
+- **An undone edit stayed in the patch (s1, requests_7328).** The editor sent two line edits of
+  `resolve_redirects` together. One was undone by the existing tests ("Undone: 2 existing tests that passed before
+  the edit failed after it… assert 29 == 30"), yet the status and the submitted patch still held both changes. The
+  state lock waited 120 s and then let the second call go on unlocked, while the first was still running its tests
+  (the edit check can take longer than that). That call wrote its edit over the restored file.
+
+Fixes:
+- `_state.lock()` never goes on unlocked. A call waits up to 500 s for the call before it (the harness kills a call at
+  its 600 s command timeout, which releases the lock; s2: one edit check of requests took 230 s). If that call is still running after the wait, this call does
+  nothing and says so.
+- The proxy asks the upstream model for one tool call per turn (`disable_parallel_tool_use`; `--parallel` keeps the
+  old behaviour), as the competition model makes them. h1-s1 are therefore not evidence about the design's limits.
+  s2 repeats s1 with one call per turn.
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | an answer that says "Undone" is now true of the files and the patch |
+| W5 familiar formats | neutral | no format change |
+
+### System causes of the failures every model shared (2026-10-14, two analysis agents on the h1, h2 and s1 traces)
+
+- **fastapi_14448: a reader of the changed properties was never shown.** The reference also swaps two branches of
+  `_solve_generator` (utils.py), which reads `dependant.is_gen_callable` and `dependant.is_async_gen_callable`.
+  `_impact.related()` knew only `self.<name>` reads in the same class. So no plan held that function, and neither did
+  the specifier's view. With that 4-line swap added, s1's patch is judged resolved (8/8 FAIL_TO_PASS). Fix: the readers
+  of a chosen property outside its class (`<expr>.<name>`, at most 30 in the repository, else the name is common) are
+  shown as "uses <name> (line N)", not planned. The functions that read more of the chosen properties come first. The
+  specifier's view of a place left out of the plan opens at the line that calls or reads the planned code.
+- **fastapi_15800 and fastapi_14448: new code could not be a place.** Specifiers named `APIRouter.frontend`,
+  `FastAPI.frontend` and a helper `_unwrap_chain`, and got "Not in the repository". In the same answer the script said
+  "The specification is complete", so the new code's sentence was lost, or hung on unrelated places. Fixes:
+  - `<Class>.<new>` on an existing class, or `<file>.py::<new>` on an existing file, goes to that class or that file's
+    top level as "Add the new method `x` (send it whole; it is added at the end): …". The editor's whole-definition form
+    already adds a new name at the end of the place.
+  - The view says which new names the issue asks for and how to name them.
+  - The editor's window for a new member opens at the class's end.
+  - After an edit, the window opens at the changed lines.
+- **No silent loss.**
+  - A refused pair (an unknown name, or a sentence over 1,500 characters) is answered with the form, and the
+    specification is not called complete.
+  - Sentences were cut at 600 characters without notice; s1 sent 649-947. The cap is now 1,500, and the specifier is
+    told when it is exceeded.
+  - Two sentences for one place in one call are both kept.
+- **fastapi_14583 and rich_3469: the ranking.** The reference places ranked #119-#430.
+  - `v1` was split into `v` + `1`, both too short to count. `v1`, `http2` and `utf8` are now tokens of the identifiers
+    and of the query.
+  - A file the model guessed counted double, like a file the statement names. h1: 8 of 10 candidates came from
+    `temp_pydantic_v1_params.py`. A guessed file now counts a quarter more.
+  - Standard-library and builtin exception names among the model's terms (`DeprecationWarning`, `warnings`) matched
+    the code that already warns. They now weigh 1.
+  - URLs in the model's terms gave `textualiz`, `github` and `com`, which ranked `rich/__main__.py` first. URLs and
+    issue references are removed from the terms; a `.py` path inside one is kept as a path.
+  - A second item "Fixes https://…" is read as the statement's second line, so the one-line warning no longer fires.
+
+  The agents expect neither task to pass: the tests of fastapi_14583 want message texts that only the tests contain,
+  and rich_3469 is infeasible here (official_feasible 0).
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 reasoning about code in front of it | closer | the reader whose branch order matters is in the specifier's view, at the line |
+| W1 choosing from a short list | closer | the candidates are less crowded by one guessed file and by existing warnings |
+| B11 doubting tool output | closer | "complete" is no longer said when a sentence was refused or cut |
+| W2 writing whole functions | closer | a new method or helper is sent whole, as a place of its own |
+| B8 following many rules or forms | farther (small) | one more name form (`Class.new`, `file.py::new`); stated in the view only when the issue asks for new names |
+| B7 the middle of a long context | farther (small) | up to 5 more places in the specifier's view; places left out of the plan show 30 lines at most |
+
+Round s2 (Sonnet, one call per turn, the build before these fixes): judged 6/10. requests_7328 is now resolved; in s1
+the parallel edits had broken it. The failures are fastapi_14448, fastapi_15800, fastapi_14583 and rich_3469.
+
+In s3 (fastapi_14448), the specifier saw `_solve_generator` but gave it "no change". It made `is_gen_callable` and
+`is_async_gen_callable` both true for an async wrapper around a sync generator, and `_solve_generator` tests the sync
+one first. A place left out of the plan that tests two or more of the planned names now carries one question: after
+the change, can more than one be true for the same object, and does its order of tests still pick the right branch?
+The patch summary also names a nested function by the function that holds it: s2 said
+`Dependant.is_gen_callable._strip`.
+
+The candidate list keeps at most 5 candidates per file (`PER_FILE`; the rest are counted under the file's last one).
+On bench_locate it is neutral: hit@10 is 90/128 with or without the cap, and a gold file is in the top 10 for 110/128
+(108 without). With the model's own terms from h1/h2/s1 (fastapi_14583), `annotation_is_pydantic_v1` rises from
+#78/#24/#36 to #20/#4/#12.
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 reasoning about code in front of it | closer | the question points at the interaction the reader's branch order has with the change |
+| B11 doubting tool output | closer | the patch summary names the function that was edited |
+
+Round s3 (Sonnet, every fix above except the branch-order question): judged 6/10, the same tasks as s2. Per task:
+- **fastapi_15800**: the specifier added `APIRouter.frontend` and `FastAPI.frontend` as whole new methods, but placed
+  them after `include_router` rather than with the new form. The tests need behaviour the statement never names.
+- **fastapi_14583**: the warning went into `create_model_field`, one call from the reference sites. Its text cannot
+  match what the tests expect.
+- **fastapi_14448**: `_solve_generator` was in the view, and the specifier gave it "no change".
+
+s4 (fastapi_14448 alone, two runs):
+- Run 1: `_solve_generator` was cut by the 8-place limit. Three chosen properties had filled it with their copies and
+  callers. Fixes:
+  - Places are now kept by kind: chosen, then planned with them, then readers outside the class, then the rest.
+  - The readers outside the class are gathered across every planned property. They are ordered by how many of those
+    properties they read per line, so the 9-line `_solve_generator` comes before the 138-line `solve_dependencies`.
+- Run 2: `_solve_generator` came first among the readers, with the branch-order question. The specifier still gave it
+  no change. Its sentences also leave 3 of the 4 failing tests failing: callable instances whose `__call__` is wrapped,
+  as in h1 and h2. What is left there is the model's reading of the code it was shown.
+
+### Three changes from the checklist check of the open problems (2026-10-14, the user's request)
+
+1. **The issue's example is run** (`_example.py`). The first code block of the statement that parses and imports the
+   repository's package is run on the original code at S0. It is run again after each kept edit (editor) and at the
+   finish view, and the answer shows both outputs or tracebacks. It runs from the state directory, not as
+   `__main__`, with stdin closed, 20 s at most. 10 of the 129 dev statements have such a block. Dry run, rich_3052:
+   "On the original code it failed: TypeError: PromptBase.ask() got an unexpected keyword argument 'case_sensitive'
+   … With the patch it fails the same: the patch does not change what the example shows yet."
+2. **A filled form for new code.** When the issue asks for new names, the specifier's view names them as places
+   (`app.frontend` → `'FastAPI.frontend'`, via the class the variable is made from). Its NEXT line carries the filled
+   pair (`…, 'FastAPI.frontend', '<what the new code does>'`).
+3. **The plan recited, and no contradiction.** The first line of every coordinator and specifier answer now recites
+   the plan with each place's state ("The plan: A (edited), B (to edit), C (no change)."). A `specify_fix` called
+   while the coordinator chooses again, with a non-empty patch, is told the edits stay and the places come first. It
+   no longer hears "no places are chosen yet".
+
+Also: an edit undone because its module no longer imports says "add a missing import" only for a NameError or an
+ImportError; a SyntaxError is told to fix what the error names.
+
+| Item | Effect | Why |
+|---|---|---|
+| F2 repairing from prose or tracebacks | closer | the example's traceback or output is shown before and after |
+| W5 familiar formats | closer | a plain Python traceback and program output |
+| F5 knowing what is done | closer | "the patch does not change what the example shows yet" |
+| B11 doubting tool output | closer | the example is evidence about the new behaviour, not only "Kept, not checked" |
+| P9 copying call-form examples | closer | the new-code pair is in the NEXT line, filled |
+| W4 a fully filled next call | closer | as above |
+| P8 progress recited | closer | the plan and its states in every answer |
+| B12 contradictions | closer | no "no places chosen" beside a non-empty patch |
+| B7 the middle of a long context | farther (small) | the example block adds up to about 1,800 characters to an editor answer; it appears only when the issue has an example |
+| B10 knowing its budget | farther (small) | up to 20 s per kept edit, only for tasks with an example |

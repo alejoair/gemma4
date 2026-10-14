@@ -7,9 +7,8 @@ These are the same steps as in your instructions; start with step 1.
 Call run_skill_script with skill_name fix-issue, file_path step.py and args, a list of strings. Each answer ends with a NEXT line that gives the form of the next call: make that call.
 
 1. Start. args: the whole issue statement, every line of it (its first 40 lines if it is longer), then search terms, one per item. You get the requirements and up to 10 candidates, each shown by its name.
-2. Choose. args: the names of the 1 to 3 candidates whose code must change. You get the places to edit, by name, and the first one opens.
-3. Edit, one place at a time. args: the place name and the whole new function or class (from its def or class line to its last line), or the place name, the first and last line numbers and the new lines. Or ['skip'], the name of a function or class to open it, a file name to choose among its code, or ['back'].
-To read code the window does not show, in any step: ['<file or name>', '<first line number>', '<last line number>'] shows those lines and changes nothing.
+2. Choose. args: the names of the 1 to 3 candidates whose code must change. You get the places to edit, by name, and the first one opens. To look elsewhere, send a name or a text to find, a file name, or a file with two line numbers: you get the functions and classes that hold it, to choose from.
+3. Edit, one place at a time. args: the place name and the whole new function or class (from its def or class line to its last line), or the place name, the first and last line numbers and the new lines. Or ['skip'], ['back'], a listed place's name to open it, or the name of other code to choose it instead of the places not edited yet (the edits made stay); a text to find gives the code that holds it, to choose from.
 4. Finish. If a requirement still needs code, send ['back']; otherwise call submit_patch, then write one sentence about the change.
 
 The script shows the code and runs the existing tests after every edit, so no other tool is needed. Reading the script's source does not help: call it.

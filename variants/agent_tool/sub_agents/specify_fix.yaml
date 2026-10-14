@@ -1,0 +1,6 @@
+name: specify_fix
+description: Reads the code of every place chosen for the fix at once and writes, for each place, one sentence of what must change there (or no change); each place is then edited by its own editor from that sentence.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include specify_fix.md
+skills: [skills/fix-issue]
+generate_content_config: !include sampling_spec.yaml

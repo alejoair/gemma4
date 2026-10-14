@@ -1,0 +1,24 @@
+name: issue_fixer
+description: Fixes the issue by routing it through seven agents, one responsibility each, in the order the fix-issue script gives.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include prompts/coordinator.md
+tools:
+  # one agent per responsibility (docs/design_stages.md); each runs in a fresh session for each call (ADK AgentTool),
+  # so only its one-sentence reply enters this history
+  - submit_patch
+  - agent_tool:
+      config_path: sub_agents/requirements.yaml
+  - agent_tool:
+      config_path: sub_agents/reproduce.yaml
+  - agent_tool:
+      config_path: sub_agents/locate.yaml
+  - agent_tool:
+      config_path: sub_agents/scope.yaml
+  - agent_tool:
+      config_path: sub_agents/specify.yaml
+  - agent_tool:
+      config_path: sub_agents/edit.yaml
+  - agent_tool:
+      config_path: sub_agents/review.yaml
+skills: [skills/fix-issue]
+generate_content_config: !include configs/sampling.yaml

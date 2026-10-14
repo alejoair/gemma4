@@ -1,0 +1,2 @@
+# base files the agent_tool variant does not use (its instructions are prompts/coordinator.md and sub_agents/*.md)
+prompts/fix_issue.md

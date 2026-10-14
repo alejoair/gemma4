@@ -15,7 +15,11 @@ if __name__ == '__main__':
 
 Place = namedtuple('Place', 'rel name start end reason')
 MAX_CALLERS = 5
+MAX_USES = 30      # a property read as x.<name> in more places than this has a common name: its readers are not shown
 MAX_SAME_NAME = 3   # a plain name defined in more places than this (get, __init__) is not a copy
+SAME_PATTERN = 0.7  # a sibling whose body matches this much of the chosen one's (tokens) repeats its logic
+MAX_PATTERN = 3
+PATTERN_LINES = 60  # longer siblings are not compared
 
 
 def _twin_key(qualname):
@@ -33,6 +37,8 @@ class Table:
         self.calls = {}      # called name -> [(rel, caller qualname or None, line)]
         self.bases = {}      # (rel, class qualname) -> [base names]
         self.exports = {}    # name -> [rel of __init__.py]
+        self.reads = {}      # attribute name read as self.<name> -> [(rel, reader qualname, line)]
+        self.uses = {}       # attribute name read as <other expression>.<name> -> [(rel, reader qualname, line)]
         for rel in _repo.iter_py(root, docs=docs):
             tree = _code.parse(_repo.read_text(root, rel))
             if tree is None:
@@ -51,6 +57,13 @@ class Table:
                     if name:
                         o = owner[node.lineno] if node.lineno < len(owner) else None
                         self.calls.setdefault(name, []).append((rel, o.name if o else None, node.lineno))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                    o = owner[node.lineno] if node.lineno < len(owner) else None
+                    if o is None:
+                        continue
+                    own = isinstance(node.value, ast.Name) and node.value.id == 'self'
+                    (self.reads if own else self.uses).setdefault(node.attr, []).append((rel, o.name, node.lineno))
             if rel.endswith('__init__.py'):
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
@@ -73,6 +86,37 @@ class Table:
         return [(rel, c) for (rel, c), bases in self.bases.items() if short in bases]
 
 
+def _body_tokens(sym):
+    text = ast.unparse(sym.node)
+    return re.findall(r'\w+|\S', text.split('\n', 1)[1] if '\n' in text else text)
+
+
+def same_pattern(table, rel, sym):
+    """The functions next to sym (the same class, or the file's top level) whose body repeats its logic: [(rel, Sym)].
+    fastapi_14448 changes is_gen_callable, is_async_gen_callable and is_coroutine_callable the same way (bodies 0.93
+    and 0.73 alike); the agent chose one and changed only that one, because nothing put the others in the plan."""
+    if sym.kind != 'def' or sym.name.split('.')[-1].startswith('__') or sym.end - sym.start >= PATTERN_LINES:
+        return []
+    prefix = sym.name.rsplit('.', 1)[0] + '.' if '.' in sym.name else ''
+    mine = _body_tokens(sym)
+    scored = []
+    for s in table.syms.get(rel, []):
+        short = s.name[len(prefix):]
+        if (s is sym or s.kind != 'def' or not s.name.startswith(prefix) or '.' in short or short.startswith('__')
+                or s.end - s.start >= PATTERN_LINES):
+            continue
+        ratio = difflib.SequenceMatcher(None, mine, _body_tokens(s), autojunk=False).ratio()
+        if ratio >= SAME_PATTERN:
+            scored.append((-ratio, s.start, s))
+    return [(rel, s) for _, _, s in sorted(scored)[:MAX_PATTERN]]
+
+
+def _is_property(sym):
+    return any((isinstance(d, ast.Name) and d.id in ('property', 'cached_property')) or
+               (isinstance(d, ast.Attribute) and d.attr in ('property', 'cached_property'))
+               for d in getattr(sym.node, 'decorator_list', []))
+
+
 def related(table, chosen):
     """The chosen places first, then the places related to them, each once: [Place]. chosen: [(rel, qualname)]."""
     out, seen = [], set()
@@ -84,6 +128,7 @@ def related(table, chosen):
 
     for rel, name in chosen:
         put(rel, table.get(rel, name), 'chosen')
+    outside = {}     # (rel, reader) -> [chosen properties it reads, first line, first property]
     for rel, name in chosen:
         sym = table.get(rel, name)
         if sym is None:
@@ -106,6 +151,20 @@ def related(table, chosen):
             for base in table.bases.get((rel, cls), []):
                 for r, s in table.find(f'{base}.{method}'):
                     put(r, s, f'version in base class {base}')
+        for r, s in same_pattern(table, rel, sym):
+            put(r, s, f'same pattern as {short}')
+        if '.' in name and _is_property(sym):
+            # c13: Dependant._unwrapped_call is a cached_property: read, never called, so its readers (the three
+            # is_*_callable, which the reference changes too) were not related places
+            cls = name.rsplit('.', 1)[0]
+            readers = [(r, o) for r, o, _ in table.reads.get(short, []) if r == rel and o.startswith(cls + '.')
+                       and o != name]
+            for r, o in list(dict.fromkeys(readers))[:MAX_CALLERS]:
+                put(r, table.get(r, o), f'reads {short}')
+            # its readers outside the class (dependant.is_gen_callable in utils.py): fastapi_14448's reference also
+            # swaps two branches of _solve_generator, which reads two of the changed properties, and no run planned or
+            # even showed it (the analysis of s1: with that swap added, its patch passes). Shown, not planned; the code
+            # that reads more of the chosen properties first. Common attribute names (read in many places) are skipped.
         plain = [(r, s) for r, s in same if not short.startswith('__')]
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:
@@ -127,6 +186,27 @@ def related(table, chosen):
             if (init, '<exports>') not in seen:
                 seen.add((init, '<exports>'))
                 out.append(Place(init, '<exports>', 0, 0, f'exports {short}'))
+    for p in list(out):
+        sym = table.get(p.rel, p.name)
+        if p.reason == 'chosen' or p.reason.startswith(('same pattern', 'reads ', 'async/sync twin')):
+            if sym is None or '.' not in p.name or not _is_property(sym):
+                continue
+            cls, short = p.name.rsplit('.', 1)
+            found = table.uses.get(short, [])
+            for r, o, line in found if len(found) <= MAX_USES else []:
+                if not _repo.is_doc_path(r) and not o.startswith(cls + '.') and (r, o) not in seen:
+                    u = outside.setdefault((r, o), [set(), line, short])
+                    u[0].add(short)
+
+    def density(k):
+        # the planned properties it reads per line: a short reader is mostly about them (fastapi_14448: the 9-line
+        # _solve_generator before the 138-line solve_dependencies)
+        sym = table.get(*k)
+        return len(outside[k][0]) / (1 + (sym.end - sym.start + 1) / 10) if sym is not None else 0
+
+    order = sorted(outside, key=lambda k: (-density(k), k[0] != chosen[0][0], k[0], outside[k][1]))
+    for r, o in order[:MAX_CALLERS]:
+        put(r, table.get(r, o), f'uses {outside[(r, o)][2]} (line {outside[(r, o)][1]})')
     return out
 
 

@@ -153,9 +153,8 @@ def apply(root, rel, start, end, text):
             if both != unesc:
                 variants.append((both, why + ['turned escaped quotes into quotes', 're-indented to the replaced line']))
     tries = [(v, r, end) for v, r in variants]
-    if 0 < len(new) < end - start + 1:
-        tries += [(v, r + [f'replaced only {len(v)} lines, as many as the new text has'], start + len(v) - 1)
-                  for v, r in variants]
+    # (no partial replacement: keeping the old lines past a shorter new text changed the code silently;
+    # docs/feedback_audit.md #14)
     first_error = None
     same_as_old = False
     for cand, extra, stop in tries:

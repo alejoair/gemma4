@@ -43,17 +43,27 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 - Never remove a piece of the design because it has few or no calls: find out why it is not used and wire it.
 - Record design decisions and literature in the repository (this file and `docs/`), never only in the scratchpad.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md` as soon as it finishes.
-- No Kaggle competition submission unless the user asks (S5 is queued at the user's request; see below).
+- No Kaggle competition submission unless the user asks.
 - Never use Claude's outputs to train Gemma.
 - No model identifiers in commits, PRs or code. Commit and push after each round of changes
   (branch `claude/practical-wright-jnki3c`, PR alejoair/gemma4#3).
 
-## The agent now (2026-10-09)
+## The agent now (2026-10-13)
 
-`agent/` is the submission: one `LlmAgent` (`issue_fixer`, named `swe_step_agent` until 2026-10-09) with the tool `submit_patch` and the skill `fix-issue`
-(named `swe` until 2026-10-09), whose only entry point is `skills/fix-issue/scripts/step.py`; `_*.py` are its modules.
-`prompts/fix_issue.md` is the system instruction (it ends with the statement, `{problem_description}`). `tools/build.py`
-builds and validates the zip.
+Two builds share the scripts. `agent/` is the base: one `LlmAgent` (`issue_fixer`) with the tool `submit_patch` and the
+skill `fix-issue`, whose entry point is `skills/fix-issue/scripts/step.py` (`_*.py` are its modules) and whose system
+instruction is `prompts/fix_issue.md` (it ends with the statement, `{problem_description}`). **The version evaluated since
+V17 is the variant `variants/agent_tool/`** (`tools/build.py <dir> --variant agent_tool` overlays it on `agent/`; its
+`REMOVE.txt` drops the base prompt): the coordinator `issue_fixer` (`prompts/coordinator.md`, step.py with
+`_role.ROLE = 'coordinator'`) chooses the places and calls two `agent_tool` sub-agents, `specify_fix` (`spec.py`: one
+sentence per place) and `edit_place` (`open.py`, then `edit.py`: one place, its sentence, its code). `spec.py`,
+`open.py` and `edit.py` exist only in the variant. `tools/build.py` builds and validates the zip.
+
+The table below is the base procedure; in the variant the coordinator does S0 and D1, `specify_fix` writes the
+sentences, each `edit_place` does D3 for its own place, and the coordinator submits (D4). Since 10-13 a place can be a
+new file (a path that does not exist yet, named by the specifier; it is created first, `['<path>', '<whole file>']`),
+and an edit undone twice by the same existing tests, each failing only on its own assertion, is kept with a warning
+(the test checks the old behaviour the issue changes).
 
 **The procedure** (a state machine in `_journal.py`; each call is the model's decision for the current step, and every
 answer ends with the exact NEXT call):
@@ -65,14 +75,19 @@ answer ends with the exact NEXT call):
 | D3 Edit, per planned place | `["<place name>", "<whole new function or class>"]`, or `["<place name>", first, last, new lines]`, or `skip`, `back`, or another place's name | applies the edit (with repairs), checks the syntax, runs the related existing tests, undoes it if they break; the next place or the finish |
 | D4 Finish | `submit_patch`, or `["back"]` for the requirements nothing covers, or an edit again | the patch summary and a coverage map |
 
-The edit window shows the place's numbered code (whole up to 130 lines), the code it calls or reads (short members of
+The edit window shows the place's numbered code (whole up to 62 lines in the base, 120 for an editor, longer in
+parts), the code it calls or reads (short members of
 its own class as code) and the code that calls it, then what the change must do (requirements, the statement's
 sentences about the behaviour, its example, an existing test that uses the code), then the answer forms and NEXT.
 Questions are not answered in the edit step. Code is named by its qualified name; old ids (C2, P1) are still read.
 
-**Budget and generation:** `eval_config.yaml` 240 s per command / 30 tool calls / 7 min / 40 turns; edits stop at
-340 s (`_journal.EDIT_STOP`). `configs/sampling.yaml`: temperature 0.2, top_p 0.95, max_output_tokens 4096,
-thinking_budget 512, include_thoughts true. Answers are capped at 10,000 characters.
+**Budget and generation:** `eval_config.yaml` 240 s per command / 60 min per task (7 min until 10-12; raised at the user's request: V17 lost 3 of 4 tasks to the 7-min stop while the editor was still working); tool calls 200 and turns 300, not binding (since
+10-11, the user's: time is the competition's only real limit, 12 h for about 120 tasks); no limit of our own
+inside the script (the 340 s edit stop was removed on 10-11 at the user's request). Sampling per agent: the coordinator
+`configs/sampling.yaml` (temperature 0.2, top_p 0.95, max_output_tokens 4096, thinking 512); the agent_tool sub-agents
+use the model's own defaults (temperature 1.0, top_k 64, top_p 0.95, checklist B14): `specify_fix` thinking 4096 /
+output 8192, `edit_place` thinking 2048 / output 8192; include_thoughts true everywhere. Answers are capped at 7,000
+characters (the specifier's view at about 27,000).
 
 **Decisions (newest last; the reasons are in `docs/design_single.md` and the commit messages):**
 - 10-08: the old exploring scripts (`locate.py`, `show.py`, `edit.py`, `check.py`, `hints.py`) and the pipeline
@@ -91,14 +106,27 @@ thinking_budget 512, include_thoughts true. Answers are capped at 10,000 charact
   literature all address code by name.
 - 10-09 (the user's): **the LLM checklist** (`docs/llm_checklist.md`) and the rule above. Its check of the current
   design found 7 items not met (see "Next").
+- 10-10: **finding instead of reading** (after V14: 50 range reads were a search done by hand, "I can't grep"): no
+  read form; a name, text or range gives the functions and classes that hold it with the matching lines, to choose
+  from; naming code chooses it (it replaces the places not edited yet); an edit of code that is not a place chooses
+  it; windows show the imports the place uses and the library code it calls. Reasons and checklist table in
+  `docs/design_single.md` ("Finding instead of reading").
+- 10-12 (the user's): **microtasks** (agent_tool variant). A `specify_fix` sub-agent (fresh context, thinking 4096,
+  `spec.py`) sees the code of all the plan's places at once and writes one sentence per place. Each `edit_place`
+  editor gets its place, that sentence and the definitions it uses, and no reading. Reason: V18-V19 editors spent
+  88-95% of the time reading to understand the fix. Design, context per role and checklist in `docs/design_single.md`
+  ("Redesign: microtasks").
+- 10-14 (the user's): **one responsibility per agent** (`docs/design_stages.md`): stages 0-9 driven by a list of
+  requirements quoted from the statement (never by a reproduction test, which is optional evidence), agents
+  requirements / reproduce / locate / scope / specify / edit / review, the coordinator only routes. Designed, not built
+  yet.
 
 ## Results so far
 
 All rows are in `VERSIONS.md`. Kaggle evals (the 31B on the same 10 dev tasks): V2 1/10, V3 3/10, V4 1/10, V6 2/10,
 V8 harness error, V10 1/10 (rich_3006 in almost every run). Local 12B batches with step.py: 1/10 and 1/10.
 Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, **S4 (= V3) 0.13** (scored 10-10), S5 (step
-procedure v1, commit bea4f0f) submitted 10-10 08:57 UTC, pending; the hourly routine "Kaggle S4/S5 hourly check"
-records its score and then turns itself off.
+procedure v1, commit bea4f0f, 5-min budget) **0.03** (checked 10-13).
 
 Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
 (vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
@@ -130,9 +158,10 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 2. Dry run: `scratchpad/dry_d3.sh <task> reset`, then `scratchpad/dry_d3.sh <task> <args…>` runs one `step.py` call on
    `scratchpad/repos/<task>` through `harness_like.py` (which deletes the skill's files when the script ends, as ADK
    does: nothing may run at exit).
-3. Replay the real calls: `venv/bin/python replay_step.py <skill dir> step_calls_v10.json` (and `step_calls.json`,
-   `step_calls_v13b.json`)
-   must print NO PROBLEMS.
+3. Replay the real calls of the latest traces on clean snapshots: `tools/replay_trace.py <build>/submission/skills/fix-issue/scripts
+   scratchpad/repos/<task> <trace_<task>.json>` must print NO PROBLEMS, and its answers are diffed with the run before
+   the change (the old `replay_step.py` was lost with the scratchpad on 10-12; see `docs/feedback_audit.md`, "Why the
+   step-by-step local runs did not find these faults"). Local runs rotate over tasks of different shapes.
 4. Build (`tools/build.py <dir>`) and validate (`scratchpad/validate_submission.py <dir>/submission`).
 5. Run with the local 12B: `run_local12.py <submission dir> e10 <out dir>` (`e10/tasks.jsonl` holds the tasks), with
    the proxy `stream_proxy.py` on 127.0.0.1:8765.
@@ -141,15 +170,40 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
    monitor.
 7. Analyse each finished task (result, calls, wasted calls and their cause, the fix) and record it in
    `docs/design_single.md`.
-8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
+8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
    set `SUBMISSION` in `scratchpad/kn_single*/run.py`, `kaggle kernels push`. Outputs: `kaggle kernels output`.
    Traces: `scratchpad/trace_brief.py`, `trace_stats.py`.
 
 Acceptance before a Kaggle submission: the replays print no problems, the local model runs the 10 tasks without system
 faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, say which criterion is not met.
 
-Local runs are not Kaggle runs: llama-server's reasoning budget is 3072 tokens (Kaggle: 512) and a 12B call can take
-60 s. A faithful local loop needs `--reasoning-budget 512` on the server (ask the peer session).
+**How a patch is judged (since 2026-10-14, local and Kaggle alike):** `tools/judge.py` runs the harness's own
+verification in the same sandbox setup: the reference patch twice, no patch twice (a test whose outcome differs between
+two runs of the same code is flaky and left out), then the agent's patch (repeated once when it fails something).
+Outcomes come from the JUnit XML. FAIL_TO_PASS = failing without a patch, passing with the reference; `verdict` =
+resolved when no test fails that passes with the reference and every test function the test patch adds passes (the
+harness's own required-node rule); `official_feasible` = the reference itself passes the harness's whole-file check
+here (rich's pygments-dependent tests and requests' network tests make it false for some tasks: no patch can score
+there in an environment like ours). An empty patch, a patch that does not apply or a run that did not finish is not
+resolved. The cache is keyed by the task, patch and test patch, with an environment fingerprint. `local_eval.py` and
+`kaggle_eval.py` add `judged` and `official_feasible` to every row; `tools/eval_env.py` makes the subprocess sandbox
+import the task's own code (src/ first, then the workspace; the official fast path's directories by a .pth after
+site-packages); `tools/hermetic.py` gives a local repository the harness's pytest.ini, conftest and baseline commit
+(replays use it). The documented public image shadows src/ packages with installed wheels; whether the private scorer
+does is unknown. For patches already made: `tools/judge.py --data <comp dir> --patches <dir of patch_<task>.diff>
+--cache <dir>`. The Kaggle dataset's `bench/` holds `kaggle_eval.py`, `judge.py`, `eval_env.py` and `hermetic.py`.
+
+**The skill's own test checks (`_tests.py`, rewritten 2026-10-14 after four audits, docs/design_single.md):** per-test
+outcomes from a pytest plugin; the original code run on the same groups (cached); stand-in modules decided on the
+original code only; an import check of the changed modules; a new failure must fail again alone and pass just before the
+edit; tests chosen from a once-per-task call map (which tests call which function), with the lexical score as fallback.
+
+Local runs are not Kaggle runs: since 2026-10-14 the local model is the same 31B, but as a llama.cpp GGUF (QAT Q4_0, not
+Kaggle's w4a16 on vLLM) with a 17,664-token context, MTP and n-gram speculation (the 26B A4B from 10-11, the 12B before),
+and llama.cpp applies `min_p 0.05` by default
+(vLLM: 0). From 2026-10-10 23:21 UTC the server ran with Kaggle's reasoning budget (512); the peer reports it was later
+raised to 1024 at the 'editor' experiment's request, and it runs with 1024 now (10-14; the user decides 512 or 1024). The model's
+`generation_config.json` sampling defaults (see below); before that its budget was 3072.
 
 ## Harness essentials (swegemma 0.2.11; details in `docs/adk_harness.md`)
 
@@ -168,11 +222,47 @@ Local runs are not Kaggle runs: llama-server's reasoning budget is 3072 tokens (
 
 ## The local model and the peer session
 
-A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
+On 2026-10-14 drive F: of the PC was damaged after unexpected restarts: F:\llm-lab (LoRA adapters, data, the 24 GB
+training base, the 12B copy) is not accessible until the user repairs it (chkdsk as administrator); the server was
+rebuilt in C:\llm-lab-c with the 26B GGUF. A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
 virtual con CLI", via Remote Control) runs the local infrastructure:
-- `https://llm.rayflow.dev`: llama.cpp `llama-server` with `gemma-12b` (google/gemma-4-12b-qat Q4_0 GGUF, context
-  32768, parallel 1, RTX 3090), global `--reasoning-budget 3072`; thinking can be turned off per request but a
-  per-request budget is ignored. It can restart the server with other options or models.
+- **From 2026-10-14 (the user's decision) the local server serves the 31B as `gemma-31b`**, with a 17,664-token
+  context and a q8_0 KV cache (not Kaggle's 32,768). Options: `llama-server -m gemma-4-31B_q4_0-it.gguf -ngl 99
+  --parallel 1 -c 17664 --alias gemma-31b --jinja --reasoning-budget 512 --temp 1.0 --top-k 64 --top-p 0.95 -fa on
+  -ctk q8_0 -ctv q8_0 --spec-type draft-mtp,ngram-mod --spec-draft-model mtp-gemma-4-31B-it-Q4_0.gguf
+  --spec-draft-n-max 3`.
+  Measured by the peer:
+  - at temperature 1.0, 79-94 tok/s overall (code about 80, text about 54, edits about 148), with 51-55% of the MTP
+    draft accepted;
+  - at temperature 0.2, 88.5 tok/s;
+  - without speculation, about 32 tok/s;
+  - the prompt runs at 1,012 tok/s (15,031 tokens in 15.5 s);
+  - 19.8 of 20.5 GB of VRAM; one request at a time.
+
+  Send `--model gemma-31b`: llama-server does not
+  check the field, so a run that sends `gemma-26b` would get the 31B silently. The reasoning budget is global, 512 since
+  10-14 (Kaggle's coordinator's); the stages build's sub-agents ask for 1024-2048, which the server ignores.
+- `https://llm.rayflow.dev`: llama.cpp `llama-server`. **From 2026-10-11 to 10-14 the model was `gemma-26b`** (Gemma 4 26B A4B
+  QAT Q4_0, MoE with 3.8B active parameters; the 12B, `gemma-12b`, until then). llama-server does not check the
+  `model` field: send `gemma-26b` so results are not mixed up. Options: `-c 32768 -ngl 99 --parallel 1 --jinja
+  --reasoning-budget 1024 --temp 1.0 --top-k 64 --top-p 0.95 -fa on` (1024 since a later request; Kaggle's coordinator uses 512; the model's
+  defaults for unset parameters) plus MTP speculative decoding (`--spec-type draft-mtp`, unsloth's
+  `mtp-gemma-4-26B-A4B-it.gguf`, `--spec-draft-n-max 3`). Measured by the peer: 16.3 GB VRAM; generation 126 tok/s
+  without MTP, 142-173 with it; prompt 3,800 tok/s without MTP, 3,455 with it (the 12B: 54-65 and 2,700). With MTP
+  the outputs differ from those without it, even at temperature 0: compare runs only within one configuration. The
+  12B configs are kept on the gateway (`llama-12b.json`, `watchdog-12b.json`). The reasoning budget is global:
+  thinking can be turned off per request but a per-request budget is ignored. The peer can restart the server with
+  other options or models.
+- **The 31B fits, barely (peer's test, 2026-10-14).** The official GGUF `google/gemma-4-31B-it-qat-q4_0-gguf` (17.65 GB)
+  runs on the RTX 3090 (about 20.4 GB usable): 19.1-19.6 GB in use, nothing else may use VRAM. Speed: 31-32 tok/s
+  generating, 930-1,100 tok/s on the prompt (the 26B: 126, or 173 with MTP). Largest context that held, filled to
+  85-90%: 12,288 tokens with an f16 KV cache, 17,664 with q8_0, and 38,912 with q4_0 (only q4_0 reaches Kaggle's
+  32,768; its effect on tool calling has not been measured). With its MTP draft (unsloth's 267 MB, `--spec-draft-n-max 3`), KV q8_0 and
+  17,664 context (the same context as without it), at temperature 0.2:
+  - generation is 66.6 tok/s on code (67-68% accepted) and 58.7 on text (52-54%), about twice the speed without MTP;
+  - the prompt runs at 1,055 tok/s, the same as without MTP.
+
+  Files are in C:\llm-lab-c\models. Since 10-14 the server serves the 31B (above).
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
 
@@ -180,6 +270,18 @@ Work with it: ask it whenever something depends on the local machine (is the mod
 changes, GPU windows, gateway changes); do not guess from silence. Send with the claude-code-remote `send_message`
 tool (`SendMessage` cannot reach it). It warns before it unloads the model; tell it when a run is in progress. Never
 ask it to do what either session was denied; take that to the user. It was inactive on 2026-10-09.
+
+## Anthropic-style APIs through the same harness (2026-10-13)
+
+`tools/anthropic_proxy.py` serves an OpenAI-style `/v1/chat/completions` in front of an Anthropic Messages API, so
+`tools/local_eval.py --api-base http://127.0.0.1:8790/v1 --model <upstream model>` runs the submission against it
+the way it runs against the local gateway. Start it with the key in the environment (never in the repository):
+`ANTHROPIC_API_KEY=$(cat <scratchpad>/anthropic.key) python tools/anthropic_proxy.py --port 8790 --log <file>`. It
+converts system text, tools and tool results, tool_choice, sampling, stop sequences, reasoning and streaming; it adapts
+to what the upstream model refuses (a sampling parameter is dropped, a fixed thinking budget becomes adaptive
+thinking) and casts the ADK's `top_k` (64.0) to an integer. Checked on 10-13: rich_3521 resolved and judged resolved
+through it (coordinator, specifier, editor, submit in 42 s). **Its outputs are never used to train Gemma** (the rule
+above); runs through it test the system, they are not Kaggle evidence.
 
 ## Monitoring local runs
 

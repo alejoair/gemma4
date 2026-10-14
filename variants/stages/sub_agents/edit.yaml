@@ -1,0 +1,6 @@
+name: edit
+description: Writes the whole new definition of one place of the code, named in the request, from its sentence.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include edit.md
+skills: [skills/fix-issue]
+generate_content_config: !include sampling_2k.yaml

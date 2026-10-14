@@ -1,0 +1,6 @@
+name: review
+description: Says whether the patch does one requirement, named in the request, and if not which place is wrong or missing.
+model: gemma-4-31b-it-qat-w4a16-ct
+instruction: !include review.md
+skills: [skills/fix-issue]
+generate_content_config: !include sampling_1k.yaml

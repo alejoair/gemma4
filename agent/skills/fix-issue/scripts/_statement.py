@@ -43,6 +43,12 @@ def clean(text):
     text = re.sub(r'(?<![\w.])#\d+\b', 'the linked issue', text)
     text = re.sub(r'(?im)^\s*(should fix|fixes|closes|related to|related|see also|follow[- ]up to)\b[\s/:,a-z]*$', '',
                   text)
+    # what the PR author did, not what the code must do: "Also added the sample code as a test." became a requirement
+    # and the model spent its calls trying to write a test (local run of rich_3006); test changes never count
+    # (the verb must be about the test itself: 'adds a clearer error message ... and updates tests' is kept)
+    text = re.sub(r'(?i)(?<![^\s.!?])[^.!?\n]*\b(added|adds|add|wrote|written|included|includes)\s+(\w+\s+){0,6}?'
+                  r'(tests?|test cases?)\b[^.!?\n]*([.!?]|$)', '', text)
+    text = re.sub(r'(?i)(?<![^\s.!?])\s*with the suggested (change|fix)\s*[.!?]?', ' ', text)
     text = re.sub(r'\(\s*\)', '', text)                                         # parentheses left empty
     text = re.sub(r'(?<![\w.])@[\w-]+', '', text)
     text = re.sub(r'(?<![\w`]):[a-z_+-]+:(?![\w`])', '', text)                  # emoji shortcodes
@@ -119,8 +125,16 @@ def model_terms(items):
         if term and term.lower() not in STOP and len(term) > 1 and not term.isdigit():
             out[term] = max(out.get(term, 0), weight)
 
+    items = list(items)
     for item in items:
         item = item.strip().strip('`\'"「」')
+        url_py = re.findall(r'https?://\S*?/([\w./-]+\.py)\b', item)
+        # h2 (rich_3469): a term 'Fixes https://github.com/Textualize/rich/issues/3027' gave textualiz, http, github,
+        # com, and rich/__main__.py's top level came first; a .py path inside a URL is kept
+        item = re.sub(r'(?i)\b(fix(es|ed)?|close[sd]?|resolve[sd]?|refs?|see)\s*:?\s*(?=https?://|#\d)', '', item)
+        item = re.sub(r'https?://\S+|(?<!\w)#\d+\b', ' ', item).strip()
+        for path in url_py:
+            items.append(path.split('/blob/', 1)[1].split('/', 1)[-1] if '/blob/' in path else path)
         if not item:
             continue
         if re.fullmatch(r'[\w./-]+\.py', item) or ('/' in item and ' ' not in item):
@@ -130,13 +144,21 @@ def model_terms(items):
         words = re.findall(IDENT, item)
         if re.fullmatch(IDENT + r'(\.' + IDENT + r')*(\(\))?', item):      # a name, dotted or called
             for w in words:
-                add(w, 5 if _shape(w) or w[0].isupper() else 3)
+                add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else 5 if _shape(w) or w[0].isupper() else 3)
             continue
         for w in words:
-            add(w, max(2, _shape(w)))
+            add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else max(2, _shape(w)))
         if 2 <= len(words) <= 4 and re.fullmatch(r'[A-Za-z0-9 -]+', item):
             add('_'.join(w.lower() for w in words), 3)
     return out, list(dict.fromkeys(found))
+
+
+# the standard library's and the builtins' names (DeprecationWarning, warnings) among the model's terms: they match the
+# code that already uses them, not the code to change (fastapi_14583, h1-s1: the existing warnings came first)
+LIBRARY_NAMES = {n for n in dir(builtins) if isinstance(getattr(builtins, n), type)
+                 and issubclass(getattr(builtins, n), BaseException)} | {
+    'warnings', 'warn', 'logging', 'typing', 'functools', 'inspect', 'asyncio', 'os', 'sys', 'traceback'}
+LIBRARY_WEIGHT = 1
 
 
 def paths(text):
@@ -153,6 +175,26 @@ RENAME_WORDS = re.compile(r'(?i)\b(renamed?|renaming)\b|->|→')     # not 'depr
 META = re.compile(r"(?i)\b(this (pr|pull request)|the (new )?tests? (created|written|simulate|cover)|extends? the tests|"
                   r"added (the )?[\w\s]{0,30}as a test|thanks|ideally|breaking change|have to wait|we'll have to wait|"
                   r"in a (future|follow[- ]up)|for now|will be deprecated|later removed|once there's)\b")
+
+
+IDEAL = re.compile(r"(?i)\b(ideally|in an ideal world|eventually|in the long run|in a (future|follow[- ]up)( pr| release| version)?)\b")
+POSTPONED = re.compile(r"(?i)\b(breaking change|have to wait|we'll have to wait|for now|later|in a (future|follow[- ]up)|"
+                       r"not (in|for) this (pr|pull request)|separate (pr|pull request|issue))\b")
+
+
+def deferred(text):
+    """The changes the issue itself leaves for later: a sentence that says what would ideally be done, when the issue
+    also says it must wait ("breaking change", "for now", "later"). a09: the model removed the assignment the issue
+    calls ideal but postponed, instead of the immediate fix. Read from the issue's own words, at most 2."""
+    flat = re.sub(r'```.*?(```|\Z)', '', text, flags=re.S)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', re.sub(r'\s+', ' ', flat)) if s.strip()]
+    if not any(POSTPONED.search(s) for s in sentences):
+        return []
+    out = []
+    for s in sentences:
+        if IDEAL.search(s) and len(s) > 20:
+            out.append(s if len(s) <= 200 else s[:197] + '...')
+    return out[:2]
 
 
 def requirements(text):
@@ -228,7 +270,7 @@ def behaviour(text, skip=(), limit=700):
     return [x for i, (_, x) in enumerate(sentences) if i in keep]
 
 
-def example(text, max_lines=14):
+def example(text, max_lines=8):
     """The first code block of the statement (a reproduction or an expected use), at most max_lines lines."""
     m = re.search(r'```[\w+-]*\n(.*?)(```|\Z)', text, flags=re.S)
     if not m:

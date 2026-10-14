@@ -8,6 +8,8 @@ logging so a run can be validated afterwards from /kaggle/working:
   run_nN.csv          one row per task
   stages_<task>.json  per-stage summary (llm calls, tool calls, tokens, max prompt tokens, time window)
   patch_<task>.diff   the patch the agent produced
+  pip_freeze.txt      the full `pip freeze` of the python the test sandbox runs (what the hidden tests import)
+  judge_cache/        the judge's reference and no-patch runs per task (tools/judge.py)
   results_<name>/     the harness' own logs/ and traces/
   vllm_server.log     vLLM log
 """
@@ -131,6 +133,28 @@ def log_environment(submission: Path) -> None:
         if p.is_file() and p.suffix in ('.yaml', '.md'):
             print(f'\n---------- {p.relative_to(submission)} ----------')
             print(p.read_text(encoding='utf-8'))
+
+
+KEY_PACKAGES_NOTE = 'versions the hidden tests import in the test sandbox'
+
+
+def log_sandbox_packages(evaluator, judge) -> None:
+    """The full `pip freeze` of the python the test sandbox runs, to WORK/pip_freeze.txt, and the key versions."""
+    banner('test sandbox packages')
+    try:
+        r = judge.sandbox_run(evaluator, 'python3 -m pip freeze --all 2>&1; python3 -VV', timeout=300)
+        (WORK / 'pip_freeze.txt').write_text(r.stdout or '', encoding='utf-8')
+        print(f'pip_freeze.txt: {len((r.stdout or "").splitlines())} lines (exit {r.exit_code})')
+    except Exception as e:  # noqa: BLE001
+        print(f'(pip freeze in the sandbox failed: {type(e).__name__}: {e})')
+    try:
+        info = judge.sandbox_packages(evaluator)
+        print(f'{KEY_PACKAGES_NOTE}: python {info.get("python")}')
+        for k, v in (info.get('packages') or {}).items():
+            print(f'  {k}=={v}')
+    except Exception as e:  # noqa: BLE001
+        print(f'(sandbox package probe failed: {type(e).__name__}: {e})')
+    sys.stdout.flush()
 
 
 def pick_tasks(tasks, n: int, seed: int):
@@ -312,6 +336,11 @@ def main() -> None:
     from swegemma.config import ALLOWED_ADAPTER_EXTENSIONS, EvalConfig, build_submission_limits
     from swegemma.evaluate import Evaluator
     from swegemma.models import load_tasks
+    sys.path.insert(0, str(Path(__file__).resolve().parent))     # judge.py and eval_env.py ship next to this file
+    import eval_env
+    import judge
+    eval_env.patch()            # the tests import the task's src/ code (see eval_env.py for what is known of the scorer)
+    judge.install_capture()     # per-test outcomes from the JUnit report of every verify_task run
     try:
         from swegemma.models.discovery import validate_single_declared_model
     except ImportError:          # swegemma >= 0.2.11 moved model discovery to adk_submission
@@ -382,9 +411,13 @@ def main() -> None:
         graph_dir=str(DATA_DIR / 'graphs'), embeddings_dir=str(DATA_DIR / 'embeddings'), wheels_dir=DATA_DIR / 'wheels', verbose=True,
     )
     evaluator = Evaluator(config)
+    log_sandbox_packages(evaluator, judge)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    fields = ['task_id', 'repo', 'resolved', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls', 'duration_s', 'error']
+    fields = ['task_id', 'repo', 'resolved', 'judged', 'official_feasible', 'f2p', 'f2p_failing', 'p2p_broken',
+              'required_failing', 'flaky', 'judge_note', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls',
+              'duration_s', 'error']
+    judge_cache = WORK / 'judge_cache'
     rows = []
     with open(args.out, 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
@@ -393,6 +426,7 @@ def main() -> None:
         for i, task in enumerate(tasks, 1):
             banner(f'TASK {i}/{len(tasks)} {task.instance_id} ({task.repo})  elapsed {(time.time() - t0) / 60:.1f} min')
             try:
+                mark = judge.capture_mark()
                 r = run_sync(evaluator.evaluate_task, task=task, task_index=i, total_tasks=len(tasks))
                 row = dict(task_id=task.instance_id, repo=task.repo, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                            patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
@@ -402,7 +436,27 @@ def main() -> None:
                     if k != 'agent_patch':
                         print(f'  {k}: {str(v)[:700]}')
                 (WORK / f'patch_{task.instance_id}.diff').write_text(r.agent_patch or '', encoding='utf-8')
+                # V21: the hidden-test output was cut at 700 characters, so the failing tests could not be named; the
+                # whole output is kept, and its FAILED/ERROR lines printed (a 'not resolved' may be the environment's)
+                out = str(getattr(r, 'test_output', '') or '')
+                (WORK / f'tests_{task.instance_id}.txt').write_text(out, encoding='utf-8')
+                for ln in [l for l in out.splitlines() if l.startswith(('FAILED', 'ERROR'))][:30]:
+                    print('  hidden test: ' + ln[:200])
                 print('\n-- patch (first 2500 chars):\n' + (r.agent_patch or '(empty)')[:2500])
+                try:
+                    # the harness's verdict needs every test of the test files to pass, also those this environment
+                    # fails on the original code: the judge compares with the reference patch (judge.py)
+                    v = judge.judge(evaluator, task, r.agent_patch or '', harness_result=r, cache=judge_cache,
+                                    capture_mark=mark)
+                    row.update(judged=v['verdict'], official_feasible=int(bool(v['official_feasible'])),
+                               f2p=len(v['f2p']), f2p_failing=' '.join(v.get('f2p_failing', [])),
+                               p2p_broken=' '.join(v.get('p2p_broken', [])),
+                               required_failing=' '.join(v.get('required_failing', [])),
+                               flaky=len(v.get('flaky', [])), judge_note=v.get('why', '')[:300])
+                    print(f'  JUDGED: {judge.short(v)}')
+                    print(f'  f2p={v["f2p"]}')
+                except Exception as e:  # noqa: BLE001
+                    row.update(judged=f'judge error: {type(e).__name__}: {e}'[:200])
             except Exception as e:  # noqa: BLE001 - a crash is a data point too
                 import traceback
 
@@ -425,6 +479,13 @@ def main() -> None:
     solved = sum(r['resolved'] for r in rows)
     print(f'resolved {solved}/{len(rows)}; empty patches {sum(1 for r in rows if not r["patch_chars"])}; '
           f'errors {sum(1 for r in rows if r["error"])}; total {(time.time() - t_start) / 60:.1f} min')
+    judged = [r.get('judged', '') for r in rows]
+    print(f'JUDGED (against the reference patch, tools/judge.py): {judged.count("resolved")} resolved of '
+          f'{sum(1 for j in judged if j in ("resolved", "not resolved"))} scorable here; '
+          f'{judged.count("unscorable")} unscorable')
+    print(f'OFFICIAL_FEASIBLE (the reference patch passes the harness\'s own check here): '
+          f'{sum(1 for r in rows if r.get("official_feasible") == 1)}/{len(rows)} tasks; a task where it does not '
+          f'cannot score officially in this environment')
     for r in rows:
         print('  ', r)
     shutil.copy(server.log_path, WORK / 'vllm_server.log')

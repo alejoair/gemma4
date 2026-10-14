@@ -108,7 +108,7 @@ def numbered(lines, start, end, prose=None, collapse=None):
             out.append(f'{"":>5} ... ({b - a - 1} lines of text) ...')
             i = last + 1
             continue
-        out.append(f'{i:>4}|{lines[i - 1].rstrip(chr(10)).rstrip(chr(13))}')
+        out.append(f'{i}|{lines[i - 1].rstrip(chr(10)).rstrip(chr(13))}')
         i += 1
     return '\n'.join(out)
 
