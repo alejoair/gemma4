@@ -469,7 +469,22 @@ def _run_repro(root, rel, code):
     calls = sorted(k for k, ids in res['calls'].items() if any(i in mine for i in ids)
                    and k.split('::')[0].endswith('.py') and not _repo.is_test_path(k.split('::')[0])
                    and os.path.isfile(os.path.join(root, k.split('::')[0])))
-    return mine, msgs, calls, res['output']
+    return mine, msgs, _function_calls(root, calls), res['output']
+
+
+def _function_calls(root, calls):
+    """The calls that are functions or methods of the repository. Importing a module runs its top-level code and its
+    class bodies ('<module>', '<genexpr>', 'GenerateJsonSchema'), which shows nothing about a behaviour: gm6 and gk6
+    (fastapi_14583) kept tests that only imported or reloaded fastapi._compat.v1, and locate was then pointed at
+    top-level code."""
+    table = _impact.Table(root, docs=False)
+    out = []
+    for k in calls:
+        rel, _, qual = k.partition('::')
+        sym = table.get(rel, qual.replace('.<locals>', ''))   # nested: 'get_websocket_app.<locals>.app'
+        if sym is not None and sym.kind == 'def':
+            out.append(k)
+    return out
 
 
 BAD_REASON = re.compile(r"SyntaxError|IndentationError|fixture '[\w]+' not found|ModuleNotFoundError: No module named "
@@ -540,8 +555,9 @@ def reproduce(root, st, args):
             reason = 'it fails for a reason of its own, not the issue\'s:\n' + msgs.get(bad[0], '')[:600]
         elif not calls and getattr(sys, 'monitoring', None) is not None:
             # a test that fails before it calls any function of the repository shows nothing about the issue
-            reason = ('it fails before it calls any function of the repository, so the failure is not the '
-                      'issue\'s:\n' + msgs.get(next(iter(outcomes)), '')[:600])
+            reason = ('it calls no function of the repository (importing or reloading a module does not count), so '
+                      'the failure is not the issue\'s: call the code the way the issue\'s user does (a function, a '
+                      'class, an endpoint), as the existing test does:\n' + msgs.get(next(iter(outcomes)), '')[:600])
     if reason:
         st['repro_last'] = reason[:700]
         if st['repro_tries'] >= 2:
