@@ -116,6 +116,10 @@ characters (the specifier's view at about 27,000).
   editor gets its place, that sentence and the definitions it uses, and no reading. Reason: V18-V19 editors spent
   88-95% of the time reading to understand the fix. Design, context per role and checklist in `docs/design_single.md`
   ("Redesign: microtasks").
+- 10-14 (the user's): **one responsibility per agent** (`docs/design_stages.md`): stages 0-9 driven by a list of
+  requirements quoted from the statement (never by a reproduction test, which is optional evidence), agents
+  requirements / reproduce / locate / scope / specify / edit / review, the coordinator only routes. Designed, not built
+  yet.
 
 ## Results so far
 
