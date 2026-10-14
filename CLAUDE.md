@@ -235,6 +235,12 @@ virtual con CLI", via Remote Control) runs the local infrastructure:
   12B configs are kept on the gateway (`llama-12b.json`, `watchdog-12b.json`). The reasoning budget is global:
   thinking can be turned off per request but a per-request budget is ignored. The peer can restart the server with
   other options or models.
+- **The 31B fits, barely (peer's test, 2026-10-14).** The official GGUF `google/gemma-4-31B-it-qat-q4_0-gguf` (17.65 GB)
+  runs on the RTX 3090 (about 20.4 GB usable): 19.1-19.6 GB in use, nothing else may use VRAM. Speed: 31-32 tok/s
+  generating, 930-1,100 tok/s on the prompt (the 26B: 126, or 173 with MTP). Largest context that held, filled to
+  85-90%: 12,288 tokens with an f16 KV cache, 17,664 with q8_0, and 38,912 with q4_0 (only q4_0 reaches Kaggle's
+  32,768; its effect on tool calling has not been measured). Its MTP draft (267 MB) is downloaded but untested. Files are
+  in C:\llm-lab-c\models. The server still serves the 26B.
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
 
