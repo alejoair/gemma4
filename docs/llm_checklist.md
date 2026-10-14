@@ -139,3 +139,67 @@ guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 | The coordinator loses its state after compaction | B7, P8, F5, B12 | After compaction a second `specify_fix` was answered "no places chosen" while edits existed: the answer contradicts the patch line | Recite the plan and progress in every answer (P8); never answer "nothing chosen" while the patch is not empty (B12) |
 | Not validated on Gemma | (method) | Proxy rounds test the system, not the 31B (Claude made parallel calls; the 31B does not) | Run the local model and a Kaggle eval before trusting a change |
 | `src/` packages shadowed by wheels in the public image | (environment) | Not about the model | Unknown for the private scorer |
+
+## Check of the whole system at commit f43293c (2026-10-14, model-independent)
+
+What the system asks of whichever model drives it, item by item. The evidence is from every model run so far: the
+31B on Kaggle, the local 26B/12B, and Haiku and Sonnet through the proxy.
+
+| # | Status | What the system does now | Gap |
+|---|---|---|---|
+| W1 | partly | S0 lists ≤10 candidates by name with evidence lines; D1 picks 1-3 | Only works when the right code is on the list (bench_locate hit@10 70%); off the list the model must search |
+| W2 | partly | The editor's whole-definition form | The line-range form is also accepted and is required for big places, module level and imports: models use it often |
+| W3 | partly | The editor sees one place and its sentence; the specifier sees every place | The whole fix is decided by the specifier in one view, and nothing is ever run to check it |
+| W4 | partly | Every answer ends with NEXT | NEXT often keeps placeholders ('<place name>', '<what changes there>') instead of a filled call |
+| W5 | yes | Numbered code, -/+ diffs, pytest E lines, tracebacks | — |
+| W6 | yes | Code is named by its qualified name | — |
+| W7 | partly | Thinking 512 (coordinator), 4096 (specifier), 2048 (editor) | Not measured |
+| B1 | no | Line-range edits remain a main form | Line numbers are still produced by the model |
+| B2 | partly | S0 asks the model to copy the statement (any copy accepted) | The statement is in the system instruction; the script cannot read it, so a copy is still asked for |
+| B3 | yes | Names, no ids | — |
+| B4 | partly | One tool, three fields, args as a JSON list | Code travels inside JSON strings (escaping, B15) |
+| B5 | partly | Repeat guard, refusals describe instead of quoting | Not measured since the microtask redesign |
+| B6 | partly | Four scripts (step, spec, open, edit), one per role | A wrong script name per role is possible |
+| B7 | no | Answers up to 7,000 characters; the specifier's view up to about 27,000 | The specifier's decision is made in the middle of the longest text in the system |
+| B8 | no | Coordinator about 6 forms, specifier about 6, editor about 7 (whole definition, line range, skip, DELETE, new file, a place name, tests) | Forms have grown again since the 10-09 redesign |
+| B9 | partly | The editor cannot read; the coordinator can search in D1 | — |
+| B10 | no | No time or call count in any answer | A task takes 5-30 minutes against about 6 available; the model never knows |
+| B11 | partly | Verdicts from real tests, "Kept, not checked" when no test runs the lines | The new behaviour is checked in about 8% of tasks (the issue's example) |
+| B12 | partly | Several contradictions removed | — |
+| B13 | yes | Ranked lists, best first | — |
+| B14 | partly | Sub-agents use the vendor's settings; the coordinator runs at temperature 0.2 | The coordinator's difference was never measured |
+| B15 | no | The harness sends tool results and arguments as JSON | Out of our control; only reduced |
+| B16 | partly | No read forms in the editor | — |
+| P6 | partly | Progress and plan at the top, NEXT at the end | The decision is not restated before NEXT in long views |
+| P7 | no | The specifier's view includes places left out of the plan (up to 30 lines each) | Relevant-looking but unneeded code |
+| P8 | yes | The plan and its states recited (f43293c) | — |
+| P9 | partly | Call forms, a filled pair for new code | Most NEXT lines are not filled |
+| F1 | yes | Failing test name, its line, the E lines | — |
+| F2 | partly | Regressions come with the failing test | For the new behaviour there is no failing test to repair from |
+| F3 | yes | OK only when a passing test ran the changed lines | — |
+| F5 | yes | Progress line from git diff | — |
+| F6 | yes | Two failures move the work on | — |
+| F9 | partly | Facts first | Some answers still end with instructions |
+
+**Reading.** The mechanics meet the checklist: names, lists, whole definitions, familiar formats, progress, located
+feedback. Malformed calls are few with every model, and `submit_patch` comes in nearly every run. Where the system
+fails the checklist is the decision itself:
+- the fix is decided in one step: the specifier, in the longest view (B7, P7);
+- nothing checks the new behaviour (F2, B11);
+- the model still writes line numbers (B1);
+- the forms have grown again (B8);
+- the budget is never shown (B10).
+
+The result follows the model's strength (12B/26B about 1/10, Haiku 4-5/10, Sonnet 6/10). So the system does not yet
+make the hard part easier; it makes the mechanical part reliable.
+
+**Generic directions, by item:**
+1. A reproduction test for every task (F2, F3, B11, W2): the model writes one test function from the statement, as a
+   whole function; the script runs it before (it must fail) and after each edit.
+2. A bounded specification (W3, B7, P7): one sentence per place, from a view of that place and its direct context.
+   The reproduction test's result goes back to the specifier when it still fails after the edits.
+3. No line numbers (B1): edits by whole member or by old text → new text; big classes are edited member by member.
+4. Fewer forms per role (B8): the forms each role needs, merged where they overlap. A form is not removed for having
+   few calls: its use is checked in the traces first.
+5. The budget in every answer, and checks sized for 6 minutes per task (B10).
+6. Filled NEXT lines everywhere (W4, P9): the script knows the next place and the form; it writes them in.
