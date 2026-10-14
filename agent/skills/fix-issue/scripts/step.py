@@ -2307,6 +2307,12 @@ def _after_edit(root, state, i, p, r, before):
         _tests.restore_verified(root)
         _refresh(root, state, p['rel'])
         n = len(new_failures)
+        if detail.startswith(('the changed code cannot be imported', 'the changed code imports')):
+            # (h1, fastapi_15800: an edit that used os without importing it was undone as '2 existing tests failed')
+            return _failed(root, state, i, f'Undone: after the edit {p["rel"]} cannot be imported, so {p["handle"]} is '
+                           f'back as it was before the edit.\n{detail}\nA name the new code uses must be defined or '
+                           f'imported: add a missing import at {p["rel"]} top level (its own edit, by line numbers), '
+                           f'then send {p["handle"]} again.', 'BROKEN ' + ' '.join(new_failures[:3]))
         return _failed(root, state, i, f'Undone: {n} existing test{"s" if n > 1 else ""} that passed before the edit '
                        f'failed after it, so {p["handle"]} is back as it was before the edit.\n{detail}\n'
                        f'Send {p["handle"]} again with a change that keeps {"these tests" if n > 1 else "this test"} '
