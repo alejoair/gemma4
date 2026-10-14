@@ -51,6 +51,9 @@ ANSWER_CHARS = 9000
 # edit, and the first edit of a task built the call map with a whole-suite run (up to 150 s). SWE_EDIT_TESTS=1 turns
 # it back on. The edit still has to compile (the whole-definition and replace forms refuse code that does not).
 EDIT_TESTS = os.environ.get('SWE_EDIT_TESTS', '0') == '1'
+# Stage 7 (verify), off for now at the user's request (2026-10-14): it ran the selected existing tests on the whole
+# patch, built the whole-suite call map (up to 150 s) and ran the reproduction test again. SWE_VERIFY=1 turns it on.
+VERIFY = os.environ.get('SWE_VERIFY', '0') == '1'
 
 DONE = 'NEXT: no call: reply with one sentence for the coordinator.'
 
@@ -1117,6 +1120,12 @@ def _verify(root, st):
     if st['verified'] == sig or not files:
         return
     st['verified'] = sig
+    if not VERIFY:
+        # stage 7 is off (the user's, 2026-10-14): no existing tests, no call map, no rerun of the reproduction test;
+        # the patch as it is becomes the last good state
+        st['regressions'] = []
+        st['last_good'] = {'score': _score(root, st), 'files': files}
+        return
     changed = {}
     for p in st['plan']:
         if p.get('status') == 'done':
@@ -1167,7 +1176,8 @@ def review(root, st, args):
                         + (f'\n{diff[:1800]}' if diff else ''))
         if st['repro'] and st['repro'].get('rid') == rid:
             view.append('The reproduction test, on the original code:\n' + st['repro']['before'][:400] +
-                        '\nWith the patch: ' + (st['repro']['now'] or 'not run')[:500])
+                        '\nWith the patch: ' + (st['repro']['now'] or 'not run again (the check after the edits is '
+                                                                   'off)')[:500])
         if st['regressions']:
             view.append('Existing tests the whole patch breaks: ' + ', '.join(t for t, _ in st['regressions'][:5]))
         _, options = _related(root, st, places)
@@ -1179,7 +1189,7 @@ def review(root, st, args):
                 + nxt)
     if first in ('done', 'yes', 'cannot tell', "can't tell", 'unknown'):
         repro = st['repro'] if st['repro'] and st['repro'].get('rid') == rid else None
-        if repro and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
+        if VERIFY and repro and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
             # the test's output decides, not the opinion (design_stages.md, stage 8): s-st2 fastapi_14448 was
             # reviewed 'done' while its reproduction test still failed
             st.setdefault('review_refused', {})[rid] = True

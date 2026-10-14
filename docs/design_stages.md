@@ -288,3 +288,16 @@ module cannot be imported, with the error.
 |---|---|---|
 | F1 where the error is | closer | a broken import is caught at the edit that made it, with the error line |
 | B10 knowing its budget | neutral | about 0.1 s per edit |
+
+**Stage 7 off too (2026-10-14, the user's request).** `_verify` no longer runs the existing tests on the whole patch,
+no longer builds the whole-suite call map and no longer reruns the reproduction test (`VERIFY`, `SWE_VERIFY=1` turns it
+on). The patch as it is becomes the last good state. The review sees "not run again". Its rule that a failing
+reproduction test refuses a "done" applies only while stage 7 is on; otherwise it would refuse every "done". With both
+checks off, the only tests that run in a task are the reproduction test's validation at stage 2 (one file, at most 40
+s). A replay of rich_3006 now takes 18 s.
+
+| Item | Effect | Why |
+|---|---|---|
+| B10 knowing its budget | closer | no whole-suite run in any task |
+| B11, F3 doubting a verdict | farther | the review has no test output after the edits; only the model's reading of the diff |
+| F2 repairing from failing tests | farther | no regression reaches the specifier |
