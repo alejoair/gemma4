@@ -392,7 +392,49 @@ def _template(root, r):
             ex = _tests.example(root, rel, s.name)
             if ex:
                 return ex
-    return None
+    return _word_template(root, (r.get('quote') or '') + ' ' + r['what'])
+
+
+def _import_lines(src):
+    """The file's top-level imports, each whole on one line (a parenthesized import spans lines in the file)."""
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return [l.rstrip() for l in src.splitlines() if re.match(r'(from\s+\S+\s+import|import)\s', l)]
+    return [ast.unparse(n) for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+
+
+def _word_template(root, text, max_lines=14):
+    """(test file, lines) of a short existing test whose text shares the most words with the requirement, when the
+    requirement names no code of the repository. gm5 (fastapi_14583, Gemma): with no names, the view showed no test,
+    and the model wrote "Since I don't know the repository name" and tested the pydantic library twice."""
+    words = {w.lower() for w in re.findall(r'[A-Za-z_][A-Za-z0-9_]{3,}', text)} - {
+        'when', 'with', 'that', 'this', 'from', 'using', 'should', 'must', 'issue', 'issues', 'into', 'have', 'does'}
+    if not words:
+        return None
+    best = None
+    for rel in _repo.iter_py(root, tests=True):
+        if not _repo.is_test_path(rel) or os.path.basename(rel) == 'conftest.py':
+            continue
+        src = _repo.read_text(root, rel)
+        low = src.lower()
+        if not any(w in low for w in words):
+            continue
+        try:
+            tree = ast.parse(src)
+        except (SyntaxError, ValueError):
+            continue
+        lines = src.splitlines()
+        for f in tree.body:
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith('test'):
+                body = lines[f.lineno - 1:f.end_lineno]
+                if len(body) > max_lines:
+                    continue
+                score = sum(1 for w in words if w in '\n'.join(body).lower() or w in rel.lower())
+                key = (score, -len(body))
+                if score and (best is None or key > best[0]):
+                    best = (key, rel, body)
+    return (best[1], best[2]) if best else None
 
 
 def _signatures(root, names, limit=6):
@@ -449,9 +491,13 @@ def reproduce(root, st, args):
                 f'and pass once the issue is fixed):\n  {_req_line(r)}']
         if sig:
             view.append('Signatures in the repository:\n' + '\n'.join(sig))
+        import _example
+        pkgs = sorted(_example._packages(root))
+        if pkgs:
+            view.append('The repository is the package ' + ', '.join(pkgs) + ': the test imports it ('
+                        + '; '.join(f'import {p}' for p in pkgs[:2]) + ') and shows the requirement through its code.')
         if tpl:
-            head = [l.rstrip() for l in _repo.read_lines(root, tpl[0])
-                    if re.match(r'(from\s+\S+\s+import|import)\s', l)][:15]
+            head = _import_lines(_repo.read_text(root, tpl[0]))[:15]
             view.append(f'An existing test of this code ({tpl[0]}), with its file\'s imports, for its fixtures and '
                         'style:\n' + '\n'.join(head + [''] + [l.rstrip() for l in tpl[1]]))
         if st['repro'] is None and st.get('repro_last'):
