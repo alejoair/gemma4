@@ -312,3 +312,88 @@ s). A replay of rich_3006 now takes 18 s.
   fix gets that place's diff, and the editor goes on with its own change.
 - Same score as st3 (3/10) with half the time. The failures left are fastapi_14986 (the requirement paraphrases the
   issue wrongly), requests_7328, fastapi_14448, and the statement-limited fastapi_15800, fastapi_14583 and rich_3469.
+
+## Weak points found by four agents in the st4 traces (2026-10-14)
+
+Four read-only analyses of the st4 traces. Agent A: fastapi_14986, requests_7328. Agent B: fastapi_14851,
+fastapi_14448. Agent C: fastapi_15800, fastapi_14583, rich_3469. Agent D: the resolved runs, plus patterns across all
+10. The model in the traces is Haiku. Items are grouped by kind; each has its evidence and a generic fix. Not fixed yet.
+
+**Script faults (bugs)**
+1. *Requirement sentences are cleaned like names.* `_args.clean` strips a closing backtick, so `code_names` finds
+   nothing: no `[new: app.frontend]`, no new-member places, an empty reproduce view, text-only ranking (15800, 14583).
+   Fix: never clean a sentence.
+2. *Text before an elided `def name(...):` is dropped.* The helper `_escape_json_for_html` was lost, and three Swagger
+   tests fail with NameError (14986). Fix: apply the leading definitions as new code, or refuse; never drop them.
+3. *Whole-definition re-indent.* A def at column 0 with its body at the file's indentation ends up 4 spaces too deep,
+   still compiles and is kept (requests_7328, httpx). Fix: indent from the body's own offset; flag a whitespace-only
+   diff.
+4. *The edit cap counts refused attempts.* Two stale `replace` answers used up `MAX_EDITS`, and the editor's own
+   correct fix (`hist.copy()`) was refused (requests_7328). Fix: count only applied edits that change code.
+5. *A diff against the previous edit,* not the original: a correct restore looked like 209 changed lines. Fix: show the
+   place's cumulative diff against the original.
+6. *A refused `replace` shows nothing.* Fix: show the place's current lines.
+7. *Asks are counted when the router routes, not when an agent delivers.* Idle `next` calls use them up, and
+   "failed" is set while the edit stays in the patch. The review then shows "the edit failed" and no diff (14851).
+   Fix: count delivered decisions; set "edited" from the diff on disk; always show every place's current diff in
+   review.
+8. *A "not done" review is lost* when the round's ask keys are used up; the route goes to submit (14851). A re-edited
+   requirement is never reviewed again (rich_3469). Fix: a "not done" starts a new round with fresh keys and reviews
+   that requirement again.
+9. *"The patch is submitted" is said before `submit_patch` is called.* In 14851 the coordinator refused to submit and
+   wrote 17 text turns. Fix: keep NEXT=submit_patch until the call is seen.
+10. *The `missing` answer loops.* Its ask counter is reset each time. An attribute became a "new definition" place in
+    the wrong twin file (httpx). A place already edited was re-edited 4 times (14851; fixed). Fix: at most 1-2 missing
+    answers per place; an attribute goes to its owner's `__init__` in the requester's file.
+11. *Scope answers in the view's own format are dropped silently.* `'Name (path)'` matched nothing and the plan was
+    saved without those places (httpx). Fix: read every format the views print; answer "not recognised" otherwise.
+12. *A search turns into a choice* when the searched name resolves (14448). Fix: a search only lists matches.
+13. *A class is split into members that match only the class's own name* (`APIRouter.handle` for "router"), over
+    the scope's "none" (15800). Fix: split on the requirement's specific terms, or keep the class for a new member.
+
+**Missing information (views)**
+14. *Requirements are written blind.* req.py shows one definition per name and no library class. It shows no sign of
+    the existing behaviour: `self.servers.insert(...)`, the `root_path_in_servers` docs, or test assertions. So "do
+    not store" became "do not contain" (14986), and the title was repeated as a requirement (14851, 3521, 3469). Fix:
+    for the statement's names, show every definition, where attributes are written, related parameter docs and
+    existing test assertions, labelled "behaviour the tests expect now".
+15. *Views leave out the code a place delegates to* (`super().__init__`, Starlette's `Router.__init__`), and list
+    false "code it uses" (14851). Fix: show the overridden or super method as read-only context.
+16. *Scope misses related code*: attribute readers and parameter pass-through (14851, "No other related code"). A
+    reader is shown by one line, which cannot show an if/elif order (14448). Fix: add attribute and parameter
+    readers; show the reader's whole branch chain.
+17. *Locate does not show a detector's callers.* `annotation_is_pydantic_v1` was third; the reference warns at its
+    callers (14583). Fix: for a predicate-like candidate, list its callers.
+18. *Twins diverge.* The async parser got a property, the sync one an attribute (httpx). Fix: show the twin's sentence
+    and diff, "the same change" by default.
+19. *Review checks the requirement, not the sentence.* `hist[1:]` met the requirement literally against the sentence's
+    `hist.copy()` (requests_7328). Fix: also ask whether the code does what the sentence says.
+
+**Decisions with no way out**
+20. *An empty or all-"no change" patch is submitted as finished,* at 2 minutes of 60 (15800). Fix: go back to locate
+    once; "cannot tell" over unchanged places counts as not done.
+21. *"no change" carries no reason*; the reasons reached only the coordinator, which decides nothing. Fix:
+    `['no change', '<why>']`, shown to the next stage.
+22. *Requirements without substance* (the title repeated) give the review nothing to check. A forced re-edit
+    invented a change in core wrapping code (rich_3469). Fix: keep such a patch minimal; do not force an edit
+    through review.
+
+**Reproduce**
+23. *A test that runs no repository code is kept* (14583: it only imports `pydantic.v1`). Fix: refuse 0 repository
+    calls.
+24. *Tests import packages that do not exist* (`mitmproxy`, `esmerald`); the view gives no import path or template
+    when names are missing. Fix: always show the package's import path and a template test.
+25. *With stage 7 off, the kept test is never run again,* yet the answer says it will be. Fix: rerun only that test
+    at review (seconds), or skip stage 2 when verification is off.
+26. *The concreteness gate is lexical* (14448: no backticks, so no test). Fix: also allow it when an existing test of
+    the located code exists.
+
+**Cost (Agent D: 840 model calls for 10 tasks; the router alone 368)**
+27. Each sub-agent call costs 3-4 model calls (`open`, decision, final text, often `load_skill`); about 1 of them is a
+    decision. Decisions are 35% of the time, router turns 28%, final texts 20%, `open` 13%, `load_skill` 4%.
+28. *`load_skill`* came in 39 calls, 27% of sub-agent calls. Only the coordinator's prompt says it is not needed.
+    Fix: say so in all 7 sub-agent prompts.
+29. *The coordinator deliberates* on alarming sub-agent sentences: 51 text turns, 136 s. Fix: a fixed short reply for
+    sub-agents, and a router answer that repeats unchanged.
+30. *httpx_3672 was resolved by luck.* The hidden tests check only the parser rename, done at 212 s. The patch leaves
+    `_pool.py`'s calls broken, and 208 s went into a `missing` loop.
