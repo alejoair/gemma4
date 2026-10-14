@@ -988,6 +988,15 @@ def _keep_signature(root, p, body):
     return head, pad, step.textwrap.dedent(new_body), node
 
 
+def _unescaped(text):
+    """Lines sent with their breaks written as \\n (checklist B15: every answer reaches the model as JSON) as real
+    lines, when the text holds no real line break. gm4 (fastapi_14583, Gemma): three replace calls with '\\n7|\\n8|from
+    ._compat.may_v1 import ...' were all 'not found'."""
+    if '\n' not in text.strip('\n') and '\\n' in text:
+        text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\t', '\t')
+    return text
+
+
 def _replace_text(root, p, old, new):
     """['replace', old lines, new lines] inside the place: the old lines are found by their text (leading and trailing
     spaces ignored, once in the place), the new lines are re-indented to the first old line. (start, end, text) or an
@@ -1027,8 +1036,10 @@ def edit(root, st, args):
         return 'Nothing to edit now.\n\n' + DONE
     _refresh(root, p)
     items = [a for a in args if a and a.strip()]
+    what = ('top-level code of ' + p['rel'] if p['name'] == MODULE
+            else 'definition of ' + p['handle'].split('::')[-1].split('.')[-1])
     nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['<the whole new "
-           "definition of " + p['handle'].split('::')[-1].split('.')[-1] + ", with any new imports above it>'], or "
+           + what + ", with any new imports above it>'], or "
            "['replace', '<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this "
            "change needs>']")
     first = _args.clean(items[0]).lower() if items else ''
@@ -1084,6 +1095,7 @@ def edit(root, st, args):
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
     if first == 'replace' and len(items) >= 2:
         before = _repo.read_lines(root, p['rel'])
+        items = [items[0]] + [_unescaped(x) for x in items[1:]]
         new_text = _args.code(items[2]) if len(items) > 2 else ''
         head = []
         rest = new_text.split('\n')
