@@ -612,7 +612,8 @@ def _uses_note(root, c, cands):
         return ''
     used = _used_names(_repo.read_lines(root, c['rel']), c['name']) or set()
     others = [d['handle'] for d in cands if d is not c and d.get('name') not in (None, MODULE)
-              and d['name'].split('.')[-1] in used and d['name'] != c['name']]
+              and d['name'].split('.')[-1] in used and d['name'] != c['name']
+              and not d['name'].split('.')[-1].startswith('__')]
     return f'  [it uses {", ".join(others[:4])} from this list]' if others else ''
 
 
@@ -1086,7 +1087,11 @@ def edit(root, st, args):
         new_text = _args.code(items[2]) if len(items) > 2 else ''
         head = []
         rest = new_text.split('\n')
-        while rest and (not rest[0].strip() or (rest[0][:1] not in (' ', '\t') and IMPORT.match(rest[0].strip()))):
+        old_text = _args.code(items[1])
+        while p['name'] != MODULE and rest and (not rest[0].strip() or (
+                rest[0][:1] not in (' ', '\t') and IMPORT.match(rest[0].strip()) and rest[0].strip() not in old_text)):
+            # gm3 (fastapi_14583, Gemma): in a file's top-level code an import line is the place's own content; moving
+            # 'from collections.abc import Sequence' (already there) to the top deleted it
             # an import at column 0 opening the new lines goes to the top of the file
             if rest[0].strip():
                 head.append(rest[0].strip())
@@ -1206,6 +1211,42 @@ def _dropped_uses(root, p, before, after):
     return out[:3]
 
 
+def _undefined(lines):
+    """Names the file reads but never binds or imports (anywhere in it) and that are not builtins: None when the file
+    does not parse or uses a star import. Loose on purpose (any binding anywhere counts), so that it only catches a
+    name that nothing provides, the way a missing import is."""
+    import builtins
+    tree = _code.parse(''.join(lines))
+    if tree is None:
+        return None
+    bound = set(dir(builtins)) | {'__file__', '__name__', '__doc__', '__spec__', '__path__', '__builtins__',
+                                  '__loader__', '__package__', '__annotations__', '__class__'}
+    loads = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            (loads if isinstance(n.ctx, ast.Load) else bound).add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(n.name)
+        elif isinstance(n, ast.arg):
+            bound.add(n.arg)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                if a.name == '*':
+                    return None
+                bound.add((a.asname or a.name).split('.')[0])
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            bound.add(n.name)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            bound.update(n.names)
+        elif isinstance(n, ast.alias):
+            pass
+        elif hasattr(ast, 'MatchAs') and isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
+            bound.add(n.name)
+        elif hasattr(ast, 'TypeVar') and isinstance(n, getattr(ast, 'TypeVar')):
+            bound.add(n.name)
+    return loads - bound
+
+
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
@@ -1222,7 +1263,15 @@ def _after_edit(root, st, p, r, before, names, nxt):
     else:
         verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
         broken = _import_errors(root, p['rel'], before)
-        if broken:
+        was, now = _undefined(before), _undefined(after)
+        new_names = sorted(now - was) if was is not None and now is not None else []
+        if new_names and not broken:
+            # gk3 (fastapi_14583, Haiku): the edit called annotation_is_pydantic_v1, which the file does not import;
+            # the import check cannot see a name used only inside a function, and the patch raised NameError
+            verdict, failures = 'BROKEN', []
+            detail = ('the edit uses names that this file neither defines nor imports: ' + ', '.join(new_names[:5])
+                      + '. Import them (an import line above the definition, or opening the new lines, not indented)')
+        elif broken:
             verdict, failures = 'BROKEN', [m for m, _ in broken]
             detail = 'the changed module cannot be imported any more:\n' + '\n'.join(
                 f'  importing {m} fails: {err}' for m, err in broken[:3])
@@ -1230,6 +1279,7 @@ def _after_edit(root, st, p, r, before, names, nxt):
     if verdict == 'BROKEN':
         _repo.write_lines(root, p['rel'], before)
         why = ('after the edit its module cannot be imported' if detail.startswith('the changed module cannot')
+               else 'the edit uses undefined names' if detail.startswith('the edit uses names')
                else 'the edit breaks existing tests that passed before')
         p['fails'] = p.get('fails', 0) + 1
         if p['fails'] >= MAX_FAILS:
@@ -1240,6 +1290,8 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 p['old_sentence'], p['sentence'], p['status'] = p.get('sentence'), None, None
                 p['note'] = ('edits made from the sentence below were undone twice: the module could not be '
                              'imported after them:\n' + detail[:900]) if why.startswith('after') else (
+                             'edits made from the sentence below were undone twice: ' + detail[:900]
+                             ) if why.startswith('the edit uses') else (
                              'edits made from the sentence below were undone twice: they break existing tests that '
                              'pass on the original code. Those tests show behaviour the issue keeps: write a change '
                              'that meets the requirement and keeps them passing (if the requirement, as written, '
@@ -1429,9 +1481,13 @@ def main(stage, argv):
             # ask (a second ask would spend the target's tries)
             out = f"NEXT: {pending}"
         elif pending and not (_opens(st, args) and (st.get('current') or ('',))[0] == stage):
-            out = ("This call was not used: the agent before you has finished its part. If you are that agent, reply "
-                   f"to the coordinator with exactly this line, without a call:\n{pending}\nIf you have just started, "
-                   "call your script with args ['open'] first.")
+            nxt_stage = (st.get('current') or ('',))[0]
+            out = ("This call was not used: your part is finished. Reply to the coordinator with exactly this line, "
+                   f"without a call:\n{pending}")
+            if nxt_stage == stage:
+                # the next agent does the same stage (edit after edit): a new agent starts with 'open'
+                out += "\nIf you are a new agent that has just started, call your script with args ['open'] first."
+            # gm3: an editor whose place went back to specify kept calling 'open' and was offered 'just started'
         else:
             st['chained'] = None
             out = HANDLERS[stage](root, st, args)

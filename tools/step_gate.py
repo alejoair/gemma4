@@ -94,6 +94,10 @@ class Gate(BaseHTTPRequestHandler):
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
+        except (urllib.error.URLError, OSError) as e:
+            # gm3: a connection reset by the gateway crashed the handler and lost the step; the client gets a 502 and
+            # retries, and the step is recorded
+            return 502, json.dumps({'error': {'message': f'gate: upstream unreachable: {e}', 'code': 502}}).encode()
 
     def do_GET(self):
         code, body = self._forward('GET', self.path.replace('/v1', '', 1) if self.path.startswith('/v1') else self.path)
