@@ -163,7 +163,7 @@ def _next_tool(root, st):
     # 5 specify, per place
     for p in st['plan']:
         if p.get('sentence') is None:
-            if _ask(st, f'specify {_key(p)} {st["round"]}'):
+            if _ask(st, f'specify {_key(p)} {st["round"]} {p.get("respecs", 0)}'):
                 st['current'] = ('specify', p['handle'])
                 return 'specify', p['handle']
             p['sentence'] = '; '.join(_req(st, rid)['what'] for rid in p['reqs'] if _req(st, rid)) or 'no change'
@@ -171,7 +171,7 @@ def _next_tool(root, st):
     # 6 edit, per place
     for p in st['plan']:
         if p.get('status') == 'todo':
-            if _ask(st, f'edit {_key(p)} {st["round"]}'):
+            if _ask(st, f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}'):
                 st['current'] = ('edit', p['handle'])
                 p['opened'] = False
                 return 'edit', p['handle']
@@ -692,7 +692,9 @@ def _order(root, plan):
 def _missing_names(text):
     """The code names in an agent's 'missing' text: 'PromptBase.__init__ and Prompt.ask' gives both."""
     names = re.findall(r'[\w./-]+\.py::[A-Za-z_][\w.]*|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[A-Za-z_]\w*', text or '')
-    names = [n for n in dict.fromkeys(names) if '.' in n or '_' in n or n[:1].isupper()]
+    names = [n for n in dict.fromkeys(names) if ('.' in n or '_' in n or n[:1].isupper())
+             and ('::' in n or not re.search(r'(/|\.py$)', n)) and not _repo.is_test_path(n.split('::')[0])
+             and not n.split('::')[0].split('/')[-1].startswith('test')]
     dotted = [n for n in names if '.' in n or '::' in n]
     return (dotted or names)[:3]
 
@@ -855,6 +857,64 @@ def _edit_target(root, p):
     return {'rel': p['rel'], 'name': p['name'], 'start': p['start'], 'end': p['end'], 'handle': p['handle']}
 
 
+ELIDED = re.compile(r'^(\s*)(async\s+)?def\s+(\w+)\s*\(\s*\.\.\.\s*\)\s*(->[^:]*)?:\s*$', re.M)
+
+
+def _keep_signature(root, p, body):
+    """'def name(...):' and a new body: the place's own decorators, signature and docstring are kept and only the rest
+    of its body is replaced (fastapi_14873: APIRouter.__init__'s 217 lines of parameters are hidden in the window,
+    and the editor could not send the whole definition). Returns the whole new definition, or None."""
+    m = ELIDED.search(body)
+    if not m:
+        return None
+    lines = _repo.read_lines(root, p['rel'])
+    tree = _code.parse(''.join(lines))
+    node = next((n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 and n.name == m.group(3) and p['start'] <= n.lineno <= p['end']), None) if tree else None
+    if node is None:
+        return None
+    first = node.body[0]
+    keep_to = first.lineno - 1
+    new_body = body[m.end():].strip('\n')
+    has_doc = isinstance(first, ast.Expr) and isinstance(getattr(first, 'value', None), ast.Constant) \
+        and isinstance(first.value.value, str)
+    if has_doc and not re.match(r'\s*[rRbBuU]?("""|\'\'\'|"|\')', new_body):
+        keep_to = first.end_lineno
+    pad = step._indent_of(lines[first.lineno - 1])
+    head = ''.join(lines[min(d.lineno for d in node.decorator_list) - 1 if node.decorator_list else node.lineno - 1:keep_to])
+    return head, pad, step.textwrap.dedent(new_body), node
+
+
+def _replace_text(root, p, old, new):
+    """['replace', old lines, new lines] inside the place: the old lines are found by their text (leading and trailing
+    spaces ignored, once in the place), the new lines are re-indented to the first old line. (start, end, text) or an
+    error string."""
+    lines = _repo.read_lines(root, p['rel'])
+    want = [l.strip() for l in old.strip('\n').split('\n') if l.strip()]
+    if not want:
+        return 'the old lines are empty'
+    hits = []
+    for i in range(p['start'] - 1, min(p['end'], len(lines))):
+        j, k = i, 0
+        while j < len(lines) and k < len(want):
+            if not lines[j].strip():
+                j += 1
+                continue
+            if lines[j].strip() != want[k]:
+                break
+            j, k = j + 1, k + 1
+        if k == len(want):
+            hits.append((i + 1, j))
+    if not hits:
+        return 'the old lines were not found in this place (send them as the window shows them, without line numbers)'
+    if len(hits) > 1:
+        return f'the old lines occur {len(hits)} times in this place: send more lines around them'
+    a, b = hits[0]
+    pad = step._indent_of(lines[a - 1])
+    text = step.textwrap.indent(step.textwrap.dedent(new.strip('\n')), pad) if new.strip() else ''
+    return a, b, text
+
+
 def edit(root, st, args):
     name = (st['current'] or (None, None))[1]
     p = _place_by(st, name) if name else None
@@ -864,7 +924,8 @@ def edit(root, st, args):
     items = [a for a in args if a and a.strip()]
     nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['<the whole new "
            "definition of " + p['handle'].split('::')[-1].split('.')[-1] + ", with any new imports above it>'], or "
-           "['no change'], or ['missing', '<name of other code this change needs>']")
+           "['replace', '<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this "
+           "change needs>']")
     first = _args.clean(items[0]).lower() if items else ''
     if not items or (first in ('open', 'start', p['handle'].lower()) and len(items) == 1):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
@@ -878,6 +939,10 @@ def edit(root, st, args):
                 view.append(diff[:1500])
         view.append('Send the whole new definition (from its def or class line, with its decorators); new imports go '
                     'above it and are moved to the top of the file. A new helper function can come with it.')
+        if re.search(r'not shown\)', view[0]):
+            view.append("Part of this place is not shown. Then either send 'def <name>(...):' followed by the whole "
+                        "new body (the parameters, decorators and docstring stay as they are), or change some lines: "
+                        "['replace', '<the old lines, as shown, without their numbers>', '<the new lines>'].")
         return '\n\n'.join(view) + '\n\n' + nxt
     if first in ('no change', 'skip', 'nothing'):
         if p.get('status') != 'done':
@@ -886,12 +951,19 @@ def edit(root, st, args):
     if first == 'missing' and len(items) >= 2:
         st['missing'].append([_args.clean(items[1]), f'the editor of {p["handle"]} needs it: ' + ' '.join(items[2:])[:300],
                               list(p['reqs']), _key(p)])
-        st['asked'].pop(f'edit {_key(p)} {st["round"]}', None)      # its edit is asked again after the new code
+        st['asked'].pop(f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)   # asked again after the new code
         return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
                 f'\n\n{DONE}')
     p['edits'] = p.get('edits', 0) + 1
     if p['edits'] > MAX_EDITS:
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
+    if first == 'replace' and len(items) >= 2:
+        before = _repo.read_lines(root, p['rel'])
+        res = _replace_text(root, p, _args.code(items[1]), _args.code(items[2]) if len(items) > 2 else '')
+        if isinstance(res, str):
+            return f'Not applied: {res}.\n\n{nxt}'
+        r = step._edit.apply(root, p['rel'], res[0], res[1], res[2] or 'DELETE')
+        return _after_edit(root, st, p, r, before, [p['name'].split('.')[-1]], nxt)
     code = _args.code('\n'.join(items) if len(items) > 1 else items[0])
     imports, body = _split_imports(code)
     target = _edit_target(root, p)
@@ -900,7 +972,13 @@ def edit(root, st, args):
     if added:
         _refresh(root, p)
         target = _edit_target(root, p)
-    if p.get('group') and not p.get('new'):
+    kept = _keep_signature(root, p, body) if not p.get('new') else None
+    if kept:
+        head, pad, new_body, node = kept
+        start = min([d.lineno for d in node.decorator_list] + [node.lineno])
+        r = step._edit.apply(root, p['rel'], start, node.end_lineno,
+                             head.rstrip('\n') + '\n' + step.textwrap.indent(new_body.strip('\n'), pad))
+    elif p.get('group') and not p.get('new'):
         # several definitions of one name: the code sent replaces all of them (re-indented to the first)
         lines_now = _repo.read_lines(root, p['rel'])
         pad = step._indent_of(lines_now[p['start'] - 1])
@@ -908,11 +986,15 @@ def edit(root, st, args):
                              step.textwrap.indent(step.textwrap.dedent(body).strip('\n'), pad))
     else:
         r = step._whole_edit(root, target, body)
+    names = sorted({m for m in re.findall(r'(?m)^\s*(?:async\s+)?(?:def|class)\s+(\w+)', body)})
+    return _after_edit(root, st, p, r, before, names, nxt)
+
+
+def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
         return f'Not applied: {r.error}.\n\n{nxt}'
     after = _repo.read_lines(root, p['rel'])
-    names = sorted({m for m in re.findall(r'(?m)^\s*(?:async\s+)?(?:def|class)\s+(\w+)', body)})
     changed = {p['rel']: names + [l.strip() for l in after[r.start - 1:r.end]]}
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
         if tag in ('delete', 'replace'):
@@ -925,6 +1007,15 @@ def edit(root, st, args):
         _repo.write_lines(root, p['rel'], before)
         p['fails'] = p.get('fails', 0) + 1
         if p['fails'] >= MAX_FAILS:
+            if p.get('respecs', 0) < 1:
+                # F2: the failing tests go back to the specifier once, with the sentence they refuted (fastapi_14986:
+                # 'drop the servers' was refused twice by tests that expect the root path in the response)
+                p['respecs'] = p.get('respecs', 0) + 1
+                p['old_sentence'], p['sentence'], p['status'] = p.get('sentence'), None, None
+                p['note'] = 'edits made from the sentence below were undone twice: they break existing tests ' \
+                            '(a test that passes now must keep passing):\n' + detail[:900]
+                return (f'Undone: the edit breaks existing tests that passed before:\n{detail}\n{p["handle"]} goes '
+                        f'back to be specified again, with these tests.\n\n{DONE}')
             p['status'] = 'failed'
             return (f'Undone: the edit breaks existing tests that passed before:\n{detail}\nThat was the last try for '
                     f'{p["handle"]}: it keeps its code.\n\n{DONE}')
@@ -1020,6 +1111,14 @@ def review(root, st, args):
                 "'<place>', '<what is missing>'] naming the one place that is wrong or missing, or ['cannot tell'].\n\n"
                 + nxt)
     if first in ('done', 'yes', 'cannot tell', "can't tell", 'unknown'):
+        repro = st['repro'] if st['repro'] and st['repro'].get('rid') == rid else None
+        if repro and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
+            # the test's output decides, not the opinion (design_stages.md, stage 8): s-st2 fastapi_14448 was
+            # reviewed 'done' while its reproduction test still failed
+            st.setdefault('review_refused', {})[rid] = True
+            return ('The test of this requirement still fails with the patch:\n' + (repro.get('now') or '')[:600] +
+                    '\nSo the patch does not do it yet: name the place that is wrong or missing and what is missing '
+                    "there: ['not done', '<place>', '<what is missing>'].\n\n" + nxt)
         st['reviews'][rid] = {'verdict': 'done' if first in ('done', 'yes') else 'cannot tell'}
         return f'{rid}: {st["reviews"][rid]["verdict"]}.\n\n{DONE}'
     if first in ('not done', 'no') and len(items) >= 2:
