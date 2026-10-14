@@ -397,3 +397,65 @@ fastapi_14448. Agent C: fastapi_15800, fastapi_14583, rich_3469. Agent D: the re
     sub-agents, and a router answer that repeats unchanged.
 30. *httpx_3672 was resolved by luck.* The hidden tests check only the parser rename, done at 212 s. The patch leaves
     `_pool.py`'s calls broken, and 208 s went into a `missing` loop.
+
+## Local run g1 (the local 31B, fastapi_9555, step by step, 2026-10-14)
+
+The user asked for one random task, monitored step by step instead of a batch of 10. fastapi_9555 ("Handle wrapped
+dependencies": `functools.wraps` wrappers hide that a dependency is a coroutine or a generator) on the stages build at
+1f9c3c8 (per-edit tests and stage 7 off, import check on). Not resolved: 1 of the 3 fail-to-pass tests passes, and both
+generator cases fail. Time was 567 s over 42 model calls.
+
+Step by step:
+
+| Stage | What happened | Verdict |
+|---|---|---|
+| requirements | One requirement, quoting the statement's first sentence ("Use the unwrapped call in `solve_dependencies`...") | right for the statement; it names the place, not the behaviour |
+| reproduce | An `async def` test. pytest has no async plugin in the sandbox (the harness's pytest.ini has `-p no:anyio`), so it failed before its body ran. The script **kept** it, saying it "runs 0 functions of the repository" | **system fault** (weak point 23) |
+| locate | `solve_dependencies` was chosen from 8 candidates; `Dependant.is_gen_callable` and its siblings were on the list | follows R1, which names `solve_dependencies` |
+| scope | Showed only the two callers of `solve_dependencies`; the model answered `none` | `_solve_generator` (the callee that reads `is_gen_callable`) is not related code |
+| specify | One clear sentence: replace the three `use_sub_dependant.is_*` reads with `inspect.unwrap(call)` checks | good |
+| edit | Two `replace` edits. The first turned `elif` into `if` and broke the cache branch; the model saw it in the diff and sent the whole 140-line definition. Its first 3 tries were malformed, so the harness asked again, about 2 min (4 × ~2,100 tokens); the 4th was applied | the model found its own mistake; long whole definitions cost malformed calls |
+| review | "done" | right for R1 as written |
+
+**Why it failed.** The patch makes `solve_dependencies` choose the generator branch for a wrapped generator. That
+branch calls `_solve_generator`, which reads `dependant.is_gen_callable` again and still sees the wrapper. The
+reference changes the three `Dependant.is_*_callable` properties themselves (models.py), so every reader sees the
+unwrapped call.
+
+**Fixes (built as build_g2; dry runs on the snapshot made hermetic):**
+1. *Reproduce refuses a test that fails before it calls any function of the repository* (weak point 23), when the
+   call map is available (Python 3.12+). An `async def` test that pytest cannot run gets its own refusal: write a
+   plain `def` test that runs the async code with `asyncio.run(...)` or through the repository's test client.
+   Checked: an async test is refused with that reason; `assert 1 == 2` is refused (0 calls); a TestClient test
+   with a wrapped generator dependency is kept ("runs 16 functions").
+2. *An edit that stops using code that other code still uses says so* (`_dropped_uses`). The attributes read as
+   `<expr>.<attr>`, and the plain names called, inside the place before and after the edit are compared. For each
+   name the edit stopped using, the readers elsewhere are listed when all of these hold:
+   - it has exactly one definition in the repository;
+   - it has at most 30 readers;
+   - the readers are outside tests and docs.
+
+   The editor is offered `['missing', '<that definition>', '<what must change in it>']`, which puts it into the plan.
+   On g1's edit, the notice lists:
+   - `Dependant.is_gen_callable` and `Dependant.is_async_gen_callable`, read by `_solve_generator` (utils.py:549,
+     551), `get_dependant` (268) and `Dependant.computed_scope` (models.py:105);
+   - nothing for `is_coroutine_callable` (only `solve_dependencies` reads it).
+
+   It takes 0.3 s.
+
+Checklist:
+
+| Item | Fix 1 (reproduce) | Fix 2 (dropped uses) |
+|---|---|---|
+| W3 code in front of it | neutral | closer: the readers are shown by name and line, not left to be found |
+| W4 a concrete NEXT | neutral | neutral: the NEXT names the definition in the `missing` form |
+| W5 familiar formats | closer: pytest's own message in place of a kept test that never ran | neutral |
+| B8 many forms | neutral | farther, slightly: a second choice after an accepted edit (`missing` or a sentence); reason: it is the existing `missing` form, filled in |
+| B9 exploring | neutral | neutral: nothing to read, the names are given |
+| B11 doubting tool output | closer: the script no longer reports a test that never reached the code as evidence | closer: "accepted" no longer hides that other readers keep the old behaviour |
+
+Still open from g1:
+- A requirement that names a place ("in `solve_dependencies`") makes locate pick the place, not the code that decides
+  the behaviour.
+- A 140-line whole definition costs malformed calls; the view asks for the whole definition first even when the place
+  is long.

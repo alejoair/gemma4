@@ -441,8 +441,19 @@ def reproduce(root, st, args):
             k for k in outcomes if re.search(BAD_REASON.pattern.replace('{pkg}', pkg), msgs.get(k, ''))] + [
             k for k in outcomes for m in re.findall(r"NameError: name '(\w+)' is not defined", msgs.get(k, ''))
             if m not in allowed]
-        if bad:
+        async_only = [k for k in outcomes if re.search(r'not natively supported|install a suitable plugin|- pytest-asyncio',
+                                                        msgs.get(k, '') + output)]
+        if async_only:
+            # fastapi_9555 (local 31B): an async def test with no async plugin installed fails before its body runs
+            reason = ('pytest here cannot run an async def test (no async plugin is installed): write a plain def '
+                      'test that runs the async code with asyncio.run(...) or through the repository\'s own test '
+                      'client')
+        elif bad:
             reason = 'it fails for a reason of its own, not the issue\'s:\n' + msgs.get(bad[0], '')[:600]
+        elif not calls and getattr(sys, 'monitoring', None) is not None:
+            # a test that fails before it calls any function of the repository shows nothing about the issue
+            reason = ('it fails before it calls any function of the repository, so the failure is not the '
+                      'issue\'s:\n' + msgs.get(next(iter(outcomes)), '')[:600])
     if reason:
         st['repro_last'] = reason[:700]
         if st['repro_tries'] >= 2:
@@ -1054,6 +1065,46 @@ def _import_errors(root, rel, before):
     return [(m, err) for m, err in now.items() if m not in earlier]
 
 
+def _used_names(lines, name):
+    """The attributes read as <expr>.<attr> (not self) and the plain names called inside the definition `name`."""
+    tree = _code.parse(''.join(lines))
+    sym = next((x for x in _code.symbols(tree) if x.name == name), None) if tree is not None else None
+    if sym is None:
+        return None
+    out = set()
+    for n in ast.walk(sym.node):
+        if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load) and not (
+                isinstance(n.value, ast.Name) and n.value.id == 'self'):
+            out.add(n.attr)
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+            out.add(n.func.id)
+    return out
+
+
+def _dropped_uses(root, p, before, after):
+    """Code of the repository the edit stopped using in this place that other code still uses: [(definition,
+    [(rel, user, line)])]. fastapi_9555 (local 31B): the edit replaced dependant.is_gen_callable in solve_dependencies
+    by its own inspect.unwrap check, while _solve_generator, called right after, still read is_gen_callable and kept
+    the old behaviour (the reference changes the property itself)."""
+    old, new = _used_names(before, p['name']), _used_names(after, p['name'])
+    if not old or new is None:
+        return []
+    table, out = _impact.Table(root, docs=False), []
+    for a in sorted(old - new):
+        defs = [(r, d) for r, d in table.find(a) if not _repo.is_test_path(r)]
+        if len(defs) != 1 or a.startswith('__'):
+            continue
+        r, d = defs[0]
+        users = table.uses.get(a, []) + table.reads.get(a, []) + [c for c in table.calls.get(a, []) if c[1]]
+        if len(users) > _impact.MAX_USES:
+            continue
+        users = [u for u in dict.fromkeys(users) if (u[0], u[1]) != (p['rel'], p['name']) and u[1] != d.name
+                 and not _repo.is_test_path(u[0]) and not _repo.is_doc_path(u[0])]
+        if users:
+            out.append((d.name, users[:4]))
+    return out[:3]
+
+
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
@@ -1105,6 +1156,16 @@ def _after_edit(root, st, p, r, before, names, nxt):
         p['name'] = (p['owner'] + '.' if p.get('owner') not in (None, MODULE) else '') + p['name'].split('.')[-1]
     _refresh(root, p)
     word = {'OK': 'Kept and checked', 'UNCHECKED': 'Kept, not checked'}.get(verdict, 'Kept')
+    dropped = _dropped_uses(root, p, before, after)
+    if dropped:
+        lines = [f'  {d}, still used by ' + ', '.join(f'{u} ({r}:{l})' for r, u, l in users) for d, users in dropped]
+        first = dropped[0][0]
+        return (f'{word}: {detail}.\n{shown}\n\nThis edit stops using code that other code still uses, and that '
+                'code keeps the old behaviour:\n' + '\n'.join(lines) + '\nIf the requirement must hold there too, '
+                f"the change belongs in that code itself: send ['missing', '{first}', '<what must change in it>'] (it "
+                'goes into the plan and is changed next). If not, reply with one sentence for the coordinator.'
+                f"\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['missing', "
+                f"'{first}', '<what must change in it>'], or no call: reply with one sentence for the coordinator.")
     return (f'{word}: {detail}.\n{shown}\n\nIf this is the whole change, reply with one sentence for the coordinator, '
             'without a call. If it is wrong or incomplete, send the corrected whole definition.\n\nNEXT: no call: '
             'reply with one sentence for the coordinator (or send the corrected whole definition to edit.py).')
