@@ -44,6 +44,10 @@ BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(45 * 60)))   # then the wo
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
 ANSWER_CHARS = 9000
+# The per-edit test check (stage 6), off for now at the user's request (2026-10-14): in requests it cost about 70 s per
+# edit, and the first edit of a task built the call map with a whole-suite run (up to 150 s). SWE_EDIT_TESTS=1 turns
+# it back on. The edit still has to compile (the whole-definition and replace forms refuse code that does not).
+EDIT_TESTS = os.environ.get('SWE_EDIT_TESTS', '0') == '1'
 
 DONE = 'NEXT: no call: reply with one sentence for the coordinator.'
 
@@ -1008,9 +1012,12 @@ def _after_edit(root, st, p, r, before, names, nxt):
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
         if tag in ('delete', 'replace'):
             changed[p['rel']].extend(l.strip() for l in before[i1:i2])
-    cover = step._status.changed_statements(before, after)
-    verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
-                                             undo=(p['rel'], before))
+    if EDIT_TESTS:
+        cover = step._status.changed_statements(before, after)
+        verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
+                                                 undo=(p['rel'], before))
+    else:
+        verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
     shown = step._changed_view(before, after, p['rel'])
     if verdict == 'BROKEN':
         _repo.write_lines(root, p['rel'], before)

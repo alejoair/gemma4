@@ -267,3 +267,13 @@ What the first runs (Haiku through the proxy) changed:
   - **fastapi_15800, fastapi_14583, rich_3469.** Statement-limited.
 - Time per task: 96-327 s except requests (580 s) and httpx (2,016 s). That is still over Kaggle's ~6-minute average
   for those repositories.
+
+**Per-edit test check off (2026-10-14, the user's request).** Stage 6 no longer runs the existing tests after each
+edit (`EDIT_TESTS`, `SWE_EDIT_TESTS=1` turns it back on). In requests it cost about 70 s per edit, and the first edit of
+a task built the call map with a whole-suite run (up to 150 s). An edit still has to compile, and the editor's
+instruction no longer says tests are run. Stage 7 still runs the selected existing tests once on the whole patch.
+
+| Item | Effect | Why |
+|---|---|---|
+| B10 knowing its budget | closer | edits answer at once; tasks fit the time better |
+| F2 repairing from failing tests, B11 | farther | a regression is no longer seen at the edit that made it; only stage 7 sees it, once |
