@@ -301,3 +301,14 @@ s). A replay of rich_3006 now takes 18 s.
 | B10 knowing its budget | closer | no whole-suite run in any task |
 | B11, F3 doubting a verdict | farther | the review has no test output after the edits; only the model's reading of the diff |
 | F2 repairing from failing tests | farther | no regression reaches the specifier |
+
+**st4** (Haiku, build d2f7e51: per-edit tests and stage 7 off, import check on; the usual 10 tasks): 3/10.
+- Resolved: httpx_3672 (558 s; 2,016 s and not resolved in st3), rich_3521, rich_3006.
+- Time for the 10 tasks: 2,051 s, a mean of 205 s. The rounds with the test checks took about twice as long.
+  requests_7328 took 208 s (580 s before). Only httpx is over the ~6-minute average.
+- **fastapi_14851 was lost to a system fault.** The editor of `APIRouter.on_event` cannot see other places. It named
+  `APIRouter.__init__` as missing four times after `__init__` had been edited, and each answer sent `__init__` back to
+  be specified and edited again. Fixed after the round: a "missing" answer that names a place already edited in this
+  fix gets that place's diff, and the editor goes on with its own change.
+- Same score as st3 (3/10) with half the time. The failures left are fastapi_14986 (the requirement paraphrases the
+  issue wrongly), requests_7328, fastapi_14448, and the statement-limited fastapi_15800, fastapi_14583 and rich_3469.

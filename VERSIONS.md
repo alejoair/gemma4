@@ -112,3 +112,4 @@ The same 10 dev tasks, judged by tools/judge.py. Never used to train Gemma.
 | s4 | 10-14 09:00 | Sonnet | d50331a | 0/1 | fastapi_14448 alone: `_solve_generator` shown first with the branch-order question, still no change |
 | st1+st2 | 10-14 14:29 | Haiku | stages build 21fb1c3-6052f0c | 4/13 (2/10 of the usual set) | first runs of the redesign (docs/design_stages.md); fixes made during the round |
 | st3 | 10-14 15:58 | Haiku | stages build 8b6196a | 6/13 (3/10 of the usual set; fastapi_14873, rich_3894, rich_3052 also resolved) | httpx_3672 2,016 s; requirements still paraphrase the issue wrongly in fastapi_14986 |
+| st4 | 10-14 18:02 | Haiku | stages build d2f7e51 (per-edit tests and stage 7 off, import check on) | 3/10 (httpx_3672, rich_3521, rich_3006) | 2,051 s for 10 tasks (mean 205 s; st3 took about 4,000 s); httpx_3672 resolved in 558 s; fastapi_14851 lost to a 'missing' loop (fixed after the round) |

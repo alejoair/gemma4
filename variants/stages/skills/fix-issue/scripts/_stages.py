@@ -968,6 +968,14 @@ def edit(root, st, args):
             p['status'] = 'nochange'
         return f'{p["handle"]} keeps its code.\n\n{DONE}'
     if first == 'missing' and len(items) >= 2:
+        done = [q for n in _missing_names(items[1]) for q in [_place_by(st, n)] if q is not None
+                and q is not p and q.get('status') == 'done']
+        if done:
+            # s-st4 (fastapi_14851): the editor of on_event named APIRouter.__init__ as missing four times after
+            # it was edited, and each answer sent __init__ back to be specified and edited again
+            diffs = '\n'.join((step._patch_here(root, q) or f'{q["handle"]} is edited.')[:1500] for q in done[:2])
+            return (f'{", ".join(q["handle"] for q in done)} is already changed by this fix:\n{diffs}\n'
+                    f'Make the change of {p["handle"]} with that code in place.\n\n{nxt}')
         st['missing'].append([_args.clean(items[1]), f'the editor of {p["handle"]} needs it: ' + ' '.join(items[2:])[:300],
                               list(p['reqs']), _key(p)])
         st['asked'].pop(f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)   # asked again after the new code
