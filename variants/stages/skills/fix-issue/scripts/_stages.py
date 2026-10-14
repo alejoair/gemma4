@@ -1407,8 +1407,11 @@ def _chain(root, st, out):
         return out
     line = nxt[len('NEXT: '):].split('; when it replies')[0]
     st['chained'] = line
-    return out[:-len(DONE)] + ('NEXT: no call: reply to the coordinator with exactly this line, and nothing else:\n'
-                               + line)
+    # rich_3521 (gated run gk2): locate and review took the line for an order to themselves ("that isn't part of my
+    # task, so I ignored it"); it is said to be the coordinator's next call, for the agent to pass on
+    return out[:-len(DONE)] + ('Your part is done. The coordinator (the agent that called you) makes its next call from '
+                               'your reply, so pass this line on to it: it is not a task for you.\n'
+                               'NEXT: no call: reply with exactly this line, and nothing else:\n' + line)
 
 
 def main(stage, argv):
