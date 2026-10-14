@@ -230,8 +230,11 @@ def route(root, st, args):
         return head + '\n\nThe work is finished.\n\nNEXT: call the tool submit_patch with no arguments, then write one ' \
                       'sentence about the change.'
     st['log'].append([_elapsed(st), tool, req])
-    return f"{head}\n\nNEXT: call the tool {tool} with request '{req}'; when it replies, call run_skill_script with " \
-           "skill_name fix-issue, file_path route.py and args ['next']."
+    # gm7 (Gemma): "when it replies, call route.py" contradicted the line the agent returns (checklist B12); it called
+    # route.py instead of that line 4 times out of 9
+    return f"{head}\n\nNEXT: call the tool {tool} with request '{req}'. If it replies with a line \"call the tool ...\", " \
+           "make that call next; if it replies with anything else, call run_skill_script with skill_name fix-issue, " \
+           "file_path route.py and args ['next']."
 
 
 def _submit(root, st):
@@ -1473,9 +1476,17 @@ def review(root, st, args):
                         f'{ {"done": "edited", "nochange": "not changed", "failed": "the edit failed"}.get(p.get("status"), "not edited")}'
                         + (f'\n{diff[:1800]}' if diff else ''))
         if st['repro'] and st['repro'].get('rid') == rid:
+            if not VERIFY:
+                # gk7 (fastapi_14583, Haiku): with stage 7 off the kept test was never run on the patch, and the review
+                # said "done" while the test still failed; only this test runs here (seconds)
+                outcomes, msgs, _, _ = _run_repro(root, st['repro']['rel'], st['repro']['code'])
+                passed = bool(outcomes) and all(v == 'passed' for v in outcomes.values())
+                st['repro']['now_passes'] = passed
+                failing = [k for k, v in outcomes.items() if v != 'passed']
+                st['repro']['now'] = ('it passes' if passed else 'it still fails:\n' + (
+                    msgs.get(failing[0], '') if failing else 'it did not run')[:500])
             view.append('The reproduction test, on the original code:\n' + st['repro']['before'][:400] +
-                        '\nWith the patch: ' + (st['repro']['now'] or 'not run again (the check after the edits is '
-                                                                   'off)')[:500])
+                        '\nWith the patch: ' + (st['repro']['now'] or 'not run again')[:500])
         if st['regressions']:
             view.append('Existing tests the whole patch breaks: ' + ', '.join(t for t, _ in st['regressions'][:5]))
         _, options = _related(root, st, places)
@@ -1487,7 +1498,7 @@ def review(root, st, args):
                 + nxt)
     if first in ('done', 'yes', 'cannot tell', "can't tell", 'unknown'):
         repro = st['repro'] if st['repro'] and st['repro'].get('rid') == rid else None
-        if VERIFY and repro and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
+        if repro and repro.get('now') and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
             # the test's output decides, not the opinion (design_stages.md, stage 8): s-st2 fastapi_14448 was
             # reviewed 'done' while its reproduction test still failed
             st.setdefault('review_refused', {})[rid] = True
