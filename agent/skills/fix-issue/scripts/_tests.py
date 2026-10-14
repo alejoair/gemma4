@@ -233,7 +233,8 @@ def _parse(out):
 
 
 def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None):
-    """Runs each target group in its own pytest process, in parallel. Returns {'ran', 'failed', 'passed', 'output',
+    """Runs each target group in its own pytest process, in parallel (one after the other when they clash on a port).
+    Returns {'ran', 'failed', 'passed', 'output',
     'timeouts', 'missing', 'covered'}: ran is False when pytest itself could not run; covered is the set of (rel,
     line) of cover ({rel: lines}) that the tests ran, or None when it could not be measured."""
     timeout = timeout or FILE_TIMEOUT
@@ -245,7 +246,25 @@ def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None):
         flags = flags + ['-p', 'swe_cover_plugin']
         cover_env['SWE_COVER_FILES'] = json.dumps({os.path.join(cwd or root, rel): sorted(lines)
                                                   for rel, lines in cover.items()})
+    serial = bool(_state.load('serial_tests', False)) and len(targets) > 1
+    result = _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, serial)
+    if not serial and len(targets) > 1 and PORT_CLASH.search(result['output']):
+        # httpx_3672 (V20, V21 and a local run): the test files start servers on one fixed port, so the parallel
+        # processes failed each other with 'Address already in use' and every edit counted as breaking 7-12 tests;
+        # the groups run again one after the other, and so for the rest of the task
+        _state.save('serial_tests', True)
+        outs.clear()
+        result = _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, True)
+    return result
+
+
+PORT_CLASH = re.compile(r'Address already in use|EADDRINUSE|\[Errno 98\]|\[Errno 48\]')
+
+
+def _run_groups(root, targets, timeout, cwd, extra, flags, cover, cover_env, outs, serial):
+    """The pytest runs of the target groups, all at once or (serial) one after the other."""
     procs = []
+    deadline = time.time() + timeout          # one deadline for all the runs, not one per run
     for k, group in enumerate(targets):
         out = tempfile.TemporaryFile('w+')
         env = _env(cwd or root, extra)
@@ -257,9 +276,14 @@ def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None):
         p = subprocess.Popen([sys.executable] + flags + group, cwd=cwd or root, env=env,
                              stdout=out, stderr=subprocess.STDOUT, text=True)
         procs.append((group, p, out))
+        if serial:
+            deadline = time.time() + timeout    # one after the other: each run has its own deadline
+            try:
+                p.wait(timeout=max(0.1, deadline - time.time()))
+            except subprocess.TimeoutExpired:
+                pass                            # killed and counted below
     result = {'ran': False, 'failed': set(), 'passed': 0, 'output': '', 'timeouts': [], 'missing': set(),
               'covered': None}
-    deadline = time.time() + timeout          # one deadline for the parallel runs, not one per run
     for group, p, out in procs:
         try:
             p.wait(timeout=max(0.1, deadline - time.time()))

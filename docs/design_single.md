@@ -1429,3 +1429,12 @@ Two faults made the dev evaluation wrong, locally and on Kaggle:
 
 Judged again, V21's six patches: 4/6 resolved (rich_3521, requests_7502, rich_3296, httpx_3672); fastapi_14448 fails 4
 of its 8 FAIL_TO_PASS tests; fastapi_14986 fails 3 and breaks a PASS_TO_PASS test.
+
+### Port clashes in the skill's test runs (2026-10-14)
+
+`_tests.run` started one pytest process per test file at once. httpx's test files start servers on one fixed port, so
+the processes failed each other with `OSError: [Errno 98] Address already in use`, while the run on the original code
+(one process) passed: every edit of httpx_3672 counted as breaking 7-12 tests and was undone (V20, V21 with the 31B,
+and a local run with another model through the proxy). Now a run whose output shows a port clash runs again one file
+after the other (each file with its own 30 s deadline) and the task keeps running serially. Checked on httpx_3672's
+snapshot: test_client, test_pool, test_network went from clashing to 20 passed, 0 failed (about 55 s a check).
