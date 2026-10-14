@@ -902,6 +902,8 @@ def _replace_text(root, p, old, new):
         return 'the old lines are empty'
     hits = []
     for i in range(p['start'] - 1, min(p['end'], len(lines))):
+        if lines[i].strip() != want[0]:
+            continue                # a match starts on its first old line (requests_7328: counted twice from a blank)
         j, k = i, 0
         while j < len(lines) and k < len(want):
             if not lines[j].strip():
@@ -1019,8 +1021,10 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 # 'drop the servers' was refused twice by tests that expect the root path in the response)
                 p['respecs'] = p.get('respecs', 0) + 1
                 p['old_sentence'], p['sentence'], p['status'] = p.get('sentence'), None, None
-                p['note'] = 'edits made from the sentence below were undone twice: they break existing tests ' \
-                            '(a test that passes now must keep passing):\n' + detail[:900]
+                p['note'] = ('edits made from the sentence below were undone twice: they break existing tests that '
+                             'pass on the original code. Those tests show behaviour the issue keeps: write a change '
+                             'that meets the requirement and keeps them passing (if the requirement, as written, '
+                             'contradicts them, meet the issue\'s own sentence instead):\n' + detail[:900])
                 return (f'Undone: the edit breaks existing tests that passed before:\n{detail}\n{p["handle"]} goes '
                         f'back to be specified again, with these tests.\n\n{DONE}')
             p['status'] = 'failed'
