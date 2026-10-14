@@ -1590,3 +1590,35 @@ s4 (fastapi_14448 alone, two runs):
 - Run 2: `_solve_generator` came first among the readers, with the branch-order question. The specifier still gave it
   no change. Its sentences also leave 3 of the 4 failing tests failing: callable instances whose `__call__` is wrapped,
   as in h1 and h2. What is left there is the model's reading of the code it was shown.
+
+### Three changes from the checklist check of the open problems (2026-10-14, the user's request)
+
+1. **The issue's example is run** (`_example.py`). The first code block of the statement that parses and imports the
+   repository's package is run on the original code at S0. It is run again after each kept edit (editor) and at the
+   finish view, and the answer shows both outputs or tracebacks. It runs from the state directory, not as
+   `__main__`, with stdin closed, 20 s at most. 10 of the 129 dev statements have such a block. Dry run, rich_3052:
+   "On the original code it failed: TypeError: PromptBase.ask() got an unexpected keyword argument 'case_sensitive'
+   … With the patch it fails the same: the patch does not change what the example shows yet."
+2. **A filled form for new code.** When the issue asks for new names, the specifier's view names them as places
+   (`app.frontend` → `'FastAPI.frontend'`, via the class the variable is made from). Its NEXT line carries the filled
+   pair (`…, 'FastAPI.frontend', '<what the new code does>'`).
+3. **The plan recited, and no contradiction.** The first line of every coordinator and specifier answer now recites
+   the plan with each place's state ("The plan: A (edited), B (to edit), C (no change)."). A `specify_fix` called
+   while the coordinator chooses again, with a non-empty patch, is told the edits stay and the places come first. It
+   no longer hears "no places are chosen yet".
+
+Also: an edit undone because its module no longer imports says "add a missing import" only for a NameError or an
+ImportError; a SyntaxError is told to fix what the error names.
+
+| Item | Effect | Why |
+|---|---|---|
+| F2 repairing from prose or tracebacks | closer | the example's traceback or output is shown before and after |
+| W5 familiar formats | closer | a plain Python traceback and program output |
+| F5 knowing what is done | closer | "the patch does not change what the example shows yet" |
+| B11 doubting tool output | closer | the example is evidence about the new behaviour, not only "Kept, not checked" |
+| P9 copying call-form examples | closer | the new-code pair is in the NEXT line, filled |
+| W4 a fully filled next call | closer | as above |
+| P8 progress recited | closer | the plan and its states in every answer |
+| B12 contradictions | closer | no "no places chosen" beside a non-empty patch |
+| B7 the middle of a long context | farther (small) | the example block adds up to about 1,800 characters to an editor answer; it appears only when the issue has an example |
+| B10 knowing its budget | farther (small) | up to 20 s per kept edit, only for tasks with an example |

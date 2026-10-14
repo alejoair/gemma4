@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _args  # noqa: E402
 import _code  # noqa: E402
 import _edit  # noqa: E402
+import _example  # noqa: E402
 import _impact  # noqa: E402
 import _journal  # noqa: E402
 import _rank  # noqa: E402
@@ -918,6 +919,10 @@ def s0(root, state, args):
     extra = [t.strip() for a in items[1:] for t in re.split(r'[\n,;]', a) if t.strip()]
     text = _statement.clean(statement) or statement
     _state.save('statement', {'text': text, 'terms': extra})
+    try:
+        _example.start(root, statement)          # the issue's example on the original code (F2: output to repair from)
+    except Exception as e:                      # never a traceback: the example is an aid
+        _state.record({'error': f'example {type(e).__name__}: {e}'})
     state['deferred'] = _statement.deferred(statement)
     reqs = []
     index = _rank.Index(root)
@@ -2335,10 +2340,12 @@ def _after_edit(root, state, i, p, r, before):
         n = len(new_failures)
         if detail.startswith(('the changed code cannot be imported', 'the changed code imports')):
             # (h1, fastapi_15800: an edit that used os without importing it was undone as '2 existing tests failed')
+            how = (f'A name the new code uses must be defined or imported: add a missing import at {p["rel"]} top '
+                   f'level (its own edit, by line numbers), then send {p["handle"]} again.'
+                   if re.search(r'NameError|ImportError|ModuleNotFoundError|is not defined', detail) else
+                   f'Fix what the error names, then send {p["handle"]} again.')    # a SyntaxError is not an import
             return _failed(root, state, i, f'Undone: after the edit {p["rel"]} cannot be imported, so {p["handle"]} is '
-                           f'back as it was before the edit.\n{detail}\nA name the new code uses must be defined or '
-                           f'imported: add a missing import at {p["rel"]} top level (its own edit, by line numbers), '
-                           f'then send {p["handle"]} again.', 'BROKEN ' + ' '.join(new_failures[:3]))
+                           f'back as it was before the edit.\n{detail}\n{how}', 'BROKEN ' + ' '.join(new_failures[:3]))
         return _failed(root, state, i, f'Undone: {n} existing test{"s" if n > 1 else ""} that passed before the edit '
                        f'failed after it, so {p["handle"]} is back as it was before the edit.\n{detail}\n'
                        f'Send {p["handle"]} again with a change that keeps {"these tests" if n > 1 else "this test"} '
@@ -2377,6 +2384,9 @@ def _after_edit(root, state, i, p, r, before):
         # the place stays open with the diff: run a04 (requests_7328) saw its own wrong deletion in this diff and
         # sent the right fix, which a closed editor refused 5 times (F1: told where, it corrects well)
         state['current'], state['step'], state['editor_review'] = i, 'D3', True
+        ex = _example_view(root)
+        if ex:
+            head += '\n\n' + ex
         return (head + f'\n\nIf this is the whole change {p["handle"]} needs, reply with one sentence for the '
                 'coordinator, without a call. If it is wrong or incomplete, send the corrected edit of the code '
                 'below (the code as it is now).\n\n' + _window(root, state, i, show=(max(p['start'], r.start - 5),
@@ -2551,6 +2561,14 @@ def _uncovered(state, root):
     return out or list(state['requirements'])
 
 
+def _example_view(root):
+    try:
+        return _example.view(root)
+    except Exception as e:                      # never a traceback: the example is an aid
+        _state.record({'error': f'example {type(e).__name__}: {e}'})
+        return ''
+
+
 def _finish_view(root, state):
     """What the patch holds, read from git (not from the plan, which forgets edits after a way back), the places that
     were looked at and not changed, and per requirement the facts the code can show. No question is asked: a
@@ -2578,6 +2596,9 @@ def _finish_view(root, state):
         if facts:
             # (p2: 'no fact of the code to show for it here' was read as 'unverified: write a test')
             out.append('      ' + '; '.join(facts) + '.')
+    ex = _example_view(root) if rows else ''
+    if ex:
+        out.append(ex)
     if rows:
         # p1 (requests_7502): after 'nothing here can be checked automatically' the coordinator tried pytest, 'ls
         # tests' and a second specify_fix to write a test, instead of submitting a correct patch
@@ -2674,8 +2695,16 @@ def _progress(root, state):
         now = 'choosing the code to change'
     elif state['step'] == 'D4':
         now = 'finishing'
+    plan = ''
+    if ROLE in ('coordinator', 'specifier') and state['step'] in ('D3', 'D4') and state.get('plan'):
+        # P8: the plan and where each place stands, recited in every answer, so that a compacted history still knows
+        # it (s3, fastapi_14986: after a compaction the coordinator went back and a second specify_fix was told 'no
+        # places are chosen yet' while the patch held three edits)
+        word = {'done': 'edited', 'skipped': 'no change', 'todo': 'to edit'}
+        plan = ' The plan: ' + ', '.join(f'{_name_of(state, e["place"])} ({word.get(e["status"], e["status"])})'
+                                         for e in state['plan'][:10]) + '.'
     try:
-        return _status.progress_line(root, now, left)
+        return _status.progress_line(root, now, left) + plan
     except Exception as e:      # the recap must never cost the answer
         _state.record({'error': f'progress: {type(e).__name__}: {e}'})
         return ''
@@ -3011,14 +3040,30 @@ def _spec_pairs(items, known=()):
 MAX_SENTENCE = 1500
 
 
-def _new_names_note(state):
-    """The issue's new names and the form that adds them (h1, h2, s1 on fastapi_15800: no specifier knew one)."""
+def _new_names_note(root, state):
+    """The issue's new names, as filled place names ('FastAPI.frontend' for `app.frontend`), saved for the NEXT line
+    (P9, W4: s3 fastapi_15800, a form described in prose only was not used; a filled call form is copied)."""
     new = [n for r in state.get('requirements') or [] if r['type'] == 'new' for n in r.get('names') or []]
     if not new:
         return ''
-    return (f'The issue asks for new code ({", ".join(f"`{n}`" for n in new[:4])}). A new method is a place too: '
-            "send '<Class>.<new name>' with its sentence and it is added at the end of that class; a new function: "
-            "'<path>.py::<new name>'.\n")
+    index, forms = None, []
+    for n in new[:4]:
+        if '.' in n:
+            var, short = n.rsplit('.', 1)
+            index = index or _rank.Index(root)
+            owner = _rank.owner_class(index, var.split('.')[-1])
+            if owner:
+                forms.append(f'{owner[1]}.{short}')
+        else:
+            first = next((_place(state, e['place']) for e in state['plan']
+                          if _place(state, e['place']) and _place(state, e['place'])['name'] != MODULE), None)
+            if first:
+                forms.append(f'{first["rel"]}::{n}')
+    forms = [f for f in dict.fromkeys(forms) if _match(state['places'], f, fuzzy=False) is None]
+    state['new_forms'] = forms
+    named = ', '.join(f"'{f}'" for f in forms) if forms else "'<Class>.<new name>' or '<path>.py::<new name>'"
+    return (f'The issue asks for new code ({", ".join(f"`{n}`" for n in new[:4])}). A new method or function is a place '
+            f'too: send its name ({named}) with its sentence, and it is added at the end of that class or file.\n')
 
 
 def _new_definition_owner(root, name):
@@ -3064,6 +3109,11 @@ def _specifier(root, state, args):
                 + '\n'.join(done) + '\nReply with this sentence for the coordinator, without a call: "The '
                 'specification is complete and edited; call step.py with args [\'status\'] for the next call."')
     if state['step'] not in ('D3', 'D4') or not state.get('plan'):
+        if _status.summary(root):
+            # B12: 'no places are chosen' contradicted a patch with three edits (s3, fastapi_14986)
+            return ('The coordinator is choosing code again, so there is no plan to specify right now; the edits made '
+                    'so far stay in the patch (see the first line). Reply with this sentence for the coordinator, '
+                    'without a call: "Choose the places with step.py first (their names), then call specify_fix."')
         return ('No places are chosen yet, so there is nothing to specify. Reply with one sentence for the coordinator, '
                 'without a call, saying so.')
     items = [_args.clean(a) if len(a) < 200 else a.strip() for a in args if a and a.strip()]
@@ -3088,7 +3138,7 @@ def _specifier(root, state, args):
                 'each place write what must change there so that the issue is fixed: one concrete sentence (what to '
                 'add, remove or replace, and with what), or no change. Each place is then edited by its own editor, '
                 'which sees only that place and your sentence, so write each sentence so that it can be done from '
-                'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + _new_names_note(state) + form)
+                'that place alone.\n\n' + _spec_view(root, state) + '\n\n' + _new_names_note(root, state) + form)
     known = {q['handle'] for q in state['places']} | {q['name'] for q in state['places']} | \
         {q['name'].split('.')[-1] for q in state['places']}
     files = [x for x in items if re.fullmatch(r'\s*[\w./-]+\.py(:\d+(-\d+)?)?\s*', x)]
@@ -3419,6 +3469,9 @@ def _run_specifier(root, state, args):
     _state.record({'spec': [a[:200] for a in args][:12], 'answer': out[:300]})
     _state.save('journal', state)
     out = out.rstrip()
+    head = _progress(root, state)
+    if head and not out.startswith(head[:40]):
+        out = head + '\n\n' + out
     if len(out) > SPEC_CHARS + 3000:
         out = out[:SPEC_CHARS + 500] + '\n      ... (output cut) ...\n' + out[-2400:]
     print(out + '\n\n' + _journal.next_call(state, ROLE))

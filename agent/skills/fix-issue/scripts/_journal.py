@@ -42,8 +42,11 @@ def next_call(state, role='single'):
     if role == 'specifier':
         if state.get('spec_done') or step not in ('D3', 'D4'):
             return 'NEXT: no call: reply with one sentence for the coordinator.'
+        forms = state.get('new_forms') or []
+        extra = (f", '{forms[0]}', '<what the new code does>'" if forms else '')
         return ("NEXT: call run_skill_script with skill_name fix-issue, file_path spec.py and args ['<place name>', "
-                "'<what changes there, or no change>', ...] (one pair per place)")
+                f"'<what changes there, or no change>', ...{extra}] (one pair per place"
+                + (', and one per new method or function the issue asks for)' if forms else ')'))
     if role == 'coordinator' and step == 'D3' and not state.get('spec_done'):
         return ("NEXT: call the tool specify_fix with request 'the plan' (it reads the code of every place and writes "
                 "what changes at each).")
