@@ -53,6 +53,12 @@ def summary(root):
         for start, added, removed in hunks:
             at = min(max(1, start), len(lines)) if lines else 1
             o = owner[at] if at < len(owner) else None
+            by_name = {x.name: x for x in syms}
+            while o is not None and o.kind == 'def' and '.' in o.name and \
+                    getattr(by_name.get(o.name.rsplit('.', 1)[0]), 'kind', '') == 'def':
+                # a function nested in a function is named by the function that holds it (s2, fastapi_14448: the patch
+                # said 'Dependant.is_gen_callable._strip' for a change of is_gen_callable)
+                o = by_name[o.name.rsplit('.', 1)[0]]
             name = o.name if o is not None else 'top level'
             a, r = rows.get((rel, name), (0, 0))
             rows[(rel, name)] = (a + added, r + removed)

@@ -2898,8 +2898,18 @@ def _spec_view(root, state):
     # the callers of a renamed method are where the rename must go too
     order = [(planned[q['id']], q) for q in state['places'] if q['id'] in planned] + \
             [(None, q) for q in state['places'] if q['id'] not in planned]
+    shorts = {_place(state, x['place'])['name'].split('.')[-1] for x in state['plan']
+              if _place(state, x['place']) and _place(state, x['place'])['name'] not in (MODULE, '<exports>')}
     for e, p in order:
         tag = p['reason'] if e is not None else f'{p["reason"]}; not planned: give it a sentence if it must change'
+        if e is None and p['reason'].startswith('uses '):
+            code = ''.join(_repo.read_lines(root, p['rel'])[p['start'] - 1:p['end']])
+            both = sorted(n for n in shorts if re.search(r'\.' + re.escape(n) + r'\b', code))
+            if len(both) >= 2:
+                # s3 (fastapi_14448): the specifier saw _solve_generator, which tests is_gen_callable before
+                # is_async_gen_callable, made both true for one callable, and gave it no change
+                tag += (f'. It tests {" and ".join(both)}, which the plan changes: after the change, can more than one '
+                        'be true for the same object, and does its order of tests still pick the right branch?')
         head = f'== {p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}; {tag})'
         if e is not None and _specified(e):
             head += f'\nSpecified already ({e["status"]}): {e["intent"][:300]}'

@@ -1553,3 +1553,23 @@ Fixes:
 | W2 writing whole functions | closer | a new method or helper is sent whole, as a place of its own |
 | B8 following many rules or forms | farther (small) | one more name form (`Class.new`, `file.py::new`); stated in the view only when the issue asks for new names |
 | B7 the middle of a long context | farther (small) | up to 5 more places in the specifier's view; places left out of the plan show 30 lines at most |
+
+Round s2 (Sonnet, one call per turn, the build before these fixes): judged 6/10. requests_7328 is now resolved; in s1
+the parallel edits had broken it. The failures are fastapi_14448, fastapi_15800, fastapi_14583 and rich_3469.
+
+In s3 (fastapi_14448), the specifier saw `_solve_generator` but gave it "no change". It made `is_gen_callable` and
+`is_async_gen_callable` both true for an async wrapper around a sync generator, and `_solve_generator` tests the sync
+one first. A place left out of the plan that tests two or more of the planned names now carries one question: after
+the change, can more than one be true for the same object, and does its order of tests still pick the right branch?
+The patch summary also names a nested function by the function that holds it: s2 said
+`Dependant.is_gen_callable._strip`.
+
+The candidate list keeps at most 5 candidates per file (`PER_FILE`; the rest are counted under the file's last one).
+On bench_locate it is neutral: hit@10 is 90/128 with or without the cap, and a gold file is in the top 10 for 110/128
+(108 without). With the model's own terms from h1/h2/s1 (fastapi_14583), `annotation_is_pydantic_v1` rises from
+#78/#24/#36 to #20/#4/#12.
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 reasoning about code in front of it | closer | the question points at the interaction the reader's branch order has with the change |
+| B11 doubting tool output | closer | the patch summary names the function that was edited |
