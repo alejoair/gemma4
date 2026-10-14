@@ -88,7 +88,8 @@ Readings: (a) the automatic check said OK in 5 failed tasks, so the related test
 | S3 | 10-07 04:46 | 56900403 | 4-stage sequential: grep locator → graph → fixer (edit + bash) → submitter, out 8192 | 4 min, 45 calls | **0.05** | Shown as ERROR at first; Kaggle lists it as COMPLETE 0.05 on 10-09 |
 | S4 | 10-08 13:03 | 56954989 | **V3** exactly as evaluated (`kout_single3/eval_single`), validated with `validate_submission.py` | 5 min, 45 calls | **0.13** (public, scored 10-10 ~08:50 UTC) | The best so far (S1 sample agent 0.12); local eval of the same build 3/10 |
 | S5 | 10-10 08:57 | 57037411 | **v1 step procedure** (commit bea4f0f): one agent, `swe/step.py` journal (S0 candidates → choose → plan → edit + tests → submit), thinking 512, out 4096. Never run on Kaggle with the 31B (GPU weekly quota exhausted); local 12B: rich_3006 resolved, requests_7328 not | 5 min, 30 calls, 40 turns | **0.03** (checked 10-13) | Refused on 10-09 while S4 was pending (one pending submission per team); submitted by the hourly routine once S4 was scored |
-| S6 | 10-13 21:17 | (see Kaggle) | **microtasks** (commit da566ff, agent_tool variant): coordinator + `specify_fix` + `edit_place`, step.py journal, all 10-13 fixes; V21 on Kaggle judged 4/6 (1/6 by the harness's whole-file verdict); replays of V20/V21 traces clean | 60 min/task, 600 s per command (also the hidden-test timeout), 200 calls, 300 turns | pending | Submitted at the user's request ("si todo está correcto haz el submit"; the time limit is not a concern for them). Acceptance criteria not met: the local model did not run 10 tasks on this build, and the Kaggle eval had 6 tasks, not 10. Risk: 12 h for all tasks; at V21's mean (~20 min/task) about 120 tasks in sequence would exceed it |
+| S6 | 10-13 21:17 | 57156422 | **microtasks** (commit da566ff, agent_tool variant): coordinator + `specify_fix` + `edit_place`, step.py journal, all 10-13 fixes; V21 on Kaggle judged 4/6 (1/6 by the harness's whole-file verdict); replays of V20/V21 traces clean | 60 min/task, 600 s per command (also the hidden-test timeout), 200 calls, 300 turns | pending | Submitted at the user's request ("si todo está correcto haz el submit"; the time limit is not a concern for them). Acceptance criteria not met: the local model did not run 10 tasks on this build, and the Kaggle eval had 6 tasks, not 10. Risk: 12 h for all tasks; at V21's mean (~20 min/task) about 120 tasks in sequence would exceed it |
+| S7 | 10-14 (not accepted yet) | – | commit d50331a (agent_tool variant). It is S6 plus: one step.py call at a time; readers of changed properties outside their class; new methods and functions as places; no silent loss in the specification; ranking fixes (v1 tokens, guessed paths, URLs, 5 candidates per file). Proxy rounds s2/s3 judged 6/10; replays of the s3 traces are clean | as S6 | – | Asked for by the user after several rounds. Kaggle refused it on 10-14 09:25: one pending submission per team, and S6 is still scoring. It is submitted when S6 finishes (check-in scheduled). Acceptance criteria not met: the local model was unreachable (tunnel error 1033), and there was no Kaggle eval of this build |
 
 ## Earlier eval-quick runs (Q)
 
@@ -96,3 +97,16 @@ Readings: (a) the automatic check said OK in 5 failed tasks, so the related test
 |---|---|---|---|
 | Q6–Q9 | 10-07 08:04–12:21 | 5 | 1/5, 0/5, 1/5, 1/5 (fastapi_9555) |
 | Q10–Q16 | 10-07 12:54–20:56 | 12 | 1, 2, 2, 2, 2, 2, 1 of 12 (requests_6644, rich_3006) |
+
+## Proxy rounds (a stronger model through tools/anthropic_proxy.py; they test the system, they are not Kaggle evidence)
+
+The same 10 dev tasks, judged by tools/judge.py. Never used to train Gemma.
+
+| Round | Date (UTC) | Model | Build | Judged | Notes |
+|---|---|---|---|---|---|
+| h1 | 10-14 | Haiku | rewritten test runner | 4/10 | httpx_3672 resolved for the first time; parallel tool calls in every task |
+| h2 | 10-14 | Haiku | h1 fixes | 5/10 | parallel tool calls in every task |
+| s1 | 10-14 | Sonnet | as h2 | 5/10 | requests_7328: an edit the tests undid stayed in the patch (parallel calls, lock fallback) |
+| s2 | 10-14 07:20 | Sonnet | 16c216c (serial calls) | 6/10 | requests_7328 resolved |
+| s3 | 10-14 08:09 | Sonnet | 364e443 | 6/10 | the 4 failures are statement-limited (15800, 14583, 3469) or the specifier's reading (14448) |
+| s4 | 10-14 09:00 | Sonnet | d50331a | 0/1 | fastapi_14448 alone: `_solve_generator` shown first with the branch-order question, still no change |
