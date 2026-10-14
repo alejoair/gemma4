@@ -1469,3 +1469,14 @@ feasibility, fingerprinted cache, failed applies) is described in CLAUDE.md ("Ho
 | B11 doubting tool output | closer | the verdicts the model reads are now right on known answers; false BROKEN and false "Kept and checked" removed |
 | W5 familiar formats | neutral | the answers keep pytest's marked line and E lines |
 | B5 repeating a failed call | closer | correct edits are no longer undone, so the model is not pushed to resend them |
+
+### Proxy runs with a stronger model, round h1 (2026-10-14, 10 dev tasks, the rewritten test runner)
+
+Judged 4/10 (harness 3/10, official_feasible 8/10): rich_3521, rich_3006, fastapi_14851 and **httpx_3672 (first time
+resolved by any run; 31 min, the port-clash fix and the pending rename kept its edits)**. Not resolved: fastapi_14986
+(escaped the HTML with html.escape where the tests want JSON escaping), requests_7328 (a wrong specification that the
+existing tests rightly rejected), fastapi_14448 (the same 4 wrapped-async tests), fastapi_15800 (a large feature: 60
+new tests), fastapi_14583 and rich_3469 (wrong place: vague statements). No internal error, no repeated call; the import
+check caught an edit that used `os` without importing it in fastapi_15800, but its answer said "2 existing tests
+failed" (fixed: it now says the module does not import and how to add the import). The coordinator's attempts to read
+code (9 in httpx_3672) are refused at once. The failures left are of the model's reasoning, not of the tests.
