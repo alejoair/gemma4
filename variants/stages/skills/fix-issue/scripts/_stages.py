@@ -582,9 +582,23 @@ def locate(root, st, args):
             return f'Nothing in the repository holds {others[0][:80]!r}. Choose from the list.\n\n{nxt}'
     if not found:
         return 'No place was read. Send 1 to 3 names from the list.\n\n' + nxt
+    lost = []
+    if others and found and len(found) < 3:
+        # local run h3 (fastapi_9555): ['solve_dependencies', 'Dependant.is_coroutine_callable'] kept only the first,
+        # silently, because the second was off this requirement's list (chosen for R1); a name off the list is
+        # looked up in the repository like a name sent alone
+        for o in others:
+            res = [c for c in step._resolve(root, [o]) if not _repo.is_doc_path(c['rel'])
+                   and not any(_key(c) == _key(f) for f in found)]
+            if res:
+                found.append(res[0])
+            else:
+                lost.append(o)
     st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end']}
                           for c in found[:3]]
-    return f'{rid} is decided at: ' + ', '.join(c.get('handle') or c['name'] for c in found[:3]) + '.\n\n' + DONE
+    note = (' Not found in the repository, so not chosen: ' + ', '.join(lost) + '.') if lost else ''
+    return (f'{rid} is decided at: ' + ', '.join(c.get('handle') or c['name'] for c in found[:3]) + '.' + note
+            + '\n\n' + DONE)
 
 
 def _fallback_locate(root, st, r):
