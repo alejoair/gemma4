@@ -124,3 +124,18 @@ guidance, **O** our own traces, **A** anecdote, **P** practitioner report.
 | F7 | no | The same repeat answer every time; only D1 and D2 move on at the third repeat | A different answer and NEXT each time; move on at the third repeat in every step |
 | F8 | no | The prompt says nothing about "skill not found" or "argument required" errors | One sentence: such an error means the call's names were written with extra marks; the exact call to make |
 | F9 | partly | Verdicts mix facts and advice | Facts first, one line of instruction |
+
+## Check of the open problems at commit d50331a (2026-10-14, after the proxy rounds h1-s4)
+
+| Problem | Items it falls short on | Why | Direction |
+|---|---|---|---|
+| Edit checks take minutes (requests 230 s per edit, httpx 20-33 min per task) | B10 | The time goes to the script, not the model; under the 6-minute average, the budget stop comes with no warning the model can act on | Not a model weakness. Make the checks cheaper (callmap once, fewer groups) and show the time used (B10) |
+| The new behaviour is not checked ("Kept, not checked") | B11, F3, F5; W5 and F2 unused | The model reads "kept" as done; no failing test shows what is still wrong, so pytest output and tracebacks cannot be used to repair it | A reproduction test of the statement's example, run before and after (F2, W5) |
+| The specifier misses interactions (`_solve_generator` given "no change") | W3 only partly met; B7, P7, B13 | The code is there, but in the middle of a view of about 27,000 characters, among 8 places and functions of 138 lines | A shorter view: the focus lines of the readers, not whole functions; the question at the end (P6) |
+| Localization with vague statements (fastapi_14583, rich_3469) | W1, W6 unused; B13 | Choosing works only when the right name is on the list; a vague statement gives no names to rank by | Not the model's: no ranking finds names the statement lacks. Show code reached through the call graph from the candidates (two levels) |
+| Large features (fastapi_15800) | W2 partly; B8, W3 | Each editor sees one place, but new code spans files and modules | Not fixable from the statement here; new code as whole files and methods (done 10-14) |
+| Forms the model does not use (`Class.new`) | B8, P9, W4 | The form is only described in prose, with no call example and no NEXT line proposing it, and it is one more form among many | A filled example in the NEXT line when the issue asks for new names (P9, W4) |
+| Test selection misses the relevant file | B11 | "Kept, not checked" or "OK" comes from tests unrelated to the change | Rank first the test files that name the changed symbol |
+| The coordinator loses its state after compaction | B7, P8, F5, B12 | After compaction a second `specify_fix` was answered "no places chosen" while edits existed: the answer contradicts the patch line | Recite the plan and progress in every answer (P8); never answer "nothing chosen" while the patch is not empty (B12) |
+| Not validated on Gemma | (method) | Proxy rounds test the system, not the 31B (Claude made parallel calls; the 31B does not) | Run the local model and a Kaggle eval before trusting a change |
+| `src/` packages shadowed by wheels in the public image | (environment) | Not about the model | Unknown for the private scorer |
