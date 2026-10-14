@@ -207,3 +207,49 @@ The model is never asked to copy the statement (B2).
 - ADK: every agent is an `agent_tool` sub-agent of the coordinator (fresh context per call, as today). That is 7
   sub-agents: requirements, reproduce, locate, scope, specify, edit, review. One `LlmAgent` each, plus the coordinator:
   8 agents, the most LoRA adapters a submission may carry.
+
+## Implementation (2026-10-14)
+
+`variants/stages/` (`tools/build.py <dir> --variant stages`):
+- `skills/fix-issue/scripts/_stages.py` holds the state machine (one JSON document, `_state` 'stages') and one
+  handler per stage. It reuses step.py's ranking, search, views and whole-definition edits, and `_tests.py`'s checks.
+- One entry script per agent: `route.py`, `req.py`, `repro.py`, `locate.py`, `scope.py`, `specify.py`, `edit.py`,
+  `review.py`.
+- `agent.yaml` declares the router and 7 `agent_tool` sub-agents (`sub_agents/*.yaml`, thinking 1024 or 2048, the
+  vendor's sampling).
+- `eval_config.yaml` raises the turn and call budgets (many short calls).
+
+Every agent's first call is `['open']`. The answer gives its view, and the second call is its one decision. The
+router's only call is `route.py ['next']`, answered with the tool and its request.
+
+What the first runs (Haiku through the proxy) changed:
+- **st1** (rich_3006, rich_3052): both resolved.
+  - An editor's "missing" answer named two methods in one string. Now several names are split.
+  - The missing code goes into the plan before the place that needs it. rich_3052's `check_choice` read
+    `self.case_sensitive` before `__init__` set it.
+  - A name defined several times in a row (`typing.overload` variants) is one place spanning them all.
+  - A reproduction test that never finishes (a prompt reading its stream forever) is refused.
+- **st2** (11 tasks): resolved fastapi_14851 and rich_3894. With st1 that makes 4 of 13 (2 of the usual 10), below
+  the previous design with the same model (4-5 of 10). Causes, all generic, and their fixes:
+  - **A long definition could not be edited.** fastapi_14873: `APIRouter.__init__` has 217 lines of parameters
+    hidden in the window, and the editor answered "missing" 16 times. New forms, without line numbers:
+    - `def name(...):` with a new body keeps the decorators, parameters and docstring;
+    - `['replace', '<old lines>', '<new lines>']` finds the old lines by their text in the place.
+  - **Edits undone by existing tests never reached the specifier.** fastapi_14986 and requests_7328 had sentences
+    the existing tests refuted; the specifier never saw those tests. A place undone twice now goes back to the
+    specifier once, with the failing tests.
+  - **The review overruled a failing test.** fastapi_14448 was reviewed "done" while its reproduction test still
+    failed. Now a "done" is refused once while the requirement's test fails.
+  - **The 300-turn budget stopped httpx_3672** with time left. The variant's budget is 1200 turns and 800 calls.
+  - **Invented requirements.** rich_3521's statement is only "Segment.split_cells fix". The requirements agent
+    invented a case of combining marks; the reproduction test and the fix chased it. fastapi_14986's "do not
+    store root_path in servers" became "do not include it". The requirements agent now writes only what the issue
+    states, and repeats the issue's words when it gives no concrete situation. A reproduction test is written only
+    for a requirement whose issue sentence is concrete (code, a value, an example).
+
+| Item | Effect | Why |
+|---|---|---|
+| B1 line numbers | closer | long definitions are edited by elided signature or by old text, never by numbers |
+| F2 repairing from failing tests | closer | the tests that undid a place reach its specifier |
+| B11, F3 doubting a verdict | closer | a failing reproduction test outranks a "done" review |
+| B8 many forms | farther (small) | the editor has two more forms; they are offered in the window only when part of the place is hidden |
