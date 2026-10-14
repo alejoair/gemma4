@@ -138,7 +138,9 @@ def _next_tool(root, st):
         st['reqs'] = [{'id': 'R1', 'quote': '', 'what': 'Fix the issue as the statement describes.',
                        'names': list(st.get('names') or []), 'new': []}]
         _save_statement(st)
-    # 2 reproduce (optional)
+    # 2 reproduce (optional): only for a requirement whose issue sentence is concrete
+    if not st['repro_done'] and not any(r.get('concrete') for r in st['reqs']):
+        st['repro_done'] = True
     if not st['repro_done']:
         if _ask(st, 'reproduce'):
             st['current'] = ('reproduce', _repro_req(root, st)['id'])
@@ -279,7 +281,12 @@ def requirements(root, st, args):
             continue
         names = [n for n in _statement.code_names(what + ' ' + quote)]
         new = [n for n in names if n.split('.')[-1] not in index.names]
-        reqs.append({'id': f'R{len(reqs) + 1}', 'quote': quote, 'what': what[:600], 'names': names, 'new': new})
+        # concrete: the issue's own sentence holds code, a value or an example (backticks, quotes, digits, calls);
+        # only such a requirement gets a reproduction test (s-st2, rich_3521: 'Segment.split_cells fix' became an
+        # invented case of combining marks, and the test and the fix chased it)
+        concrete = bool(re.search(r'`[^`]+`|"[^"]+"|\'[^\']+\'|\d|\w\(', quote))
+        reqs.append({'id': f'R{len(reqs) + 1}', 'quote': quote, 'what': what[:600], 'names': names, 'new': new,
+                     'concrete': concrete})
     if not reqs:
         return 'No requirement was read. ' + form
     st['reqs'] = reqs
@@ -304,7 +311,7 @@ def _save_statement(st):
 
 def _repro_req(root, st):
     index = _rank.Index(root)
-    for r in st['reqs']:
+    for r in [r for r in st['reqs'] if r.get('concrete')] + st['reqs']:
         if any(n.split('.')[-1] in index.names for n in r['names']):
             return r
     return st['reqs'][0]

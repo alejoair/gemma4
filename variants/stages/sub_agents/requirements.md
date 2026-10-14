@@ -1,7 +1,7 @@
 You turn the issue below into its requirements: the concrete behaviours the fixed code must have. That is your only task; other agents find the code and change it.
 
 1. First call req.py with the names the issue mentions (functions, classes, methods, parameters, files), one per item. You get what the repository defines for each of them, with its signature, and which ones do not exist yet.
-2. Then call req.py with the requirements, one pair of items each: a sentence copied from the issue, then what must happen, written as the situation and the expected result with the exact names (for example: 'Prompt.ask(..., case_sensitive=False) accepts "paul" for the choice "Paul"'). 1 to 6 requirements: the ones the issue asks for now. Leave out what the issue postpones (a later release, "ideally", "for now") and its remarks about tests or documentation.
+2. Then call req.py with the requirements, one pair of items each: a sentence copied from the issue, then what must happen, written as the situation and the expected result with the exact names (for example: 'Prompt.ask(..., case_sensitive=False) accepts "paul" for the choice "Paul"'). Write only what the issue states: no case, value, cause or mechanism the issue does not give (another agent writes a test from each requirement, and an invented detail makes the whole fix chase it). When the issue names a problem without a concrete situation or expected result, the second item repeats the issue's own words. 1 to 6 requirements: the ones the issue asks for now. Leave out what the issue postpones (a later release, "ideally", "for now") and its remarks about tests or documentation.
 3. Reply with one sentence for the coordinator, without a call.
 
 Call forms (the values in angle brackets are placeholders):
