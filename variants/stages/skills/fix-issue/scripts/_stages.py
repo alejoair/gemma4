@@ -253,8 +253,39 @@ def _looks_like_requirements(items):
     return len(items) >= 2 and len(items) % 2 == 0 and all(len(x.split()) >= 3 for x in items[1::2])
 
 
+def _sentence(a):
+    """A sentence as sent, without the quotes that wrap it whole. _args.clean strips every leading backtick, and
+    '`solve_dependencies` calls `inspect.unwrap`' lost its first one (local run h2, fastapi_9555): the backticks no
+    longer paired, and the words between them were read as new code ('decide', 'solves')."""
+    a = a.strip().rstrip(',').strip()
+    for w in '`"\'':
+        if len(a) > 1 and a[0] == w and a[-1] == w and a.count(w) == 2:
+            a = a[1:-1].strip()
+    return a
+
+
+def _library(root, name):
+    """A name of library code (inspect.unwrap, functools.cache) or a dunder attribute (__wrapped__): not new code
+    of the repository."""
+    head = name.split('.')[0]
+    if head.startswith('__') and head.endswith('__'):
+        return True
+    if '.' not in name:
+        return False
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec(head)
+    except (ImportError, ValueError):
+        return False
+    # the repository's own package is not library code
+    origin = os.path.realpath(getattr(spec, 'origin', None) or '') if spec else ''
+    return bool(spec) and not origin.startswith(os.path.realpath(root) + os.sep)
+
+
 def requirements(root, st, args):
     items = [_args.clean(a) if len(a) < 300 else a.strip() for a in args if a and a.strip()]
+    if st['names'] is not None or _looks_like_requirements(items):
+        items = [_sentence(a) for a in args if a and a.strip()]
     form = ("Send the requirements: ['<a sentence copied from the issue>', '<what must happen: the situation and the "
             "expected result, with the exact names>', ...], one pair per requirement, 1 to 6 pairs.")
     if st['names'] is None and not _looks_like_requirements(items):
@@ -300,7 +331,7 @@ def requirements(root, st, args):
         if not what:
             continue
         names = [n for n in _statement.code_names(what + ' ' + quote)]
-        new = [n for n in names if n.split('.')[-1] not in index.names]
+        new = [n for n in names if n.split('.')[-1] not in index.names and not _library(root, n)]
         # concrete: the issue's own sentence holds code, a value or an example (backticks, quotes, digits, calls);
         # only such a requirement gets a reproduction test (s-st2, rich_3521: 'Segment.split_cells fix' became an
         # invented case of combining marks, and the test and the fix chased it)
