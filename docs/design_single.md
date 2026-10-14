@@ -1438,3 +1438,34 @@ the processes failed each other with `OSError: [Errno 98] Address already in use
 and a local run with another model through the proxy). Now a run whose output shows a port clash runs again one file
 after the other (each file with its own 30 s deadline) and the task keeps running serially. Checked on httpx_3672's
 snapshot: test_client, test_pool, test_network went from clashing to 20 passed, 0 failed (about 55 s a check).
+
+### The tests audits and the rewrite of the skill's test runner (2026-10-14)
+
+Four agents audited the tests (the user's request: the system is evaluated by tests, so the tests must be right): the
+skill's in-edit runner (`_tests.py`), the evaluation judge, a check with known answers (each task's reference patch and
+an empty patch), and the 129 tasks' hidden tests. Findings on the runner that gave wrong verdicts, all reproduced:
+- an edit that broke importing the package was "Kept, not checked" (conftest failed before any test ran);
+- a typo'd import was stubbed away and passed; a stub written once shadowed every later run, and stubs replaced
+  installed packages (a stub for email_validator broke pydantic and every fastapi test file);
+- the original code ran only the first 10 failing ids, in one batch, alone: failures beyond 10, order- or
+  load-dependent tests, a base run cut by its deadline and one id with a space (`test_p[a b]`, cut at the space,
+  aborting the batch) all gave false BROKEN; a prefix match hid a test file that the edit made uncollectable;
+- the lexical selection found no test for fastapi_14448's places, which 115-598 tests run;
+- coverage counted lines run by tests that then failed; files written by tests entered the patch;
+- one edit of a rename that spans files (httpx_3672) was BROKEN in every order; parallel test files clashed on a port.
+The runner now reads per-test outcomes from a pytest plugin (streamed, ids relative to the working directory),
+runs the original code on the same groups (cached per groups and stubs), finds stand-ins on the original code only and
+only for modules the tests import, checks that the changed modules import, confirms a new failure alone and on the code
+just before the edit, selects tests from a once-per-task call map (which tests call which function), keeps an edit whose
+failures are AttributeError/ImportError/NameError on a name it renames while other planned places are still to edit,
+runs clashing test files one after the other, removes files tests write, strips proxy variables and limits memory.
+Check with the reference patches (12 tasks): no reference edit is BROKEN any more (before: fastapi_15800 in forward
+order, false timeouts in requests, the httpx rename); fastapi_14448's models.py edit is now checked by 91 tests that run
+its lines (before: no test selected). The judge side (JUnit outcomes, required tests, doubled baselines, official
+feasibility, fingerprinted cache, failed applies) is described in CLAUDE.md ("How a patch is judged").
+
+| Item | Effect | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the verdicts the model reads are now right on known answers; false BROKEN and false "Kept and checked" removed |
+| W5 familiar formats | neutral | the answers keep pytest's marked line and E lines |
+| B5 repeating a failed call | closer | correct edits are no longer undone, so the model is not pushed to resend them |
