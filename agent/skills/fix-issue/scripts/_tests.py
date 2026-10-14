@@ -197,8 +197,18 @@ _want = {os.path.realpath(k): set(v) for k, v in json.loads(os.environ.get("SWE_
 _root = os.path.realpath(os.environ.get("SWE_CALLMAP_ROOT", "")) if os.environ.get("SWE_CALLMAP_ROOT") else ""
 _lines, _calls, _real = set(), set(), {}
 
+_prefix = [""]
+
+def pytest_configure(config):
+    # node ids are relative to pytest's rootdir (rich's is tests/): written relative to the working directory, so
+    # that they can be passed back to pytest from there
+    rel = os.path.relpath(str(config.rootpath), os.getcwd())
+    _prefix[0] = "" if rel == "." else rel.replace(os.sep, "/") + "/"
+
 def _w(rec):
     if _fh is not None:
+        if "id" in rec and _prefix[0] and not rec["id"].startswith("<"):
+            rec["id"] = _prefix[0] + rec["id"]
         _fh.write(json.dumps(rec) + "\n")
 
 def _real_of(code):
