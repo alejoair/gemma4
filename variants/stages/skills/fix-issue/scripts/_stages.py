@@ -1535,15 +1535,21 @@ def _opens(st, args):
     return first in ('open', 'start') or (target and first == target)
 
 
-def _chain(root, st, out):
+def _chain(root, st, out, stage):
     """An agent's finished part ends with the coordinator's next call, computed now (gated run gh4: 78 model calls for
     5 places, a route.py call and the agent call for every agent step): the agent returns that line and the
-    coordinator makes the call, without asking route.py."""
+    coordinator makes the call, without asking route.py. The line first says what the finished stage produced: gm8
+    (Gemma) asked route.py instead, because "I don't know what R1 is, I didn't see the requirements"."""
     nxt = route(root, st, ['next']).strip().split('\n')[-1]
     if not nxt.startswith('NEXT: call the tool'):
         return out
-    line = nxt[len('NEXT: '):].split('; when it replies')[0]
-    st['chained'] = line
+    call = nxt[len('NEXT: '):].split('. If it replies')[0].split('; when it replies')[0].rstrip('.')
+    st['chained'] = call
+    if stage == 'requirements':
+        done = f"{len(st['reqs'])} requirements saved ({', '.join(r['id'] for r in st['reqs'])})"
+    else:
+        done = next((l.strip() for l in out.split('\n') if l.strip()), '').rstrip(':.')[:160]
+    line = f'{stage} is done: {done}. Next: {call}.'
     # rich_3521 (gated run gk2): locate and review took the line for an order to themselves ("that isn't part of my
     # task, so I ignored it"); it is said to be the coordinator's next call, for the agent to pass on
     return out[:-len(DONE)] + ('Your part is done. The coordinator (the agent that called you) makes its next call from '
@@ -1577,7 +1583,7 @@ def main(stage, argv):
             st['chained'] = None
             out = HANDLERS[stage](root, st, args)
             if stage != 'route' and out.endswith(DONE):
-                out = _chain(root, st, out)
+                out = _chain(root, st, out, stage)
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{stage} {type(e).__name__}: {e}'})
         import traceback
