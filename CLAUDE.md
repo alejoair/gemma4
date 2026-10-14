@@ -228,7 +228,7 @@ rebuilt in C:\llm-lab-c with the 26B GGUF. A Claude Code session on the user's W
 virtual con CLI", via Remote Control) runs the local infrastructure:
 - **From 2026-10-14 (the user's decision) the local server serves the 31B as `gemma-31b`**, with a 17,664-token
   context and a q8_0 KV cache (not Kaggle's 32,768). Options: `llama-server -m gemma-4-31B_q4_0-it.gguf -ngl 99
-  --parallel 1 -c 17664 --alias gemma-31b --jinja --reasoning-budget 1024 --temp 1.0 --top-k 64 --top-p 0.95 -fa on
+  --parallel 1 -c 17664 --alias gemma-31b --jinja --reasoning-budget 512 --temp 1.0 --top-k 64 --top-p 0.95 -fa on
   -ctk q8_0 -ctv q8_0 --spec-type draft-mtp,ngram-mod --spec-draft-model mtp-gemma-4-31B-it-Q4_0.gguf
   --spec-draft-n-max 3`.
   Measured by the peer:
@@ -240,8 +240,8 @@ virtual con CLI", via Remote Control) runs the local infrastructure:
   - 19.8 of 20.5 GB of VRAM; one request at a time.
 
   Send `--model gemma-31b`: llama-server does not
-  check the field, so a run that sends `gemma-26b` would get the 31B silently. The reasoning budget stays global at
-  1024: Kaggle's coordinator uses 512, and the stages build's sub-agents ask for 1024-2048, which the server ignores.
+  check the field, so a run that sends `gemma-26b` would get the 31B silently. The reasoning budget is global, 512 since
+  10-14 (Kaggle's coordinator's); the stages build's sub-agents ask for 1024-2048, which the server ignores.
 - `https://llm.rayflow.dev`: llama.cpp `llama-server`. **From 2026-10-11 to 10-14 the model was `gemma-26b`** (Gemma 4 26B A4B
   QAT Q4_0, MoE with 3.8B active parameters; the 12B, `gemma-12b`, until then). llama-server does not check the
   `model` field: send `gemma-26b` so results are not mixed up. Options: `-c 32768 -ngl 99 --parallel 1 --jinja
