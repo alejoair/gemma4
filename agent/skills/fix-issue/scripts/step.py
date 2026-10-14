@@ -1376,7 +1376,13 @@ def d1(root, state, args):
             places.append({'rel': c['rel'], 'name': MODULE, 'start': c['start'], 'end': c['end'], 'reason': 'chosen'})
     for p in _impact.related(table, syms_chosen):
         places.append(dict(p._asdict()))
-    places = places[:MAX_PLACES]
+    # kept by kind when there are too many: the chosen code, the places planned with it, then the readers outside the
+    # class, then the rest (s4, fastapi_14448: three chosen properties filled the 8 places with their callers and
+    # copies, and _solve_generator, the reader whose branch order the fix must swap, was cut)
+    rank = lambda p: (0 if p['reason'] == 'chosen' else
+                      1 if p['reason'].startswith(('async/sync twin', 'same pattern', 'reads ', 'same definition')) else
+                      2 if p['reason'].startswith('uses ') else 3)
+    places = sorted(places, key=rank)[:MAX_PLACES]
     for i, p in enumerate(places, 1):
         p['id'] = f'P{i}'
     _set_handles(places)

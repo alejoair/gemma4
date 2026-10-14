@@ -128,6 +128,7 @@ def related(table, chosen):
 
     for rel, name in chosen:
         put(rel, table.get(rel, name), 'chosen')
+    outside = {}     # (rel, reader) -> [chosen properties it reads, first line, first property]
     for rel, name in chosen:
         sym = table.get(rel, name)
         if sym is None:
@@ -164,18 +165,6 @@ def related(table, chosen):
             # swaps two branches of _solve_generator, which reads two of the changed properties, and no run planned or
             # even showed it (the analysis of s1: with that swap added, its patch passes). Shown, not planned; the code
             # that reads more of the chosen properties first. Common attribute names (read in many places) are skipped.
-            uses = [u for u in table.uses.get(short, []) if (u[0], u[1]) != (rel, name)
-                    and not _repo.is_doc_path(u[0]) and not u[1].startswith(cls + '.')]
-            if 0 < len(uses) <= MAX_USES:
-                props = {n.split('.')[-1] for r, n in chosen if r == rel and n.startswith(cls + '.')}
-                both = {(r, o): sum(1 for p in props for u in table.uses.get(p, []) if (u[0], u[1]) == (r, o))
-                        for r, o, _ in uses}
-                first = {}
-                for r, o, line in uses:
-                    first.setdefault((r, o), line)
-                order = sorted(first, key=lambda k: (-both[k], k[0] != rel, k[0], first[k]))
-                for r, o in order[:MAX_CALLERS]:
-                    put(r, table.get(r, o), f'uses {short} (line {first[(r, o)]})')
         plain = [(r, s) for r, s in same if not short.startswith('__')]
         if len(plain) <= MAX_SAME_NAME:
             for r, s in plain:
@@ -197,6 +186,27 @@ def related(table, chosen):
             if (init, '<exports>') not in seen:
                 seen.add((init, '<exports>'))
                 out.append(Place(init, '<exports>', 0, 0, f'exports {short}'))
+    for p in list(out):
+        sym = table.get(p.rel, p.name)
+        if p.reason == 'chosen' or p.reason.startswith(('same pattern', 'reads ', 'async/sync twin')):
+            if sym is None or '.' not in p.name or not _is_property(sym):
+                continue
+            cls, short = p.name.rsplit('.', 1)
+            found = table.uses.get(short, [])
+            for r, o, line in found if len(found) <= MAX_USES else []:
+                if not _repo.is_doc_path(r) and not o.startswith(cls + '.') and (r, o) not in seen:
+                    u = outside.setdefault((r, o), [set(), line, short])
+                    u[0].add(short)
+
+    def density(k):
+        # the planned properties it reads per line: a short reader is mostly about them (fastapi_14448: the 9-line
+        # _solve_generator before the 138-line solve_dependencies)
+        sym = table.get(*k)
+        return len(outside[k][0]) / (1 + (sym.end - sym.start + 1) / 10) if sym is not None else 0
+
+    order = sorted(outside, key=lambda k: (-density(k), k[0] != chosen[0][0], k[0], outside[k][1]))
+    for r, o in order[:MAX_CALLERS]:
+        put(r, table.get(r, o), f'uses {outside[(r, o)][2]} (line {outside[(r, o)][1]})')
     return out
 
 

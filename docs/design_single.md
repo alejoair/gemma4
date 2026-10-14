@@ -1573,3 +1573,20 @@ On bench_locate it is neutral: hit@10 is 90/128 with or without the cap, and a g
 |---|---|---|
 | W3 reasoning about code in front of it | closer | the question points at the interaction the reader's branch order has with the change |
 | B11 doubting tool output | closer | the patch summary names the function that was edited |
+
+Round s3 (Sonnet, every fix above except the branch-order question): judged 6/10, the same tasks as s2. Per task:
+- **fastapi_15800**: the specifier added `APIRouter.frontend` and `FastAPI.frontend` as whole new methods, but placed
+  them after `include_router` rather than with the new form. The tests need behaviour the statement never names.
+- **fastapi_14583**: the warning went into `create_model_field`, one call from the reference sites. Its text cannot
+  match what the tests expect.
+- **fastapi_14448**: `_solve_generator` was in the view, and the specifier gave it "no change".
+
+s4 (fastapi_14448 alone, two runs):
+- Run 1: `_solve_generator` was cut by the 8-place limit. Three chosen properties had filled it with their copies and
+  callers. Fixes:
+  - Places are now kept by kind: chosen, then planned with them, then readers outside the class, then the rest.
+  - The readers outside the class are gathered across every planned property. They are ordered by how many of those
+    properties they read per line, so the 9-line `_solve_generator` comes before the 138-line `solve_dependencies`.
+- Run 2: `_solve_generator` came first among the readers, with the branch-order question. The specifier still gave it
+  no change. Its sentences also leave 3 of the 4 failing tests failing: callable instances whose `__call__` is wrapped,
+  as in h1 and h2. What is left there is the model's reading of the code it was shown.
