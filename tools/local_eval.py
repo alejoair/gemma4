@@ -31,6 +31,8 @@ def main() -> None:
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--model', default='gemma-26b', help='the model name the gateway serves')
     ap.add_argument('--api-base', default='https://llm.rayflow.dev/v1')
+    ap.add_argument('--max-minutes', type=float, help='per-task budget instead of eval_config.yaml (step-by-step runs)')
+    ap.add_argument('--llm-timeout', type=float, help='seconds a model call may take (a step held by step_gate.py)')
     args = ap.parse_args()
 
     os.environ.setdefault('LITELLM_LOCAL_MODEL_COST_MAP', 'True')
@@ -75,7 +77,8 @@ def main() -> None:
 
     models = ModelRegistry()
     for alias in (DECLARED, args.model):
-        models.register(alias, LiteLlm(model=f'openai/{args.model}', api_base=args.api_base, api_key='EMPTY'))
+        models.register(alias, LiteLlm(model=f'openai/{args.model}', api_base=args.api_base, api_key='EMPTY',
+                                       **({'timeout': args.llm_timeout} if args.llm_timeout else {})))
 
     cfg_y = yaml.safe_load((agent_dir / 'eval_config.yaml').read_text(encoding='utf-8'))
     ev = cfg_y.get('evaluation', cfg_y)
@@ -88,7 +91,7 @@ def main() -> None:
     config = EvalConfig(
         tasks_path=tasks_path, snapshots_dir=args.data / 'snapshots', results_dir=results_dir,
         submission_dir=agent_dir, models=models, sandbox='subprocess',
-        timeout_seconds=int(ev.get('timeout_seconds', 300)), max_time_minutes=float(ev.get('max_time_minutes', 60.0)),
+        timeout_seconds=int(ev.get('timeout_seconds', 300)), max_time_minutes=args.max_minutes or float(ev.get('max_time_minutes', 60.0)),
         max_tool_calls=int(ev.get('max_tool_calls', 100)),
         max_turns=int(ev['max_turns']) if ev.get('max_turns') is not None else None,
         limits=limits, generation_constraints=constraints,

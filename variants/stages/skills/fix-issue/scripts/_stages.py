@@ -61,14 +61,24 @@ DONE = 'NEXT: no call: reply with one sentence for the coordinator.'
 # ------------------------------------------------------------------------------------------------------- state
 
 def _new():
-    return {'t0': time.time(), 'names': None, 'reqs': [], 'repro': None, 'repro_tries': 0, 'repro_done': False,
+    return {'t0': time.time(), 'paused0': _paused(), 'names': None, 'reqs': [], 'repro': None, 'repro_tries': 0, 'repro_done': False,
             'located': {}, 'cands': {}, 'scope_done': False, 'plan': [], 'asked': {}, 'current': None,
             'round': 0, 'reviews': {}, 'verified': None, 'regressions': [], 'last_good': None, 'missing': [],
             'submitted': False, 'log': []}
 
 
+def _paused():
+    """Seconds the run was held between model calls by tools/step_gate.py (local step-by-step runs only; 0 elsewhere):
+    left out of the clock, so that the model sees the time it would have seen without the pauses."""
+    try:
+        with open(os.environ['SWE_PAUSED_FILE'], encoding='utf-8') as fh:
+            return float(fh.read().strip() or 0)
+    except (KeyError, OSError, ValueError):
+        return 0.0
+
+
 def _elapsed(st):
-    return int(time.time() - st['t0'])
+    return int(time.time() - st['t0'] - (_paused() - st.get('paused0', 0.0)))
 
 
 def _over_budget(st):

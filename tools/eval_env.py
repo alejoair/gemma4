@@ -26,6 +26,7 @@ patch() does two things on every sandbox command:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -68,6 +69,10 @@ def patch() -> None:
             extra['PYTHONPATH'] = ':'.join(dict.fromkeys(parts))
             kwargs['extra_env'] = extra
             _write_pth(work)
+        if os.environ.get('SWE_PAUSED_FILE'):
+            # tools/step_gate.py: the scripts leave the time a step was held out of their clock
+            extra['SWE_PAUSED_FILE'] = os.environ['SWE_PAUSED_FILE']
+            kwargs['extra_env'] = extra
         return original(*args, **kwargs)
 
     sp.build_sanitized_env = build_sanitized_env
