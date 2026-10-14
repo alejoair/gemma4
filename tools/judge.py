@@ -7,10 +7,11 @@ judge runs the same verification three times in the same sandbox setup, the way 
 
   - with the reference patch:  the tests that pass there are the ones a fix can be asked to pass;
   - with no patch:             FAIL_TO_PASS = failing here and passing with the reference; the rest is PASS_TO_PASS;
-  - with the agent's patch:    resolved = no test fails that passes with the reference, and FAIL_TO_PASS is not empty.
+  - with the agent's patch:    resolved = no test fails that passes with the reference.
 
-A task whose reference patch fixes nothing in this environment (FAIL_TO_PASS empty, or the reference run did not
-finish) is "unscorable" here, reported as such instead of as a failure. The reference and no-patch runs are cached per
+A task whose reference run does not finish here is "unscorable", reported as such instead of as a failure. When the
+reference fixes no test here (FAIL_TO_PASS empty: the issue's tests pass on the original code too), the patch is still
+judged on the tests that pass with the reference, with a note. The reference and no-patch runs are cached per
 task (JSON in the cache directory), so the local runs and the Kaggle runs pay for them once per environment.
 
 Used by tools/local_eval.py and tools/kaggle_eval.py after each task, and on its own for patches already made:
@@ -79,17 +80,21 @@ def judge(evaluator, task, agent_patch: str, harness_result=None, cache: Path | 
     f2p = sorted(orig_failed - ref_failed)
     out = {'f2p': f2p, 'env_failures': sorted(ref_failed), 'ref_exit': base['ref']['exit'],
            'orig_exit': base['orig']['exit'], 'agent_exit': agent['exit']}
-    if not finished(base['ref']['exit']) or not f2p:
+    if not finished(base['ref']['exit']):
         out['verdict'] = 'unscorable'
-        out['why'] = ('the reference run did not finish' if not finished(base['ref']['exit'])
-                      else 'the reference patch fixes no test in this environment')
+        out['why'] = 'the reference run did not finish'
         return out
+    if not f2p:
+        # fastapi_14851: the issue's tests already pass on the original code here (the change prepares for a later
+        # Starlette), so nothing turns from failing to passing; a patch is still judged by the tests that pass with
+        # the reference, as the harness would (it broke two of them)
+        out['why'] = 'no FAIL_TO_PASS test in this environment: judged on the tests that pass with the reference'
     broken = sorted(agent_failed - ref_failed)
     out['f2p_failing'] = [t for t in f2p if t in agent_failed or any(t.startswith(f + '::') or t == f
                                                                      for f in agent_failed)]
     out['p2p_broken'] = [t for t in broken if t not in f2p]
     out['verdict'] = 'resolved' if finished(agent['exit']) and not broken else 'not resolved'
-    if not finished(agent['exit']):
+    if not finished(agent['exit']) and not out.get('why'):
         out['why'] = f'the tests did not run to the end (pytest exit {agent["exit"]})'
     return out
 

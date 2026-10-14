@@ -176,7 +176,7 @@ faults, then a Kaggle eval of the 10 tasks. If a launch is asked for earlier, sa
 **How a patch is judged (since 2026-10-13, local and Kaggle alike):** `tools/judge.py` runs the harness's own
 verification three times in the same sandbox setup (the reference patch, no patch, the agent's patch): FAIL_TO_PASS =
 tests failing without a patch and passing with the reference; resolved = no test fails that passes with the reference,
-and FAIL_TO_PASS is not empty; a task whose reference fixes nothing here is "unscorable". `local_eval.py` and
+a task whose reference run does not finish here is "unscorable" (with no FAIL_TO_PASS test here, the patch is judged on the tests that pass with the reference). `local_eval.py` and
 `kaggle_eval.py` add its verdict (`judged`) to every row, and `tools/eval_env.py` makes the subprocess sandbox import a
 `src/` layout's own code (requests, httpx), as the competition's editable install does: before, every requests and
 httpx patch was invisible to the hidden tests. The harness's `resolved` column is kept but is not the score: it needs
