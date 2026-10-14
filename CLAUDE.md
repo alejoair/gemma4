@@ -198,7 +198,9 @@ outcomes from a pytest plugin; the original code run on the same groups (cached)
 original code only; an import check of the changed modules; a new failure must fail again alone and pass just before the
 edit; tests chosen from a once-per-task call map (which tests call which function), with the lexical score as fallback.
 
-Local runs are not Kaggle runs: the model is the 26B A4B (the 12B before 2026-10-11), not the 31B, and llama.cpp applies `min_p 0.05` by default
+Local runs are not Kaggle runs: since 2026-10-14 the local model is the same 31B, but as a llama.cpp GGUF (QAT Q4_0, not
+Kaggle's w4a16 on vLLM) with a 17,664-token context, MTP and n-gram speculation (the 26B A4B from 10-11, the 12B before),
+and llama.cpp applies `min_p 0.05` by default
 (vLLM: 0). From 2026-10-10 23:21 UTC the server ran with Kaggle's reasoning budget (512); the peer reports it was later
 raised to 1024 at the 'editor' experiment's request, and it runs with 1024 now (10-14; the user decides 512 or 1024). The model's
 `generation_config.json` sampling defaults (see below); before that its budget was 3072.
@@ -225,8 +227,19 @@ training base, the 12B copy) is not accessible until the user repairs it (chkdsk
 rebuilt in C:\llm-lab-c with the 26B GGUF. A Claude Code session on the user's Windows machine (`session_01K7Fs6ULXEUTHQZQXS2wArN`, "Programa winget para máquina
 virtual con CLI", via Remote Control) runs the local infrastructure:
 - **From 2026-10-14 (the user's decision) the local server serves the 31B as `gemma-31b`**, with a 17,664-token
-  context and a q8_0 KV cache (not Kaggle's 32,768). The peer is tuning its speculative decoding (MTP and n-gram
-  configurations); the final options are added here when it reports. Send `--model gemma-31b`: llama-server does not
+  context and a q8_0 KV cache (not Kaggle's 32,768). Options: `llama-server -m gemma-4-31B_q4_0-it.gguf -ngl 99
+  --parallel 1 -c 17664 --alias gemma-31b --jinja --reasoning-budget 1024 --temp 1.0 --top-k 64 --top-p 0.95 -fa on
+  -ctk q8_0 -ctv q8_0 --spec-type draft-mtp,ngram-mod --spec-draft-model mtp-gemma-4-31B-it-Q4_0.gguf
+  --spec-draft-n-max 3`.
+  Measured by the peer:
+  - at temperature 1.0, 79-94 tok/s overall (code about 80, text about 54, edits about 148), with 51-55% of the MTP
+    draft accepted;
+  - at temperature 0.2, 88.5 tok/s;
+  - without speculation, about 32 tok/s;
+  - the prompt runs at 1,012 tok/s (15,031 tokens in 15.5 s);
+  - 19.8 of 20.5 GB of VRAM; one request at a time.
+
+  Send `--model gemma-31b`: llama-server does not
   check the field, so a run that sends `gemma-26b` would get the 31B silently. The reasoning budget stays global at
   1024: Kaggle's coordinator uses 512, and the stages build's sub-agents ask for 1024-2048, which the server ignores.
 - `https://llm.rayflow.dev`: llama.cpp `llama-server`. **From 2026-10-11 to 10-14 the model was `gemma-26b`** (Gemma 4 26B A4B
@@ -249,8 +262,7 @@ virtual con CLI", via Remote Control) runs the local infrastructure:
   - generation is 66.6 tok/s on code (67-68% accepted) and 58.7 on text (52-54%), about twice the speed without MTP;
   - the prompt runs at 1,055 tok/s, the same as without MTP.
 
-  Files are in C:\llm-lab-c\models. The server still serves the 26B; serving the 31B instead needs the user's
-  decision.
+  Files are in C:\llm-lab-c\models. Since 10-14 the server serves the 31B (above).
 - The gateway and its monitoring API (`/_monitor/*`); it can route a model name to base + LoRA (`routes.json`).
 - The fine-tuning stack (`F:\llm-lab`: llama.cpp b11476 with CUDA, Unsloth/PEFT/TRL venv, LoRA → GGUF).
 
