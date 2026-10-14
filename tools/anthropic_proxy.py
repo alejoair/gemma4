@@ -11,7 +11,8 @@ Messages API: it serves `POST /v1/chat/completions` and `GET /v1/models`, conver
 
 Converted: system messages (to `system`), text, assistant tool calls (`tool_use` blocks) and tool results
 (`tool_result` blocks, consecutive ones merged into one user turn), function tools and tool_choice, max_tokens /
-max_completion_tokens, temperature, top_p, top_k, stop, and reasoning (`reasoning_effort` or `thinking`, answered as
+max_completion_tokens, temperature, top_p, top_k, stop, one tool call per turn unless --parallel
+(`disable_parallel_tool_use`), and reasoning (`reasoning_effort` or `thinking`, answered as
 `reasoning_content`, the way vLLM's reasoning parser does; `reasoning`/`reasoning_content` of earlier assistant turns
 is not sent back, since Anthropic needs the signed thinking blocks it produced). `stream: true` is answered as one
 server-sent-events chunk sequence built from the whole answer. Upstream errors keep their HTTP status (LiteLLM
@@ -34,6 +35,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+PARALLEL = False          # --parallel: let the upstream model make several tool calls in one turn
 SAMPLING = ('temperature', 'top_p', 'top_k', 'stop_sequences')
 EFFORT_BUDGET = {'minimal': 1024, 'low': 2048, 'medium': 4096, 'high': 16384}
 STOP = {'end_turn': 'stop', 'stop_sequence': 'stop', 'max_tokens': 'length', 'tool_use': 'tool_calls',
@@ -143,6 +145,13 @@ def to_anthropic(req: dict, model_override: str | None = None) -> dict:
             out.pop(k, None)
         if out.get('tool_choice', {}).get('type') in ('any', 'tool'):
             out['tool_choice'] = {'type': 'auto'}
+    if tools and not PARALLEL and req.get('parallel_tool_calls') is not True:
+        # one tool call per turn, as the competition model makes them (V20-V21: no turn with two calls). Parallel
+        # calls ran several editors on the same journal and files at once (s1, requests_7328: an edit the tests
+        # undid stayed in the patch).
+        choice = out.get('tool_choice') or {'type': 'auto'}
+        if choice.get('type') != 'none':
+            out['tool_choice'] = {**choice, 'disable_parallel_tool_use': True}
     return out
 
 
@@ -341,7 +350,10 @@ def main() -> None:
     ap.add_argument('--model', default=None, help='the upstream model for every request (default: the request\'s)')
     ap.add_argument('--auth', choices=['auto', 'x-api-key', 'bearer'], default='auto')
     ap.add_argument('--log', default=None, help='append every request and answer as JSON lines')
+    ap.add_argument('--parallel', action='store_true', help='allow several tool calls in one turn (default: one)')
     args = ap.parse_args()
+    global PARALLEL
+    PARALLEL = args.parallel
     Proxy.upstream, Proxy.model, Proxy.auth, Proxy.log = args.upstream, args.model, args.auth, args.log
     srv = ThreadingHTTPServer((args.host, args.port), Proxy)
     print(f'OpenAI-style endpoint http://{args.host}:{args.port}/v1 -> {args.upstream}/v1/messages', flush=True)

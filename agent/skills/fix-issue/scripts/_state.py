@@ -71,19 +71,24 @@ def events():
 _LOCK = []
 
 
-def lock():
-    """Holds the state directory for this call (released when the process ends). Two agents calling at once (ADK may
-    run parallel tool calls) would otherwise read, change and write the journal over each other (review)."""
+def lock(wait=200):
+    """Holds the state directory for this call (released when the process ends, also when the harness kills it at its
+    command timeout). Two calls at once (the model may send parallel tool calls) would otherwise read, change and write
+    the journal and the files over each other: s1, requests_7328, two edits sent together, one undone by the tests
+    while the other went on unlocked, and the undone change stayed in the patch. A call waits for the one before it
+    and never goes on unlocked: False when the other is still running after `wait` seconds (the caller does nothing)."""
     if fcntl is None or _LOCK:
-        return
+        return True
     fh = open(path('lock'), 'w')
-    deadline = time.time() + 120
+    deadline = time.time() + wait
     while True:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             break
         except OSError:
             if time.time() > deadline:
-                break           # never block the task for good: go on unlocked
+                fh.close()
+                return False
             time.sleep(0.2)
     _LOCK.append(fh)
+    return True

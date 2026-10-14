@@ -3538,7 +3538,11 @@ def main(argv, role=None, opening=False):
         ROLE = role
     OPENING = opening
     root = _repo.repo_root()
-    _state.lock()
+    if not _state.lock():
+        print('This call was not run: the call sent before it (or with it) is still running, and two calls at once '
+              'would change the same files over each other. Make one call at a time: send this one again when the '
+              'other has answered.')
+        return
     state = _state.load('journal') or _journal.new()
     if state['step'] == 'D2':
         _journal.back(state)        # (D2 is only left by a crash between choosing and planning: choose again)
