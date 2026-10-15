@@ -697,3 +697,43 @@ Open weak points from these runs:
 | B11 doubting tool output | neutral | neutral | closer: the view no longer contradicts the request | neutral |
 | B12 resolving contradictions | neutral | neutral | closer: request and window name the same place | closer: "reply with the line" no longer competes with the NEXT |
 | B7 long context | slightly farther: one or two lines more | slightly farther: up to 2,500 characters for a new member only; reason: without it the sentence said nothing of how | neutral | slightly farther: two sentences more in each prompt |
+
+## Gated runs gk14-gk14b (fastapi_12942, Haiku): the audit's build, live (2026-10-15)
+
+The first live run after the checklist audit (`docs/prompt_audit_stages.md`, commit 4944d3d). fastapi_12942 asks for a
+tagged discriminated union (`Annotated[Annotated[A, Tag] | Annotated[B, Tag], Discriminator(...)]`) to be read as a
+body field, not a query parameter. The reference changes `field_annotation_is_complex` in `_compat.py`.
+
+**The audit's changes, live:**
+- The coordinator read "Time used: 0 min 0 s of 45 min" and the NEXT without double quotes, and followed every line.
+  It also followed a line that came after an editor's extra sentence.
+- Specify's line-number refusal turned "before the scalar check at line 465" into a sentence naming the line by its
+  text.
+- The new callers in locate brought `analyze_param` (`[calls Path]`), which decides body or query.
+
+**Three changes from these runs:**
+1. **gk14, scope: the deciding callee left out.** `_callees` took the first five calls in `ast.walk` order (breadth
+   first, not by line). The condition `elif not field_annotation_is_scalar(...)`, where body or query is decided, was
+   cut. Callees are now ordered: those the reproduction test runs, then those a condition calls, then by line.
+   Checked live in gk14b: it is listed with its `elif` line.
+2. **gk14b, edit: a regression of the audit.** The sentence restated before NEXT (P6) was cut at 400 characters with
+   "...". Haiku read it as the script's output cut off ("I worked from the visible part"). It is now restated whole
+   (a sentence is at most 1,500 characters).
+3. **gk14b, specify: the context view missed the deciding call.** "Code that analyze_param uses" showed Body,
+   ParamTypes and FieldInfo, chosen by words, but not `field_annotation_is_scalar`. The specify and edit views now add
+   up to 3 functions the place calls in a condition or that the test runs, with their call line, when the context view
+   left them out. Dry run on fastapi_12942: `field_annotation_is_scalar` first.
+
+Result: **resolved** (judged: the FAIL_TO_PASS test passes, nothing broken, official_feasible). 40 model calls, 394 s.
+The fix is in `analyze_param`, not the reference's place: it unwraps the Annotated members of the union before the
+scalar check.
+
+| Checklist item | Callee order | Sentence restated whole | Deciding calls in the views |
+|---|---|---|---|
+| W1 choosing from named options | closer: the deciding callee is an option | neutral | neutral |
+| W3 code in front of it | closer | neutral | closer: the call where the branch is decided, with its line |
+| B11 doubting tool output | neutral | closer: no "..." that reads as a cut output | neutral |
+| B12 contradictions | neutral | closer: the two copies of the sentence agree | neutral |
+| B13 order in lists | closer: the relevant callee first | neutral | closer |
+| P6 the decision at both ends | neutral | closer: the whole decision before NEXT | neutral |
+| B7 / P7 long context | neutral (the same five) | slightly farther: up to 1,100 characters more in a long sentence; reason: a cut copy misled | slightly farther: up to 3 lines of 2; reason: the deciding function was missing |

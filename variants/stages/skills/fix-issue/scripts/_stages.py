@@ -835,18 +835,23 @@ def _related(root, st, located):
         elif q.name != '<exports>':
             options.append(d)
     seen = {(d['rel'], d['name']) for d in auto + options} | set(chosen)
-    for d in _callees(root, table, located) + _importers(root, table, located):
+    ran = (st.get('repro') or {}).get('calls') or ()
+    for d in _callees(root, table, located, ran=ran) + _importers(root, table, located):
         if (d['rel'], d['name']) not in seen:
             seen.add((d['rel'], d['name']))
             options.append(d)
     return auto, options
 
 
-def _callees(root, table, located, per_place=5):
+def _callees(root, table, located, per_place=5, ran=()):
     """The repository's functions a chosen place calls: self.<method>() of its class, and plain names defined once in
     the repository. gk12 (fastapi_14851): scope listed copies, callers and readers, and "No other related code was
-    found"; the reference changes what on_event calls (add_event_handler, APIRouter.__init__, the lifespan)."""
+    found"; the reference changes what on_event calls (add_event_handler, APIRouter.__init__, the lifespan).
+    First the ones the reproduction test runs, then the ones a branch's condition calls, then by line: gk14
+    (fastapi_12942) listed five calls of analyze_param in ast.walk order and left out the condition
+    `elif not field_annotation_is_scalar(...)`, where body or query is decided."""
     out = []
+    ran = set(ran)
     for p in located:
         if p['name'] == MODULE:
             continue
@@ -854,9 +859,11 @@ def _callees(root, table, located, per_place=5):
         if sym is None:
             continue
         cls = p['name'].rsplit('.', 1)[0] if '.' in p['name'] else None
-        n = 0
+        in_test = {id(n) for t in ast.walk(sym.node) if isinstance(t, (ast.If, ast.While, ast.IfExp, ast.Assert))
+                   for n in ast.walk(t.test)}
+        found, seen = [], set()
         for node in ast.walk(sym.node):
-            if not isinstance(node, ast.Call) or n >= per_place:
+            if not isinstance(node, ast.Call):
                 continue
             f, target = node.func, None
             if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == 'self' and cls:
@@ -866,12 +873,15 @@ def _callees(root, table, located, per_place=5):
                 defs = [(r, d) for r, d in table.find(f.id) if d.name == f.id and not _repo.is_test_path(r)]
                 if len(defs) == 1:
                     rel, target = defs[0]
-            if target is not None and target.name != p['name'] and target.kind == 'def':
+            if target is not None and target.name != p['name'] and target.kind == 'def' and \
+                    (rel, target.name) not in seen:
+                seen.add((rel, target.name))
                 lines = _repo.read_lines(root, p['rel'])
-                out.append({'rel': rel, 'name': target.name, 'start': target.start, 'end': target.end,
-                            'reason': f'called by {p["name"].split(".")[-1]} (line {node.lineno})',
-                            'link': lines[node.lineno - 1].strip()[:120] if node.lineno <= len(lines) else ''})
-                n += 1
+                key = (f'{rel}::{target.name}' not in ran, id(node) not in in_test, node.lineno)
+                found.append((key, {'rel': rel, 'name': target.name, 'start': target.start, 'end': target.end,
+                                    'reason': f'called by {p["name"].split(".")[-1]} (line {node.lineno})',
+                                    'link': lines[node.lineno - 1].strip()[:120] if node.lineno <= len(lines) else ''}))
+        out += [d for _, d in sorted(found, key=lambda x: x[0])[:per_place]]
     return out
 
 
@@ -967,7 +977,7 @@ def scope(root, st, args):
             view.append('No other related code was found.')
         if st['repro'] and st['repro'].get('calls'):
             ran = [k.split('::')[1] for k in st['repro']['calls'] if not any(
-                k == _key(p) for p in located + auto + options)]
+                k == _key(p) for p in located + auto + options) and not k.split('.')[-1].startswith('__')]
             if ran:
                 view.append('Other functions the reproduction test runs: ' + ', '.join(ran[:10]) + '.')
         return '\n\n'.join(view) + '\n\nSend the names of the related code that must change too, or [\'none\'].\n\n' + nxt
@@ -1175,9 +1185,29 @@ def _members_note(root, p):
     return '\n'.join(out)[:2500]
 
 
-def _brief(sentence, limit=400):
-    s = ' '.join((sentence or '').split())
-    return s if len(s) <= limit else s[:limit].rsplit(' ', 1)[0] + ' ...'
+def _brief(sentence):
+    """The sentence again, whole (gk14b: cut at 400 characters with '...', it read as the script's output cut off,
+    and the editor worked from the part it saw). A sentence is at most MAX_SENTENCE characters."""
+    return ' '.join((sentence or '').split())
+
+
+def _deciding_calls(root, st, p, ctx, limit=3):
+    """The functions the place calls in a condition or that the reproduction test runs, when the context view left them
+    out: gk14b (fastapi_12942) showed Body, ParamTypes and FieldInfo as the code analyze_param uses, but not
+    field_annotation_is_scalar, the call in `elif not field_annotation_is_scalar(...)` where body or query is decided."""
+    if p.get('new') or p['name'] == MODULE:
+        return ''
+    table = _impact.Table(root, docs=False)
+    ran = (st.get('repro') or {}).get('calls') or ()
+    rows = []
+    for d in _callees(root, table, [p], per_place=limit, ran=ran):
+        short = d['name'].split('.')[-1]
+        if re.search(rf'(?m)^\s+\S*\b{re.escape(d["name"])} \(', ctx or ''):
+            continue                                   # already shown by the context view
+        sym = table.get(d['rel'], d['name'])
+        rows.append(f'  {d["name"]} ({d["rel"]}) {_sig(sym, 120) if sym is not None else ""}\n'
+                    f'      called here: {d["link"]}')
+    return ('Functions it calls in a condition or that the reproduction test runs:\n' + '\n'.join(rows)) if rows else ''
 
 
 def _place_view(root, st, p, limit=80):
@@ -1221,6 +1251,9 @@ def specify(root, st, args):
             ctx = step._context_view(root, p, _focus(reqs))
             if ctx:
                 view.append(ctx[:2500])
+            deciding = _deciding_calls(root, st, p, ctx)
+            if deciding:
+                view.append(deciding)
         others = [f'  {q["handle"]}: {q["sentence"]}' if q.get('sentence') else f'  {q["handle"]}: (to specify)'
                   for q in st['plan'] if q is not p]
         if others:
@@ -1399,6 +1432,9 @@ def edit(root, st, args):
             ctx = step._context_view(root, p, _focus(reqs))
             if ctx:
                 view.append(ctx[:2500])
+            deciding = _deciding_calls(root, st, p, ctx)
+            if deciding:
+                view.append(deciding)
             diff = step._patch_here(root, p)
             if diff:
                 view.append(diff[:1500])

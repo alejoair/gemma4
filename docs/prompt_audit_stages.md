@@ -84,7 +84,10 @@ Status after the changes of this audit. "Changed" names what this audit changed.
 | 12 | `_stages.py` locate | An empty search is described, not quoted | B5 |
 | 13 | `agent/.../step.py` `_context_view` | Sibling members under "Other members of its class that use the same code (X does not call them)" | W3, B11, B12, P7 |
 
-Checked by a dry run on fastapi_14851 (the edit, specify and review views). Not yet run against a model.
+Checked by a dry run on fastapi_14851 (the edit, specify and review views), then live in gk14b (fastapi_12942,
+Haiku, resolved): the coordinator, the line-number refusal and the chained lines worked. Change 9 had a fault: the
+restatement was cut at 400 characters with "...", and the editor read it as a cut output; it is now restated whole
+(`docs/design_stages.md`, "Gated runs gk14-gk14b").
 
 ## Open after this audit
 
