@@ -43,6 +43,11 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 - Never remove a piece of the design because it has few or no calls: find out why it is not used and wire it.
 - Record design decisions and literature in the repository (this file and `docs/`), never only in the scratchpad.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md` as soon as it finishes.
+- **Model runs use only the competition's model on the Colab vLLM** (the user's, 2026-10-15): `tools/colab_vllm.ipynb`
+  on a Colab Pro G4 (RTX PRO 6000 Blackwell, 96 GB), vLLM 0.19.1 with the harness's own options (gemma4 parsers,
+  `--reasoning-config` with `<|channel>`/`<channel|>`), reached through `tools/step_gate.py --stream-upstream
+  --api-key-file <scratchpad key>`. Not the local llama.cpp server, not Haiku. The URL and key are given by the user
+  each session; the key stays in the scratchpad.
 - No Kaggle competition submission unless the user asks.
 - Never use Claude's outputs to train Gemma.
 - No model identifiers in commits, PRs or code. Commit and push after each round of changes
