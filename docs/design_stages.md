@@ -857,3 +857,25 @@ already in the plan (giving that place's sentence), so the form cannot loop. Che
 | B8 many forms | farther: 3 forms instead of 2. Reason: without it the 31B writes a workaround in the wrong place (gm11b); the form is the editors' own `missing`, same shape |
 | W4 next call | neutral | the answer chains as every finished specify |
 | F7 leaving a loop | closer | a repeated `missing` for code already in the plan is refused with its sentence |
+
+### gm11c (the 31B, fastapi_12942, stopped at reproduce): a refusal without its cause; the open target
+
+1. **The reproduction test defined its own `Tag`** although the view listed `pydantic.Tag` among the issue's library
+   names. Pydantic rejected the union, and the refusal said only "it fails for a reason of its own" with fastapi's
+   "Invalid args for response field"; the 31B changed the return annotation and sent the same fault again (two tries
+   are all reproduce has). The script now checks, before running the test and without counting a try, whether the
+   test defines a class or function with the short name of a library name of the issue, and says so: "The test
+   defines its own Tag, but the issue's Tag is the library's pydantic.Tag: delete that definition and import it".
+2. **The agents' `open` copied the whole issue** (reproduce sent the statement as the target; 8.7 s of output). The
+   prompts' placeholder `<the request you received>` is now what each agent receives: `<the requirement id you
+   received, such as R1>` (reproduce, locate, review), `the plan` (scope), `<the place name you received>` (specify,
+   edit).
+
+| Checklist item | 1 shadowed library name | 2 open target |
+|---|---|---|
+| F1 where the error is | closer: the refusal names the definition and the import | neutral |
+| F4 challenges without new facts | closer: the second try now has a new fact | neutral |
+| B11 doubting tool output | closer | neutral |
+| W6 names | closer | closer: the placeholder says what the value is |
+| B2 copying long text | neutral | closer: an id instead of the statement |
+| B8 many forms | neutral | neutral |

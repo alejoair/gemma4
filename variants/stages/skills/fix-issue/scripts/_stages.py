@@ -644,6 +644,15 @@ def reproduce(root, st, args):
         ast.parse(code)
     except SyntaxError as e:
         return f'The test does not compile ({e.msg}, line {e.lineno}). Send it again whole.\n\n{nxt}'
+    own = {n.name for n in ast.parse(code).body if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+    shadow = [h for h in st.get('lib_names') or [] if h.split('.')[-1] in own]
+    if shadow:
+        # gm11c (the 31B, fastapi_12942): the test defined its own class Tag, so pydantic rejected the union and the
+        # refusal ("a reason of its own") did not say why; checked before the run, so it costs no try
+        h = shadow[0]
+        mod, short = h.rsplit('.', 1)
+        return (f'The test defines its own {short}, but the issue\'s {short} is the library\'s {h}: delete that '
+                f'definition and import it (from {mod} import {short}). Send the test again.\n\n{nxt}')
     tpl = _template(root, r)
     rel = _repro_path(root, tpl[0] if tpl else '')
     outcomes, msgs, calls, output = _run_repro(root, rel, code)
