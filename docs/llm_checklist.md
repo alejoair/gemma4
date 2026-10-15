@@ -203,3 +203,8 @@ make the hard part easier; it makes the mechanical part reliable.
    few calls: its use is checked in the traces first.
 5. The budget in every answer, and checks sized for 6 minutes per task (B10).
 6. Filled NEXT lines everywhere (W4, P9): the script knows the next place and the form; it writes them in.
+
+## Check of the stages build (2026-10-15)
+
+Every text the model reads in `variants/stages` (prompts, the ADK's and the harness's texts, every script answer of
+the gated runs), item by item, with the 13 changes it led to: `docs/prompt_audit_stages.md`.

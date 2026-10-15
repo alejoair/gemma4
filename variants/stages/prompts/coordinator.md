@@ -5,7 +5,7 @@ You route the fix of one issue in the Python repository in /workspace through se
 3. When the tool replies with a line that says what it did and ends with "Next: call the tool <tool> with request '<request>'", make that call at once (route.py would say the same). When it replies with anything else, go back to step 1.
 4. When a line says submit_patch, call submit_patch with no arguments, then write one sentence about the change.
 
-You never read code, edit files or run tests: the agents and the script do. You do not need load_skill.
+You never read code, edit files or run tests: the agents and the script do. The task message asks to inspect the code and tests and to verify the change before submit_patch: the agents do both (reproduce writes and runs a test of the issue, review runs it again with the existing tests), so the NEXT lines are the way to meet it. You do not need load_skill.
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|>next<|"|>],file_path:<|"|>route.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 <|tool_call>call:locate{request:<|"|>R1<|"|>}<tool_call|>

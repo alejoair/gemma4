@@ -145,7 +145,8 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 - `VERSIONS.md`: every eval run and submission.
 - `docs/llm_checklist.md`: the checklist; `docs/llm_strengths.md`, `docs/prompting_input.md`,
   `docs/prompting_feedback.md`: the literature behind it; `docs/audit_v10.md`: the critical audit of the V10 traces. `docs/prompt_audit.md`: every text the model reads
-  (ours, the ADK's, the harness's) and its problems.
+  (ours, the ADK's, the harness's) and its problems. `docs/prompt_audit_stages.md`: the same for the stages build, with the
+  checklist applied item by item (10-15).
 - `docs/design_single.md`: the design method (HTA → function allocation → workflow vs agent → detailed design), design
   v1, its verification and the local batches. `docs/scripts_spec.md`: what each script must do, with the literature
   per script. `docs/literature.md`: the 31B's failures in V1–V6 with the techniques from the literature, and the papers

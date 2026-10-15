@@ -624,6 +624,7 @@ def _context_view(root, p, focus=None):
             chars += len(text)
         if len(uses) >= n_uses:
             break
+    siblings = []
     if cls and own != cls and focus:
         # p3 (rich_3296): the fix was Syntax._get_base_style (which applies the background_color override), a member of
         # the place's own class that the place does not call. Members that use what the place uses (the same calls and
@@ -648,14 +649,16 @@ def _context_view(root, p, focus=None):
                 scored.append((-shared, -len(hit), x.end - x.start, x.start, x))
         for *_, x in sorted(scored, key=lambda t: t[:4])[:2]:
             if x.end - x.start + 1 <= 12:
-                text = (f'  {x.name} ({p["rel"]}), a member of the same class:\n'
+                text = (f'  {x.name} ({p["rel"]}):\n'
                         + _code.numbered(lines_, x.start, x.end, collapse=[]))
             else:
-                text = f'  {x.name} ({p["rel"]}:{x.start}), a member of the same class: {_short_signature(x)[:70]}'
+                text = f'  {x.name} ({p["rel"]}:{x.start}): {_short_signature(x)[:70]}'
             if chars + len(text) > uses_chars + 600:
                 break
             seen.add((p['rel'], x.name))
-            uses.append(text)
+            # gk12: listed under 'Code that on_event uses', include_router and add_api_route read as code the place
+            # calls (checklist B11, B12); they are siblings that use the same code, under their own heading
+            siblings.append(text)
             chars += len(text)
     lib = _library_uses(root, p, tree, used, imported, modules, table, cls)
     room = uses_chars - chars
@@ -676,6 +679,9 @@ def _context_view(root, p, focus=None):
     out = []
     if uses:
         out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
+    if siblings:
+        out.append(f'Other members of its class that use the same code ({short} does not call them):\n'
+                   + '\n'.join(siblings))
     if calls:
         more = f' ({len(callers)} calls, first {n_callers})' if len(callers) > n_callers else ''
         out.append(f'Code that calls {short}{more}:\n' + '\n'.join(calls))

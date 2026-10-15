@@ -103,7 +103,7 @@ def _req(st, rid):
 
 
 def _req_line(r):
-    q = f' (the issue: "{r["quote"][:200]}")' if r.get('quote') else ''
+    q = f' (from the issue: {r["quote"][:200]})' if r.get('quote') else ''      # B15: no quotes of our own
     return f'{r["id"]}: {r["what"]}{q}'
 
 
@@ -130,7 +130,7 @@ def _progress(root, st):
         word = {'todo': 'to edit', 'done': 'edited', 'nochange': 'no change', 'failed': 'failed', None: 'to specify'}
         plan = ' The plan: ' + ', '.join(f'{p["handle"]} ({word.get(p.get("status"), p.get("status"))})'
                                          for p in st['plan'][:10]) + '.'
-    return f'{held}{plan} Time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s.'
+    return f'{held}{plan} Time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s of {BUDGET_S // 60} min.'  # B10
 
 
 # ------------------------------------------------------------------------------------------------------ routing
@@ -237,9 +237,10 @@ def route(root, st, args):
     st['log'].append([_elapsed(st), tool, req])
     # gm7 (Gemma): "when it replies, call route.py" contradicted the line the agent returns (checklist B12); it called
     # route.py instead of that line 4 times out of 9
-    return f"{head}\n\nNEXT: call the tool {tool} with request '{req}'. If it replies with a line \"call the tool ...\", " \
-           "make that call next; if it replies with anything else, call run_skill_script with skill_name fix-issue, " \
-           "file_path route.py and args ['next']."
+    # B15: no double quotes of our own (every answer reaches the model as JSON, where they read as \")
+    return f"{head}\n\nNEXT: call the tool {tool} with request '{req}'. If it replies with a line that ends with " \
+           "Next: call the tool ..., make that call next; if it replies with anything else, call run_skill_script " \
+           "with skill_name fix-issue, file_path route.py and args ['next']."
 
 
 def _submit(root, st):
@@ -754,7 +755,7 @@ def locate(root, st, args):
                                                           for h in hits[:8]) + '\n\nChoose from these or the list '
                         'before.\n\n' + nxt)
             news = [c['handle'] for c in cands if c.get('new')]
-            return (f'Nothing in the repository holds {others[0][:80]!r}' + (
+            return ('Nothing in the repository holds that name or text' + (
                 f' yet: it is new code, and the list has where it goes ({", ".join(news)}): choose it.' if news else
                 '. Choose from the list.') + f'\n\n{nxt}')
     if not found:
@@ -1174,6 +1175,11 @@ def _members_note(root, p):
     return '\n'.join(out)[:2500]
 
 
+def _brief(sentence, limit=400):
+    s = ' '.join((sentence or '').split())
+    return s if len(s) <= limit else s[:limit].rsplit(' ', 1)[0] + ' ...'
+
+
 def _place_view(root, st, p, limit=80):
     reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
     if p.get('new'):
@@ -1230,7 +1236,8 @@ def specify(root, st, args):
                 view.append(diff[:1500])
             if p.get('old_sentence'):
                 view.append('The sentence before: ' + p['old_sentence'])
-        return ('\n\n'.join(view) + '\n\nWrite what must change in this place so that its requirements hold: one '
+        ids = ', '.join(r['id'] for r in reqs) or 'its requirements'
+        return ('\n\n'.join(view) + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change.'
                 '\n\n' + nxt)
     sentence = ' '.join(x.strip() for x in items)
@@ -1361,7 +1368,7 @@ def _replace_text(root, p, old, new):
         if k == len(want):
             hits.append((i + 1, j))
     if not hits:
-        return 'the old lines were not found in this place (send them as the window shows them, without line numbers)'
+        return 'the old lines were not found in this place (send them as the window shows them)'
     if len(hits) > 1:
         return f'the old lines occur {len(hits)} times in this place: send more lines around them'
     a, b = hits[0]
@@ -1399,20 +1406,23 @@ def edit(root, st, args):
         if length > LONG_EDIT and not p.get('new'):
             # g1 (fastapi_9555, the local 31B): the whole 140-line solve_dependencies, sent again after two replace
             # edits, came out malformed three times (2 minutes, about 2,100 tokens each)
+            view.append(f'The change: {_brief(p["sentence"])}')
             view.append(f"This place is long ({length} lines): change only the lines that change, with ['replace', "
-                        "'<the old lines, as shown, without their numbers>', '<the new lines>'], one call per group "
+                        "'<the old lines, as shown>', '<the new lines>'], one call per group "
                         "of lines; the rest stays as it is. A new import can open the new lines, not indented: it is moved "
                         "to the top of the file.")
             nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['replace', "
                    "'<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this change "
                    "needs>']")
             return '\n\n'.join(view) + '\n\n' + nxt
-        view.append('Send the whole new definition (from its def or class line, with its decorators); new imports go '
-                    'above it and are moved to the top of the file. A new helper function can come with it.')
+        # P6: the decision again just before NEXT (the views run to 7,000 characters)
+        view.append(f'Send the whole new definition of {p["handle"]} (from its def or class line, with its '
+                    f'decorators) that does this: {_brief(p["sentence"])} New imports go above it and are moved to the '
+                    'top of the file. A new helper function can come with it.')
         if re.search(r'not shown\)', view[0]):
             view.append("Part of this place is not shown. Then either send 'def <name>(...):' followed by the whole "
                         "new body (the parameters, decorators and docstring stay as they are), or change some lines: "
-                        "['replace', '<the old lines, as shown, without their numbers>', '<the new lines>'].")
+                        "['replace', '<the old lines, as shown>', '<the new lines>'].")
         return '\n\n'.join(view) + '\n\n' + nxt
     if first in ('no change', 'skip', 'nothing'):
         if p.get('status') != 'done':
@@ -1608,7 +1618,7 @@ def _after_edit(root, st, p, r, before, names, nxt):
         if 'line number' in err:
             # the base procedure's numbered form is not an answer form here (gm9: Gemma answered it with 'ls -R')
             err = ("what was sent is not a whole definition (a def or class line and its body); to change some of "
-                   "its lines send ['replace', '<the old lines, as shown, without their numbers>', '<the new lines>']")
+                   "its lines send ['replace', '<the old lines, as shown>', '<the new lines>']")
         return f'Not applied: {err}.\n\n{nxt}'
     after = _repo.read_lines(root, p['rel'])
     changed = {p['rel']: names + [l.strip() for l in after[r.start - 1:r.end]]}
@@ -1869,7 +1879,8 @@ def review(root, st, args):
             else:
                 st['missing'].append([name, f'the review of {rid} says: {what}', [rid], None])
         return f'{rid}: not done; {name} goes back to be specified and edited.\n\n{DONE}'
-    return 'The answer was not read. ' + nxt
+    return ("The answer was not read: its first item must be done, not done (then the place and what is missing) "
+            "or cannot tell.\n\n" + nxt)
 
 
 # ------------------------------------------------------------------------------------------- entry
