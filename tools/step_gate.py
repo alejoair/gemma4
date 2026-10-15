@@ -74,6 +74,7 @@ def _assemble(lines):
     """A non-streamed chat completion from the SSE lines of a streamed one (content, reasoning, tool calls, usage)."""
     msg = {'role': 'assistant', 'content': '', 'reasoning_content': ''}
     calls, finish, usage, meta = {}, None, None, {}
+    error = None
     for raw in lines:
         line = raw.decode('utf-8', 'replace').strip()
         if not line.startswith('data:') or line[5:].strip() == '[DONE]':
@@ -81,6 +82,11 @@ def _assemble(lines):
         try:
             chunk = json.loads(line[5:].strip())
         except ValueError:
+            continue
+        if chunk.get('error'):
+            # gm10: vLLM answered 200 and sent its 400 inside the stream (thinking_token_budget without
+            # --reasoning-config); it was assembled into an empty answer, and the agent was nudged twice
+            error = chunk['error']
             continue
         meta = meta or {k: chunk.get(k) for k in ('id', 'model', 'created')}
         usage = chunk.get('usage') or usage
@@ -96,6 +102,8 @@ def _assemble(lines):
                 c['function']['name'] += f.get('name') or ''
                 c['function']['arguments'] += f.get('arguments') or ''
             finish = ch.get('finish_reason') or finish
+    if error and not (msg['content'] or calls):
+        return {'error': error}
     if calls:
         msg['tool_calls'] = [calls[k] for k in sorted(calls)]
     if not msg['reasoning_content']:
@@ -129,7 +137,10 @@ class Gate(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req, timeout=3600) as r:
                 if self.stream_upstream and method == 'POST':
-                    return r.status, json.dumps(_assemble(r)).encode()
+                    ans = _assemble(r)
+                    if 'error' in ans:
+                        return int(ans['error'].get('code') or 502), json.dumps(ans).encode()
+                    return r.status, json.dumps(ans).encode()
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
