@@ -610,9 +610,44 @@ def reproduce(root, st, args):
 
 # ------------------------------------------------------------------------------------------- 3 locate
 
+def _new_members(root, st, r):
+    """Candidates for the members a requirement adds ('app.frontend'), or that the reproduction test found missing
+    ("'FastAPI' object has no attribute 'frontend'"): the new member in the class it goes in. gk13 (fastapi_15800):
+    locate listed swagger and docs code, the searches for 'frontend' found nothing, and locate gave up; the class
+    FastAPI, where the new method goes, was not on the list."""
+    asked = [n for n in r.get('new') or [] if '.' in n]
+    if st['repro'] and st['repro'].get('rid') == r['id']:
+        asked += [f'{c}.{a}' for c, a in re.findall(r"'(\w+)' object has no attribute '(\w+)'",
+                                                     st['repro'].get('before') or '')]
+    if not asked:
+        return []
+    index = _rank.Index(root)
+    out, seen = [], set()
+    for n in asked:
+        var, short = n.rsplit('.', 1)
+        owner = _rank.owner_class(index, var.split('.')[-1])
+        if not owner or short in index.names and any(
+                s.name == f'{owner[1]}.{short}' for s in _code.symbols(_code.parse(_repo.read_text(root, owner[0])))):
+            continue
+        sym = next((s for s in _code.symbols(_code.parse(_repo.read_text(root, owner[0]))) if s.name == owner[1]), None)
+        if sym is None or (owner, short) in seen:
+            continue
+        seen.add((owner, short))
+        out.append({'rel': owner[0], 'name': f'{owner[1]}.{short}', 'start': sym.start, 'end': sym.end, 'new': True,
+                    'owner': owner[1], 'line': f'({owner[0]}, new) does not exist yet: the new `{short}` the issue '
+                                               f'asks for, added to the class {owner[1]}' + (
+                                                   f' ({var} = {owner[1]}(...) in the code)' if var.split('.')[-1]
+                                                   != owner[1].split('.')[-1] else '')})
+    return out
+
+
 def _candidates(root, st, r, n=8):
     text = (r.get('quote') or '') + '\n' + r['what']
     cands, _ = step._rank_candidates(root, text, r['names'], [], n=n)
+    new = _new_members(root, st, r)
+    if new:
+        cands = new + [c for c in cands if not any(_key(c) == _key(x) for x in new)]
+        step._set_handles(cands)
     if st['repro'] and st['repro'].get('calls'):
         called = set(st['repro']['calls'])
         hit = [c for c in cands if _key(c) in called]
@@ -693,8 +728,7 @@ def locate(root, st, args):
         others = sorted({p['name'] for ps in st['located'].values() for p in ps})
         view = [f'Where is this decided in the code?\n  {_req_line(r)}',
                 'Candidates (functions and classes, the most related first):\n' +
-                '\n'.join(f'  {c["handle"]}  {re.sub(r", lines [0-9]+-[0-9]+", "", c["line"])}{_uses_note(root, c, cands)}'
-                          for c in cands)]
+                '\n'.join(_cand_line(root, c, cands) for c in cands)]
         if others:
             view.append('Chosen for the other requirements: ' + ', '.join(others) + '.')
         return '\n\n'.join(view) + '\n\nChoose the 1 to 3 places whose code decides this behaviour.\n\n' + nxt
@@ -719,7 +753,10 @@ def locate(root, st, args):
                 return ('Found in the code:\n' + '\n'.join(f'  {h["handle"]}  ' + '; '.join(h.get('evidence', [])[:2])
                                                           for h in hits[:8]) + '\n\nChoose from these or the list '
                         'before.\n\n' + nxt)
-            return f'Nothing in the repository holds {others[0][:80]!r}. Choose from the list.\n\n{nxt}'
+            news = [c['handle'] for c in cands if c.get('new')]
+            return (f'Nothing in the repository holds {others[0][:80]!r}' + (
+                f' yet: it is new code, and the list has where it goes ({", ".join(news)}): choose it.' if news else
+                '. Choose from the list.') + f'\n\n{nxt}')
     if not found:
         return 'No place was read. Send 1 to 3 names from the list.\n\n' + nxt
     lost = []
@@ -736,11 +773,19 @@ def locate(root, st, args):
             res = [c for c in res if not any(_key(c) == _key(f) for f in found)]
             if res:
                 found.append(res[0])
-    st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end']}
-                          for c in found[:3]]
+    st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
+                           **({'new': True, 'owner': c['owner']} if c.get('new') else {})} for c in found[:3]]
     note = (' Not found in the repository, so not chosen: ' + ', '.join(lost) + '.') if lost else ''
     return (f'{rid} is decided at: ' + ', '.join(c.get('handle') or c['name'] for c in found[:3]) + '.' + note
             + '\n\n' + DONE)
+
+
+def _cand_line(root, c, cands):
+    """One candidate's line, its 'uses' note before the "(and N more in <file>)" line (gk13b: the note read as the
+    file's)."""
+    line = re.sub(r', lines [0-9]+-[0-9]+', '', c['line'])
+    head, nl, tail = line.partition('\n')
+    return f'  {c["handle"]}  {head}{_uses_note(root, c, cands)}{nl}{tail}'
 
 
 # methods of the builtin types: 'req.scope.get(...)' is not a use of APIRouter.get (gm9, gk9)
@@ -775,6 +820,7 @@ AUTO = ('async/sync twin', 'same pattern')
 
 def _related(root, st, located):
     table = _impact.Table(root, docs=True)
+    located = [p for p in located if not p.get('new')]      # a new member has no code yet to relate
     chosen = [(p['rel'], p['name']) for p in located if p['name'] != MODULE]
     rel_places = _impact.related(table, chosen) if chosen else []
     auto, options = [], []
@@ -1053,11 +1099,88 @@ def _add_missing(root, st):
 
 # ------------------------------------------------------------------------------------------- 5 specify
 
+def _params(fn):
+    a = fn.args
+    pos = [x.arg for x in a.posonlyargs + a.args if x.arg not in ('self', 'cls')]
+    kw = [x.arg + '=' for x in a.kwonlyargs]
+    names = pos + kw
+    return ', '.join(names[:4]) + (', ...' if len(names) > 4 else '')
+
+
+def _lib_base(root, rel, base):
+    """The library class a class of the repository derives from ('routing.Router' with `from starlette import
+    routing`), or None."""
+    tree = _code.parse(_repo.read_text(root, rel))
+    head, _, rest = base.partition('.')
+    target = None
+    for node in ast.walk(tree) if tree is not None else ():
+        if isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            for al in node.names:
+                if (al.asname or al.name) == head:
+                    target = (f'{node.module}.{al.name}', rest) if rest else (node.module, al.name)
+        elif isinstance(node, ast.Import):
+            for al in node.names:
+                if (al.asname or al.name) == head and rest:
+                    target = (al.name, rest)
+    if target is None:
+        return None
+    try:
+        import importlib
+        mod = importlib.import_module(target[0])
+        if os.path.realpath(getattr(mod, '__file__', '') or '').startswith(os.path.realpath(root) + os.sep):
+            return None                                   # the repository's own code, listed by the table
+        obj = mod
+        for part in target[1].split('.'):
+            obj = getattr(obj, part)
+        return obj if isinstance(obj, type) else None
+    except Exception:
+        return None
+
+
+def _members_note(root, p):
+    """What the class a new member goes in already has: its own public methods and those it inherits from a library
+    class, which the new code can call as self.<name>. gk13b (fastapi_15800): the specifier was told only "new code, at
+    the end of class APIRouter" and wrote "registers a static frontend", saying nothing of how; APIRouter inherits
+    mount() from Starlette's Router."""
+    owner = p.get('owner')
+    if not owner or owner == MODULE:
+        return ''
+    table = _impact.Table(root, docs=False)
+    depth = owner.count('.') + 1
+    own = [x for x in table.syms.get(p['rel'], []) if x.kind == 'def' and x.name.startswith(owner + '.')
+           and x.name.count('.') == depth and not x.name.split('.')[-1].startswith('_')]
+    out = []
+    if own:
+        out.append(f'Methods {owner} has (the new code can call them as self.<name>(...)): ' + '; '.join(
+            f'{x.name.split(".")[-1]}({_params(x.node)})' for x in own[:30]))
+    cls = table.get(p['rel'], owner)
+    names = {x.name.split('.')[-1] for x in own}
+    import inspect
+    for base in [ast.unparse(b) for b in getattr(getattr(cls, 'node', None), 'bases', [])]:
+        lib = _lib_base(root, p['rel'], base)
+        if lib is None:
+            continue
+        meths = []
+        for n, f in inspect.getmembers(lib, inspect.isfunction):
+            if n.startswith('_') or n in names:
+                continue
+            try:
+                meths.append(f'{n}{inspect.signature(f)}'.replace('(self, ', '(').replace('(self)', '()').replace("'", ''))
+            except (TypeError, ValueError):
+                meths.append(f'{n}(...)')
+        if meths:
+            out.append(f'Inherited from {lib.__module__}.{lib.__qualname__} (library code): '
+                       + '; '.join(m[:90] for m in meths[:15]))
+    return '\n'.join(out)[:2500]
+
+
 def _place_view(root, st, p, limit=80):
     reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
     if p.get('new'):
         where = f'the end of class {p["owner"]}' if p.get('owner') != MODULE else f'the end of {p["rel"]}'
-        return (f'{p["handle"]} does not exist yet: it is new code, added at {where} ({p["rel"]}).')
+        note = _members_note(root, p)
+        return (f'{p["handle"]} does not exist yet: it is new code, added at {where} ({p["rel"]}).'
+                + (f'\n{note}' if note else ''))
     body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit)
     return f'{p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}):\n{body}'
 
@@ -1796,10 +1919,15 @@ def main(stage, argv):
     pending = st.get('chained')
     if st.get('tentative'):
         cur = (st.get('current') or ('',))[0]
-        if stage not in ('route', cur):
-            # the next agent opens after an edit that returned the next call: that call becomes real now
+        first = _args.clean(args[0]).lower() if args and args[0] else ''
+        if stage == 'route':
+            st['tentative'] = None                  # route.py runs for real below
+        elif stage != cur or first in ('', 'open', 'start'):
+            # the next agent opens after an edit that returned the next call: that call becomes real now. gk13b: an
+            # edit after an edit (the same stage) was left out, and the second editor was shown the first place
             route(root, st, ['next'])
-        st['tentative'] = None
+            st['tentative'] = None
+        # else: the same editor sends a corrected edit; the call stays tentative until the next agent opens
     try:
         if pending and stage == 'route':
             # the coordinator called route.py instead of the line an agent returned: the same next step, not a new
@@ -1817,6 +1945,7 @@ def main(stage, argv):
             st['chained'] = None
             out = HANDLERS[stage](root, st, args)
             if stage != 'route' and out.endswith(DONE):
+                st['tentative'] = None              # _chain runs route.py for real
                 out = _chain(root, st, out, stage)
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{stage} {type(e).__name__}: {e}'})
