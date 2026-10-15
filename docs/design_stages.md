@@ -832,3 +832,28 @@ appeared, and their fixes:
 | B9 exploring | neutral | neutral | closer: nothing to infer | neutral | neutral | neutral | neutral |
 | B7 long context | slightly farther: one line per library name | neutral | farther: up to 12,000 characters; reason: the decision needs the code | neutral | neutral | neutral | neutral |
 | W4 next call | neutral | neutral | neutral | neutral | closer | neutral | closer: one call less |
+
+### gm11b (the 31B, fastapi_12942, stopped at specify): the specifier could not route a change
+
+After the gm11 fixes the library names worked: the 31B imported pydantic's `Tag` and `Discriminator` and the
+reproduction test was kept at the first try (422). Specify then wrote a `while` loop that unwraps the outer
+`Annotated` in `analyze_param`; its thinking said "field_annotation_is_scalar is in _compat.py, not in analyze_param.
+The request says to change analyze_param". It saw where the fault is and had no way to say so: editors and the review
+had the `missing` form, the specifier did not. A design gap, not the model's.
+
+**Change:** specify accepts `['missing', '<name of other code>', '<what must change there>']`. The named code joins the
+plan before the place (with "Why it is in the plan: the specifier of X says: ..."), is specified by its own
+specifier, and then the place is specified again, seeing the other place's sentence ("Why it is specified again"),
+where `no change` is the usual answer. The script refuses the place's own name, a name it cannot find, and code
+already in the plan (giving that place's sentence), so the form cannot loop. Checked directly on the snapshot
+(`analyze_param` → `field_annotation_is_scalar` → `analyze_param` `no change`).
+
+| Checklist item | Status | Why |
+|---|---|---|
+| W1 choosing from named options | closer | the specifier names code it sees in its view (the deciding calls) instead of being held to one place |
+| W3 code in front | closer | the code where the change belongs gets its own view and specifier |
+| B12 contradictions | closer | "change this place" against "the fault is in a callee" had no answer; now it has one |
+| B9 exploring | neutral | the name must be code the script resolves; no reading form |
+| B8 many forms | farther: 3 forms instead of 2. Reason: without it the 31B writes a workaround in the wrong place (gm11b); the form is the editors' own `missing`, same shape |
+| W4 next call | neutral | the answer chains as every finished specify |
+| F7 leaving a loop | closer | a repeated `missing` for code already in the plan is refused with its sentence |

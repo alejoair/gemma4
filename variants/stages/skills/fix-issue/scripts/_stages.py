@@ -1369,7 +1369,7 @@ def specify(root, st, args):
     _refresh(root, p)
     items = [a for a in args if a and a.strip()]
     nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<one sentence: what "
-           "changes here>'] or ['no change']")
+           "changes here>'] or ['no change'] or ['missing', '<name of other code>', '<what must change there>']")
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
         view = [_place_view(root, st, p, limit=150),
@@ -1390,7 +1390,9 @@ def specify(root, st, args):
             view.append('The reproduction test fails on the original code' + (' and runs this place' if ran else '')
                         + ':\n' + st['repro']['before'][:500])
         if p.get('note'):
-            view.append('Found after the edits: ' + p['note'][:900])
+            label = ('Why it is in the plan: ' if p['note'].startswith('the specifier of') else
+                     'Why it is specified again: ' if p['note'].startswith('you named') else 'Found after the edits: ')
+            view.append(label + p['note'][:900])
             diff = step._patch_here(root, p)
             if diff:
                 view.append(diff[:1500])
@@ -1409,8 +1411,33 @@ def specify(root, st, args):
         text = re.sub(r'\(lines (\d+)-(\d+) not shown\)', lambda m: f'({int(m.group(2)) - int(m.group(1)) + 1} lines not '
                       'shown)', text)
         return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
-                'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change.'
+                'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change. '
+                'If the change belongs in other code (a function this place calls, for example), name that code with '
+                "'missing': it joins the plan and is specified first, then this place again."
                 '\n\n' + nxt)
+    if _args.clean(items[0]).lower() == 'missing':
+        # gm11b (the 31B, fastapi_12942): the fix was in field_annotation_is_scalar, which analyze_param calls; the
+        # specifier saw it, believed it could only change analyze_param, and wrote a workaround there
+        if len(items) < 2:
+            return "Name the other code: ['missing', '<its name>', '<what must change there>'].\n\n" + nxt
+        name, what = _args.clean(items[1]), ' '.join(items[2:]).strip()
+        q = next((_place_by(st, n) for n in _missing_names(name) or [name] if _place_by(st, n)), None)
+        if q is p:
+            return f'{name} is this place. Send what changes here, or [\'no change\'].\n\n' + nxt
+        if q is not None:
+            said = f' (its sentence: {q["sentence"]})' if q.get('sentence') else ''
+            return (f'{q["handle"]} is already a place of the fix{said}; its own specifier writes its change. Send what '
+                    f"changes in {p['handle']}, or ['no change'].\n\n" + nxt)
+        n0 = (_missing_names(name) or [name])[0]
+        if not any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n0])) \
+                and not ('.' in n0 and step._new_definition_owner(root, n0)):
+            return (f'No code named {name} was found. Send its qualified name (Class.method, or path.py::name), or what '
+                    f"changes here.\n\n" + nxt)
+        st['missing'].append([name, f'the specifier of {p["handle"]} says: {what[:300] or "the change belongs here"}',
+                              list(p['reqs']), _key(p)])
+        p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
+        st['asked'].pop(f'specify {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)
+        return (f'{name} goes into the plan: it is specified next, then {p["handle"]} again.\n\n{DONE}')
     sentence = ' '.join(x.strip() for x in items)
     if re.search(r'\blines?\s+\d+', sentence, re.I) and not p.get('ln_warned'):
         # gm4-gm9 (Gemma): "After line 56, add ...", "Replace line 154 ..."; numbers move after each edit and the editor
