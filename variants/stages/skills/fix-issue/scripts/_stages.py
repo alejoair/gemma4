@@ -44,7 +44,9 @@ MAX_EDITS = 4           # edits of one place
 MAX_SENTENCE = 1500
 LONG_EDIT = 80          # a place longer than this is edited by replacing lines, not sent whole
 BIG_CLASS = 120         # a class place longer than this is split into the members that change
-BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(45 * 60)))   # then the work goes to submit
+# then the work goes to submit; eval_config.yaml stops the agent at 5 min (the harness then takes the diff), so the
+# route submits with 30 s left
+BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(4 * 60 + 30)))
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
 ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
