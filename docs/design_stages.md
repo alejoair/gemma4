@@ -957,3 +957,29 @@ Faults left, fixed after the run (generic):
 | B8 many rules | neutral | slightly farther: one sentence more per prompt; reason: V10 lost 44% of calls to this error |
 
 Generic: the hint uses any library name of the issue; the prompt line covers any mangled skill name.
+
+### gm12 (the 31B, rich_3052, stopped at step 37: the Colab tunnel died, HTTP 530)
+
+Up to the tunnel's end the run was clean:
+- four requirements quoted from the issue;
+- a reproduction test kept at the first try (`TypeError: ... unexpected keyword argument 'case_sensitive'`);
+- locate chose `PromptBase.ask`, plus `PromptBase.process_response` for the matching;
+- scope added `PromptBase.check_choice`;
+- the specifier of `ask` sent `['missing', 'PromptBase.__init__', 'Add case_sensitive: bool = True ... and set
+  self.case_sensitive = case_sensitive.']`, the reference's change there.
+
+The specifier of `PromptBase.__init__` then read its note, "the specifier of PromptBase.ask says: Add ...", as a
+change meant for `ask` ("This is confusing. PromptBase.ask is likely a class method, so self.case_sensitive ... doesn't
+make sense there"). It ended its turn with no call and no text; the coordinator's step 3 sends that back to route.py,
+which asks again.
+
+**Change (generic):** the note now says whom the change is for: "Why it is in the plan: the specifier of X named
+PromptBase.__init__ for the change; what it says must change here: ...".
+
+| Checklist item | Status | Why |
+|---|---|---|
+| B12 contradictions | closer | the note no longer reads as an instruction about another place |
+| W6 names | closer | it names the place the change is for |
+| B8 many rules | neutral | |
+
+Generic: the wording holds for every place a specifier names.

@@ -1423,7 +1423,7 @@ def specify(root, st, args):
         if p.get('note'):
             label = ('Why it is in the plan: ' if p['note'].startswith('the specifier of') else
                      'Why it is specified again: ' if p['note'].startswith('you named') else 'Found after the edits: ')
-            view.append(label + p['note'][:900])
+            view.append(label + p['note'][:900].replace('named this code;', f'named {p["handle"]} for the change;'))
             diff = step._patch_here(root, p)
             if diff:
                 view.append(diff[:1500])
@@ -1464,7 +1464,11 @@ def specify(root, st, args):
                 and not ('.' in n0 and step._new_definition_owner(root, n0)):
             return (f'No code named {name} was found. Send its qualified name (Class.method, or path.py::name), or what '
                     f"changes here.\n\n" + nxt)
-        st['missing'].append([name, f'the specifier of {p["handle"]} says: {what[:300] or "the change belongs here"}',
+        # gm12 (the 31B, rich_3052): "the specifier of PromptBase.ask says: Add case_sensitive ... set
+        # self.case_sensitive" was read by the specifier of PromptBase.__init__ as a change for ask; the note now says
+        # that the change is for the code being specified (its name is put in when the view is shown)
+        st['missing'].append([name, f'the specifier of {p["handle"]} named this code; what it says must change here: '
+                              f'{what[:300] or "(not said)"}',
                               list(p['reqs']), _key(p)])
         p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
         st['asked'].pop(f'specify {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)
