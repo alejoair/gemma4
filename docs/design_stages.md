@@ -1018,3 +1018,52 @@ What it shows:
 Not decided yet (the user's): how the procedure meets 5 minutes. A time-aware route (skip the optional reproduce and
 review when little time is left, one locate for all requirements) and smaller thinking budgets for the agents are the
 two levers this run measures.
+
+#### Where V22's time went (all 238 model calls of the 10 tasks)
+
+Method: each trace step's `elapsed_s` and token counts (`results_v22/traces`), and vLLM's own log. A call's wall time is
+the time since the previous event: the previous tool's run, the prompt's prefill and the generation. Generation is
+estimated at vLLM's measured 36.6 tokens/s (median while one request runs; p10 27.8, p90 37.9).
+
+- **Generation is 91% of the time** (2,533 of 2,777 s). Prefill is negligible (2-4k prompt tokens per call, a prefix
+  cache hit rate of 79%). The scripts' own work (tests, the reproduction runs, the index) is inside the other 9%.
+- **About 80% of the generated tokens are thinking** (about 74k of 93k; estimated from the length of the thought text).
+- **vLLM ran one request at a time with 2% of its KV cache in use**: decoding is memory-bound, so concurrent requests
+  would cost almost nothing in speed. The procedure is strictly sequential.
+
+By kind of call:
+
+| Kind | Calls | Output tokens | Wall time | Tokens per call |
+|---|---|---|---|---|
+| An agent's decision (the useful work) | 60 | 47,124 | 1,412 s (51%) | 785 |
+| An agent's final reply, passing the coordinator's line on | 52 | 17,040 | 533 s (19%) | 328 |
+| Refused, an ADK error, or a call after the part was done | 9 | 11,258 | 319 s (11%) | 1,251 |
+| An agent's `open` | 42 | 10,140 | 293 s (11%) | 241 |
+| The coordinator | 75 | 7,162 | 221 s (8%) | 95 |
+
+By agent: specify 708 s (30 calls), reproduce 670 s (22), locate 425 s (53), requirements 393 s (31), scope 269 s (20),
+the coordinator 221 s (75), review 61 s, edit 31 s.
+
+Findings:
+1. **The ceremony of an agent call costs about 21 s**: its `open` (241 tokens), its final reply (328 tokens, almost all
+   thinking about copying one line) and two coordinator calls (95 each). It is 38% of all the time (1,047 s): about
+   100 s per task, a third of the 5 minutes. Locate is called once per requirement (53 calls).
+2. **Thinking fills the budget on every hard decision**: each specify decision produced 2,084-2,181 tokens (the
+   2,048 budget plus the call) and took 57-60 s. The time of a decision is set by its agent's thinking budget, not by
+   the decision.
+3. **A thinking budget that ends mid-thought can run away**: in fastapi_14851 reproduce's thinking was cut by the
+   budget, the model went on reasoning in the visible text, wrote the call as text in the middle of it and kept going
+   to `max_output_tokens` (8,192 tokens, 225 s, no call parsed). The visible output has no cap of its own below 8,192.
+4. **Reproduce is the most expensive optional stage**: 670 s over the 7 tasks that ran it (up to 225 s in one task).
+5. The fastest path that resolved (requests_7328: no reproduction, locate 11 s, scope 3 s, specify 125 s, edit 26 s,
+   review 53 s) still took more than 4 minutes.
+
+Levers, each generic, with what V22 says it would save (to be measured with the model, not assumed):
+
+| Lever | Saving in V22's terms | Risk for the 31B |
+|---|---|---|
+| Fewer agent calls per task: one locate call for all requirements; stages merged where one view serves both (requirements with locate, specify with edit for a single place) | about 21 s per agent call removed | a larger view per decision (checklist B7, B8) |
+| Smaller thinking budgets where the decision is bounded (specify 2048, the agents' 1024-2048) | about 28 s per specify decision for a halved budget | a worse sentence; measure resolve rate |
+| `max_output_tokens` of each agent near its largest legitimate answer (a whole definition or a test: about 2,000 tokens) instead of 8,192 | up to 160 s in a runaway call | a long whole-definition edit cut |
+| A time-aware route: no reproduction, and review only when time is left | up to 225 s per task | the review's check and the reproduction evidence are lost under pressure |
+| Concurrent calls (ParallelAgent for independent places or requirements) | the duration of the longest branch instead of the sum | ParallelAgent branches share /workspace; whether the scorer runs tasks concurrently is unknown |
