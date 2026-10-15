@@ -445,7 +445,9 @@ def _signatures(root, names, limit=6):
     out = []
     for n in names:
         for rel, s in table.find(n.split('.')[-1])[:1]:
-            out.append(f'  {s.name}: {_sig(s)}  ({rel})')
+            line = f'  {s.name}: {_sig(s)}  ({rel})'
+            if line not in out:             # gk10: 'FastAPI', 'FastAPI(on_startup=...)' gave one signature three times
+                out.append(line)
         if len(out) >= limit:
             break
     return out
