@@ -983,3 +983,38 @@ PromptBase.__init__ for the change; what it says must change here: ...".
 | B8 many rules | neutral | |
 
 Generic: the wording holds for every place a specifier names.
+
+### V22: the stages build on Kaggle with 5 minutes per task (10-15): 1/10
+
+The first Kaggle eval of the stages build, after the time limit went back to 5 minutes (S6, with 60, got no score).
+Only requests_7328 was resolved; the other nine stopped at 5 minutes with an empty patch.
+
+| Task | Last agent at the stop | Model calls | Seconds per agent |
+|---|---|---|---|
+| fastapi_14448 | specify | 25 | requirements 47, locate 83, scope 5, specify 60 |
+| fastapi_14583 | specify | 25 | requirements 15, reproduce 63, locate 57, scope 5, specify 68 |
+| fastapi_14851 | reproduce | 9 | requirements 31, reproduce 225 (the environment fault below) |
+| fastapi_14986 | specify | 27 | requirements 20, reproduce 57, locate 37, scope 14, specify 70 |
+| fastapi_15800 | specify | 23 | requirements 37, reproduce 84, locate 39, scope 8 |
+| httpx_3672 | specify | 35 | requirements 46, reproduce 30, locate 101, scope 4 |
+| requests_7328 | review (resolved) | 30 | requirements 17, locate 11, scope 3, specify 125, edit 26, review 53 |
+| rich_3006 | specify | 22 | requirements 26, reproduce 176, locate 22, scope 15, specify 12 |
+| rich_3469 | specify | 19 | requirements 35, locate 33, scope 10, specify 117 |
+| rich_3521 | review, no edit kept | 23 | requirements 13, locate 12, scope 4, specify 179 |
+
+What it shows:
+- **The budget is tokens, not steps.** vLLM on Kaggle's 4×L4 generated 28-38 tokens/s; every task used about 9,000
+  output tokens (thinking included) in its 5 minutes. On Colab's RTX PRO 6000 the resolved runs needed 3 min 49 s
+  (rich_3894) and 7 min (fastapi_12942) of model time at about twice that speed.
+- **Specify and reproduce are the long agents** (specify up to 179 s, reproduce up to 225 s): both have the largest
+  thinking budgets (specify 4096) and the largest views.
+- **An environment fault of our own Kaggle eval** cost the five fastapi tasks: swegemma's `_host_env.pth` lists only
+  paths with "site-packages", Kaggle's Python keeps its packages in `dist-packages`, which the sandbox venv adds after
+  its own .pth files, so `workspace_paths.pth` put `fastapi/` before them and langsmith's pytest plugin imported
+  `fastapi/requests.py` as `requests`. Every reproduction test failed to collect and the judge's reference runs did not
+  finish (unscorable). `tools/eval_env.py` now lists the host package directories first; the official order (the
+  workspace after the installed packages) is kept. Not a fault of the submission.
+
+Not decided yet (the user's): how the procedure meets 5 minutes. A time-aware route (skip the optional reproduce and
+review when little time is left, one locate for all requirements) and smaller thinking budgets for the agents are the
+two levers this run measures.
