@@ -879,3 +879,18 @@ already in the plan (giving that place's sentence), so the form cannot loop. Che
 | W6 names | closer | closer: the placeholder says what the value is |
 | B2 copying long text | neutral | closer: an id instead of the statement |
 | B8 many forms | neutral | neutral |
+
+### gm11d (the 31B, fastapi_12942, stopped after requirements): no reproduction for a concrete issue
+
+The two requirements quoted prose ("FastAPI fails to identify it correctly as **body** payload.") and so were not
+"concrete", and the route skipped reproduce, although the issue holds a whole example and both requirements named its
+`Dessert`. The scripts do not see the statement, but they have the names the requirements agent sent first; a name
+there that neither the repository nor a library defines comes from the issue's own example. A requirement that names
+one is now concrete as well.
+
+| Checklist item | Status | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the review gets a failing test to rerun instead of judging prose |
+| F2 failing test with expected vs actual | closer | there is a test to show |
+| W3 code in front | closer | the issue's example becomes the test the later agents see |
+| B9 exploring | neutral | no new form |

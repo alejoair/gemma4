@@ -412,7 +412,10 @@ def requirements(root, st, args):
         # concrete: the issue's own sentence holds code, a value or an example (backticks, quotes, digits, calls);
         # only such a requirement gets a reproduction test (s-st2, rich_3521: 'Segment.split_cells fix' became an
         # invented case of combining marks, and the test and the fix chased it)
-        concrete = bool(re.search(r'`[^`]+`|"[^"]+"|\'[^\']+\'|\d|\w\(', quote))
+        # gm11d (the 31B, fastapi_12942): both quotes were prose, but the requirements named `Dessert`, a name of the
+        # issue's own example (sent first, defined neither in the repository nor in a library): concrete too
+        example_names = set(st.get('names') or [])
+        concrete = bool(re.search(r'`[^`]+`|"[^"]+"|\'[^\']+\'|\d|\w\(', quote)) or any(n in example_names for n in new)
         reqs.append({'id': f'R{len(reqs) + 1}', 'quote': quote, 'what': what[:600], 'names': names, 'new': new,
                      'concrete': concrete})
     if not reqs:
