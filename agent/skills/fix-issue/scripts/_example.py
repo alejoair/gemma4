@@ -23,7 +23,10 @@ def _packages(root):
         try:
             for name in os.listdir(base):
                 p = os.path.join(base, name)
-                if name.startswith(('.', '_')) or name in ('tests', 'test', 'docs', 'docs_src', 'scripts'):
+                # gk15 (rich_3894): 'benchmarks' (asv's) was named as the repository's package next to rich
+                if name.startswith(('.', '_')) or name in ('tests', 'test', 'testing', 'docs', 'docs_src', 'scripts',
+                                                           'benchmarks', 'benchmark', 'bench', 'examples', 'example',
+                                                           'tools', 'tasks', 'tutorial', 'site'):
                     continue
                 if os.path.isdir(p) and os.path.isfile(os.path.join(p, '__init__.py')):
                     out.add(name)

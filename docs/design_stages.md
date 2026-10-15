@@ -737,3 +737,18 @@ scalar check.
 | B13 order in lists | closer: the relevant callee first | neutral | closer |
 | P6 the decision at both ends | neutral | closer: the whole decision before NEXT | neutral |
 | B7 / P7 long context | neutral (the same five) | slightly farther: up to 1,100 characters more in a long sentence; reason: a cut copy misled | slightly farther: up to 3 lines of 2; reason: the deciding function was missing |
+
+## Gated run gk15 (rich_3894, Haiku): no system fault (2026-10-15)
+
+rich_3894 ("Handle unusual `__qualname__` in inspect"; the author's sentence gives the fix). Resolved, with no stop:
+- locate listed the reference's place, `Inspect._get_signature`, first;
+- the line-number refusal turned "line 103" into the line's text;
+- the sibling-members heading and the whole restated sentence appeared as designed.
+
+The reproduction test was not kept: the failing case needs a class with `__qualname__` in its `__slots__` behind a
+decorator. Haiku's two tries were refused with their reasons (a TypeError at class creation; a test that passes on
+the code). One fix: the reproduce view named `benchmarks` (asv's folder) as a package of the repository next to
+`rich`. `_example._packages` now leaves out benchmarks, examples, tools and similar folders.
+
+Checklist: P7 closer (one unneeded, misleading name less in the view), W6 closer (the package named is the one the
+issue's users import); every other item neutral.
