@@ -40,6 +40,7 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 - **The only valid test is a run against the model, monitored and analysed step by step** through the gateway API
   (local 12B) or the Kaggle traces (31B). Dry runs and replays catch script errors; they are not evidence that a change
   works. (The user removed the unit tests on 2026-10-09.)
+- **Every change to the system must be generic** (the user's, 10-15): it must hold for any repository and any issue, never a rule for one task, library or name seen in a trace (the trace is only the evidence). Each change's checklist table says why it is generic.
 - Never remove a piece of the design because it has few or no calls: find out why it is not used and wire it.
 - Record design decisions and literature in the repository (this file and `docs/`), never only in the scratchpad.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md` as soon as it finishes.

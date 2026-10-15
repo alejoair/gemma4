@@ -894,3 +894,7 @@ one is now concrete as well.
 | F2 failing test with expected vs actual | closer | there is a test to show |
 | W3 code in front | closer | the issue's example becomes the test the later agents see |
 | B9 exploring | neutral | no new form |
+
+Generic (the user's rule of 10-15, checked for the four changes above): the specifier's `missing` takes any code the
+script resolves; the shadow check applies to every library name the issue uses; the open targets describe what each
+agent receives; "concrete" uses any name of the issue's own example. None names a task, a library or a class.
