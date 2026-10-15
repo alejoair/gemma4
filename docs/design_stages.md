@@ -898,3 +898,30 @@ one is now concrete as well.
 Generic (the user's rule of 10-15, checked for the four changes above): the specifier's `missing` takes any code the
 script resolves; the shadow check applies to every library name the issue uses; the open targets describe what each
 agent receives; "concrete" uses any name of the issue's own example. None names a task, a library or a class.
+
+### gm11e (the 31B, fastapi_12942, stopped at the second specify): the `missing` form worked; the callee was hidden
+
+The fixes of gm11c-gm11d worked: the reproduction test imported `pydantic.Tag` at the first try and was kept (422),
+the agents opened with `R1` and the place name, and the specifier of `analyze_param`, seeing the call
+`field_annotation_is_scalar`, sent `['missing', 'field_annotation_is_scalar', 'It needs to handle Annotated types,
+possibly by unwrapping them ...']`. The script added it to the plan and the route specified it next. That specifier
+saw the one-line wrapper but only the signature of `field_annotation_is_complex` (11 lines; the cap for a whole body
+was 6), reasoned "if field_annotation_is_complex handles Union, it returns True", and answered `no change`. The
+reference patch is three lines in `field_annotation_is_complex`.
+
+**Change (generic):** the deciding callees' bodies are shown whole within a line budget instead of a fixed 6-line cap:
+60 lines when the place is 20 lines or shorter (a wrapper delegates its decision), 24 otherwise; each body at most 30
+lines; the smallest are chosen first so that more of them are whole, and they keep the call order. On the snapshot:
+`field_annotation_is_scalar`'s view now holds `field_annotation_is_complex` whole; `analyze_param`'s holds
+`is_uploadfile_or_nonable_uploadfile_annotation` and `field_annotation_is_scalar` whole (the 13-line
+`is_uploadfile_sequence_annotation` keeps its signature).
+
+| Checklist item | Status | Why |
+|---|---|---|
+| W3 code in front | closer | the code the place delegates its decision to is in the view |
+| B9 exploring | closer | nothing to guess; the specifier has no reading form |
+| B11 doubting tool output | neutral | |
+| B7 long context | slightly farther: up to 60 lines more for a short place (whose own view is short); 24 for a long one. Reason: the decision needs that code |
+| P7 unneeded context | neutral: only callees in a condition or run by the reproduction test |
+
+Generic: it applies to every place and callee by size alone.

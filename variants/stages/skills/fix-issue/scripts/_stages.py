@@ -1330,14 +1330,22 @@ def _deciding_calls(root, st, p, ctx, limit=3):
     table = _impact.Table(root, docs=False)
     ran = (st.get('repro') or {}).get('calls') or ()
     rows = []
-    for d in _callees(root, table, [p], per_place=limit, ran=ran):
-        short = d['name'].split('.')[-1]
-        if re.search(rf'(?m)^\s+\S*\b{re.escape(d["name"])} \(', ctx or ''):
-            continue                                   # already shown by the context view
-        sym = table.get(d['rel'], d['name'])
-        if sym is not None and sym.end - sym.start + 1 <= 6:
-            # gm11: the specifier reasoned about field_annotation_is_scalar "though I don't have it" and gave up;
-            # a short function is shown whole
+    # whole bodies while they fit a line budget, larger when the place itself is short: gm11 (a 6-line cap) showed
+    # field_annotation_is_scalar whole, but gm11e's specifier of that one-line wrapper did not see the 11 lines of
+    # field_annotation_is_complex it delegates to, guessed, and answered 'no change'
+    budget = 60 if p['end'] - p['start'] + 1 <= 20 else 24
+    calls = [d for d in _callees(root, table, [p], per_place=limit, ran=ran)
+             if not re.search(rf'(?m)^\s+\S*\b{re.escape(d["name"])} \(', ctx or '')]   # not shown by the context view
+    syms = [table.get(d['rel'], d['name']) for d in calls]
+    whole = set()
+    for i in sorted(range(len(calls)), key=lambda i: syms[i].end - syms[i].start if syms[i] is not None else 1e9):
+        size = syms[i].end - syms[i].start + 1 if syms[i] is not None else 0
+        if syms[i] is not None and size <= min(budget, 30):
+            budget -= size
+            whole.add(i)                               # the smallest first, so that more of them are whole
+    for i, d in enumerate(calls):
+        sym = syms[i]
+        if i in whole:
             rows.append(f'  {d["name"]} ({d["rel"]}), called here: {d["link"]}\n'
                         + _code.numbered(_repo.read_lines(root, d['rel']), sym.start, sym.end, collapse=[]))
         else:
