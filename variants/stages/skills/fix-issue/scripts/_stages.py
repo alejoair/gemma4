@@ -683,6 +683,17 @@ def reproduce(root, st, args):
                       'client')
         elif bad:
             reason = 'it fails for a reason of its own, not the issue\'s:\n' + msgs.get(bad[0], '')[:600]
+            # gm11f (the 31B): Tag and Discriminator imported from fastapi.openapi.models, the repository's own classes
+            # of the same names, failed with "BaseModel.__init__() takes 1 positional argument"; the refusal now names
+            # the import (any name the issue uses that a library defines and the test takes from elsewhere)
+            libs = {h.rsplit('.', 1)[1]: h for h in st.get('lib_names') or []}
+            for node in ast.walk(ast.parse(code)):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    for a in node.names:
+                        h = libs.get(a.name)
+                        if h and node.module.split('.')[0] != h.split('.')[0]:
+                            reason += (f'\nIt imports {a.name} from {node.module}; the issue\'s {a.name} is the '
+                                       f"library's {h} (from {h.rsplit('.', 1)[0]} import {a.name}).")
         elif not calls and getattr(sys, 'monitoring', None) is not None:
             # a test that fails before it calls any function of the repository shows nothing about the issue
             reason = ('it calls no function of the repository (importing or reloading a module does not count), so '

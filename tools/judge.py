@@ -385,15 +385,17 @@ def baseline(evaluator, task, cache: Path | None) -> dict:
     if path is not None and path.exists():
         try:
             d = json.loads(path.read_text(encoding='utf-8'))
-            if d.get('key') == key and d.get('fingerprint') == fp:
+            if d.get('key') == key and d.get('fingerprint') == fp and all(r.get('ran') for r in d['ref']):
                 return d
-            print(f'judge: cache of {task.instance_id} is stale (key or environment changed); recomputing', flush=True)
+            print(f'judge: cache of {task.instance_id} is stale (key or environment changed, or a run did not finish); recomputing', flush=True)
         except (ValueError, OSError):
             pass
     d = {'key': key, 'fingerprint': fp,
          'ref': [run_verify(evaluator, task, task.patch) for _ in range(2)],
          'orig': [run_verify(evaluator, task, '') for _ in range(2)]}
-    if path is not None:
+    if path is not None and all(r.get('ran') for r in d['ref']):
+        # a run that did not finish (a missing snapshot, a sandbox fault) is not cached: it would leave the task
+        # unscorable on every later judgement (gm11c-gm11f: a snapshot missing once)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(d, indent=1), encoding='utf-8')
     return d

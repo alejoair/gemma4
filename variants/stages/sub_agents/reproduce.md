@@ -11,7 +11,7 @@ Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|><the whole test function, with its imports><|"|>],file_path:<|"|>repro.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 <|tool_call>call:run_skill_script{args:[<|"|>skip<|"|>],file_path:<|"|>repro.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
 
-If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call forms.
+If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call forms. If a call is answered "Skill '...' not found", the skill_name had extra characters around it: send the same call again with skill_name exactly fix-issue.
 
 ## The issue
 <issue>

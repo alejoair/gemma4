@@ -925,3 +925,35 @@ lines; the smallest are chosen first so that more of them are whole, and they ke
 | P7 unneeded context | neutral: only callees in a condition or run by the reproduction test |
 
 Generic: it applies to every place and callee by size alone.
+
+### gm11f (the 31B, fastapi_12942): resolved
+
+The second task the competition's model resolves with this system (judged: 1/1 FAIL_TO_PASS, nothing broken,
+official_feasible); the patch is the reference's three lines. 50 model calls, 25 tool calls, about 19 minutes of
+wall time with the gate's pauses. What the fixes of gm11-gm11e did in this run:
+- reproduce: the precheck caught a test that defined its own `Tag` and the 31B imported `pydantic.Tag` without losing
+  a try; the test was kept (422);
+- scope added `field_annotation_is_scalar`; its specifier saw `field_annotation_is_complex` whole (the line budget)
+  and sent `['missing', 'field_annotation_is_complex', 'add a check for origin is Annotated and return
+  field_annotation_is_complex(get_args(annotation)[0])']`;
+- that place was specified with the reference's change; the two other places were re-specified as `no change`;
+- review R2 `done`, R1 closed by the script (its reproduction passes, regressions clean), submit.
+
+Faults left, fixed after the run (generic):
+1. The first test imported `Tag` and `Discriminator` from `fastapi.openapi.models` (the repository's classes of the
+   same names) and the refusal gave only "BaseModel.__init__() takes 1 positional argument". A refusal for "a reason
+   of its own" now adds, for every name the issue uses from a library that the test imports from another module,
+   "It imports Tag from fastapi.openapi.models; the issue's Tag is the library's pydantic.Tag".
+2. One call had `skill_name` `「fix-issue」` ("Skill not found"); the 31B recovered by itself. Every prompt now says
+   what that error means, next to the ADK's "Argument ... is required".
+3. The judge cached reference runs that did not finish (a snapshot missing once), which left the task unscorable in
+   every later run; such runs are no longer cached, and a cached one is recomputed.
+
+| Checklist item | 1 import hint | 2 skill not found |
+|---|---|---|
+| F1 where the error is | closer | closer |
+| F4 challenges without new facts | closer: the retry gets a fact | neutral |
+| F8 harness errors | neutral | closer |
+| B8 many rules | neutral | slightly farther: one sentence more per prompt; reason: V10 lost 44% of calls to this error |
+
+Generic: the hint uses any library name of the issue; the prompt line covers any mangled skill name.
