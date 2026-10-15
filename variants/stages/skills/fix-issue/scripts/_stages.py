@@ -484,9 +484,12 @@ def _function_calls(root, calls):
     out = []
     for k in calls:
         rel, _, qual = k.partition('::')
-        sym = table.get(rel, qual.replace('.<locals>', ''))   # nested: 'get_websocket_app.<locals>.app'
+        qual = qual.replace('.<locals>', '')               # nested: 'get_websocket_app.<locals>.app'
+        sym = table.get(rel, qual)
         if sym is not None and sym.kind == 'def':
-            out.append(k)
+            # stored by the table's name, so that locate marks the nested candidate (gm9/gk9: the test ran
+            # FastAPI.setup.<locals>.openapi and the candidate FastAPI.setup.openapi had no mark)
+            out.append(f'{rel}::{qual}')
     return out
 
 
@@ -669,6 +672,10 @@ def locate(root, st, args):
             + '\n\n' + DONE)
 
 
+# methods of the builtin types: 'req.scope.get(...)' is not a use of APIRouter.get (gm9, gk9)
+COMMON_METHODS = set(dir(dict)) | set(dir(list)) | set(dir(str)) | set(dir(set)) | set(dir(bytes))
+
+
 def _uses_note(root, c, cands):
     """' [it uses X, Y from this list]' when the candidate reads or calls other candidates. g1 (fastapi_9555, the local
     31B): the issue named solve_dependencies, which only reads Dependant.is_gen_callable and its siblings, where the
@@ -678,7 +685,7 @@ def _uses_note(root, c, cands):
     used = _used_names(_repo.read_lines(root, c['rel']), c['name']) or set()
     others = [d['handle'] for d in cands if d is not c and d.get('name') not in (None, MODULE)
               and d['name'].split('.')[-1] in used and d['name'] != c['name']
-              and not d['name'].split('.')[-1].startswith('__')]
+              and not d['name'].split('.')[-1].startswith('__') and d['name'].split('.')[-1] not in COMMON_METHODS]
     return f'  [it uses {", ".join(others[:4])} from this list]' if others else ''
 
 
@@ -1108,7 +1115,8 @@ def edit(root, st, args):
            "['replace', '<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this "
            "change needs>']")
     first = _args.clean(items[0]).lower() if items else ''
-    if not items or (first in ('open', 'start', p['handle'].lower()) and len(items) == 1):
+    # gm9 (Gemma): ['open', 'FastAPI.setup_openapi'] was read as code to apply; a first item 'open' opens the place
+    if not items or first in ('open', 'start') or (first == p['handle'].lower() and len(items) == 1):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
         view = [_place_view(root, st, p, limit=150), f'What to change here: {p["sentence"]}']
         if not p.get('new'):
@@ -1327,7 +1335,12 @@ def _undefined(lines):
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
-        return f'Not applied: {r.error}.\n\n{nxt}'
+        err = r.error
+        if 'line number' in err:
+            # the base procedure's numbered form is not an answer form here (gm9: Gemma answered it with 'ls -R')
+            err = ("what was sent is not a whole definition (a def or class line and its body); to change some of "
+                   "its lines send ['replace', '<the old lines, as shown, without their numbers>', '<the new lines>']")
+        return f'Not applied: {err}.\n\n{nxt}'
     after = _repo.read_lines(root, p['rel'])
     changed = {p['rel']: names + [l.strip() for l in after[r.start - 1:r.end]]}
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
