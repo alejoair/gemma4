@@ -642,3 +642,58 @@ the next gated runs test them against the models.
 | B1 line numbers | neutral | neutral | neutral | neutral | closer | neutral | neutral |
 | B11 doubting tool output | closer: "done" is checked against real tests | neutral | neutral | closer: no empty requirement to approve | neutral | closer | neutral |
 | B7 long context | slightly farther: the review view grows by the failing tests (about 700 characters); reason: the evidence is what decides | slightly farther (up to 4 lines) | slightly farther (up to 5 + 4 lines) | neutral | neutral | closer | closer: fewer coordinator turns |
+
+## Gated runs gk13-gk13c (fastapi_15800, Haiku): new members (2026-10-15)
+
+fastapi_15800 asks for two new methods ("Add support for `app.frontend("/", directory="dist")` and
+`router.frontend(...)`"); the statement is the title only. Three runs, each stopped at its first system fault:
+
+1. **gk13 (build 7795e45): locate had no place for new code.** The candidates were swagger and docs code; the class
+   FastAPI, where the new method goes, was not on the list although the reproduction test failed with
+   `'FastAPI' object has no attribute 'frontend'`; the searches for `frontend` found nothing and locate gave up. The
+   base procedure had this (`_rank_candidates` puts the owner class of a new `var.name` first) but the stages build
+   passed no requirement types to it. **Fix:** `_new_members` puts the new member at the top of locate's list, in the
+   class it goes in: from the requirement's new names (`app.frontend` → the class `app` is made from, by
+   `_rank.owner_class`) and from the reproduction test's AttributeError. A search for it says it is new code and points
+   there. Locate stores it as a new place, and scope adds it once.
+2. **gk13b (build d8e7d91 without the edit-after-edit fix).**
+   - Locate chose both new places at once.
+   - Specify, for APIRouter.frontend, wrote only "registers a static frontend". The view of a new member said nothing
+     but "new code at the end of class APIRouter".
+   - The second editor was shown the first place. The tentative call after an accepted edit became real only when an
+     agent of another stage opened, never edit after edit.
+
+   **Fixes:**
+   - `_members_note`: the view of a new member lists its class's public methods and those it inherits from a library
+     class, resolved through the file's imports (APIRouter inherits `mount` from Starlette's `Router`).
+   - The tentative call becomes real whenever a new agent opens (`open` or no args), in any stage.
+3. **gk13c (build d8e7d91).**
+   - Both specify sentences named the means: `self.mount(path, StaticFiles(directory=directory, html=True))`.
+   - Edit after edit worked.
+   - The regression check ran at review (64 pass, 3 failing before).
+   - The rerun reproduction test forced "not done" while it failed. The test's own fault was that it used a `dist` that
+     does not exist, so the edit went to `check_dir=False`. The second review passed.
+   - One new fault: locate for R2 replied to the coordinator with its NEXT line instead of choosing. Step 3 of the
+     prompts said "reply with the line the script gives" without saying when. **Fix (all six sub-agent prompts, not run
+     live yet):** reply only when the script's NEXT says "no call". A NEXT that names a script is the agent's own call.
+     "Only if you cannot go on, reply with one sentence that says why."
+
+   Result: not resolved (0 of 60 FAIL_TO_PASS, nothing broken). The reference is a whole feature (fallback modes,
+   low-priority routes, `check_dir`, include prefixes) that the title does not describe.
+
+Open weak points from these runs:
+- A reproduction test can fail for its own reason after a correct fix (a missing directory). Review treats it as the
+  requirement's verdict.
+- Review does not compare twin places already edited (APIRouter.frontend kept checking the directory after
+  FastAPI.frontend stopped).
+- Scope has no related code for a new member (its callers do not exist yet).
+
+| Checklist item | New members in locate | The class's methods for new code | Edit after edit | Prompt step 3 |
+|---|---|---|---|---|
+| W1 choosing from named options | closer: the place for new code is an option, by name | closer: methods to build on are options, by name | neutral | neutral |
+| W3 code in front of it | neutral | closer: what the class can already do is shown | closer: the editor sees its own place | neutral |
+| W4 following a concrete next call | closer: a search that finds nothing points to the option | neutral | closer: the call and the state agree | closer: a NEXT that names a script is the agent's own call |
+| W6 names of code and statement | closer: `app.frontend` becomes `FastAPI.frontend` | closer | neutral | neutral |
+| B11 doubting tool output | neutral | neutral | closer: the view no longer contradicts the request | neutral |
+| B12 resolving contradictions | neutral | neutral | closer: request and window name the same place | closer: "reply with the line" no longer competes with the NEXT |
+| B7 long context | slightly farther: one or two lines more | slightly farther: up to 2,500 characters for a new member only; reason: without it the sentence said nothing of how | neutral | slightly farther: two sentences more in each prompt |
