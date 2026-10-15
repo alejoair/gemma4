@@ -752,3 +752,44 @@ the code). One fix: the reproduce view named `benchmarks` (asv's folder) as a pa
 
 Checklist: P7 closer (one unneeded, misleading name less in the view), W6 closer (the package named is the one the
 issue's users import); every other item neutral.
+
+## The open problems of the table, fixed in the design (2026-10-15)
+
+After the reading of `docs/runs_by_stage.md` and the root causes (proxies instead of checks, information that does
+not travel between stages, contradictions between what is shown and what is asked):
+
+1. **Localization without names (14583, 15800).**
+   - The test plugin records each failure's traceback (`_tests._frames`, `path:line`).
+   - Locate puts first the up to 3 repository functions the reproduction test's failure went through, innermost first:
+     "[the reproduction test fails here: <line>]", then "[the failure passes through here: <line>]".
+   - Dry run on rich_3894 with the reference test: `Text.append` (raises), `Text.assemble`, `Inspect._get_signature`
+     (the reference's place).
+2. **A requirement against the issue's intent (14986).** `requirements.md`:
+   - a requirement says what changes;
+   - the behaviour the issue does not mention stays as it is, so a change of how something is done does not become the
+     removal of what it produces (the hidden tests also run the existing tests).
+3. **A reproduction test that fails for its own reason (gk13c).** When the test still fails with the patch but with
+   another error kind than on the original code, and not on an assertion:
+   - review says so as a fact: either a part of the change is missing, or the test fails for a reason of its own;
+   - it no longer forces "not done".
+4. **Twins not compared (gk13c).** The review view shows the plan's places that share the reviewed places' short
+   name, with their diff.
+5. **Line numbers in specify (Gemma, gk14b, gk15).** The specify view shows the code without line numbers: it was the
+   anchor that the sentences used and that the script then refused.
+6. **Cost.**
+   - A requirement whose own reproduction test passes on the patch, with the regression check clean, is marked done
+     by the test, with no review agent (2-3 model calls less).
+   - The regression check's cache used `hash()`, which changes with every process, so it never hit. It is now keyed
+     by a SHA-1 of the patch, on disk (shared with the tentative route's copy), as is the test's rerun.
+
+| Checklist item | 1 failing frames | 2 requirements | 3 changed failure | 4 twins | 5 no numbers | 6 cost |
+|---|---|---|---|---|---|---|
+| W1 named options | closer: the failure's functions are options | neutral | neutral | neutral | neutral | neutral |
+| W3 code in front | closer | neutral | neutral | closer: the twin's diff | neutral | neutral |
+| W5 familiar formats | closer: a traceback's frames | neutral | closer: the two errors | closer: a diff | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | closer: no number to anchor on | neutral |
+| B11 doubting tool output | neutral | neutral | closer: the test's own failure is not a verdict | closer | neutral | neutral: the test decides only when it passes and nothing breaks |
+| B12 contradictions | neutral | neutral | closer: no forced "not done" against the evidence | neutral | closer: nothing shown that is then refused | neutral |
+| F4 challenges without facts | neutral | neutral | closer | neutral | neutral | neutral |
+| P3 positive rules with reason | neutral | closer: what to keep, with the reason | neutral | neutral | neutral | neutral |
+| B7 / P7 long context | slightly farther: up to 3 lines; reason: the only signal when the statement names nothing | slightly farther: one sentence | slightly farther: one line when it applies | slightly farther: up to 1,200 characters when there is a twin; reason: gk13c | closer: shorter lines | closer: fewer turns |

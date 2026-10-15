@@ -208,6 +208,13 @@ def _next_tool(root, st):
         st['recheck'] = []
     # 8 review, per requirement
     for r in st['reqs']:
+        if r['id'] not in st['reviews'] and not VERIFY and st['repro'] and st['repro'].get('rid') == r['id'] \
+                and _patch_files(root):
+            # cost (the table after gk15): the review agent of a requirement whose own test passes on the patch and
+            # whose existing tests still pass only confirmed it (2-3 model calls); the test decides it here
+            if _rerun_repro(root, st) and (_regression_check(root, st) or {}).get('verdict') != 'BROKEN':
+                st['reviews'][r['id']] = {'verdict': 'done', 'by': 'the reproduction test passes'}
+                continue
         if r['id'] not in st['reviews']:
             if st['repro'] and st['repro'].get('rid') == r['id'] and st['repro'].get('now_passes'):
                 st['reviews'][r['id']] = {'verdict': 'done', 'by': 'the reproduction test passes'}
@@ -502,7 +509,29 @@ def _run_repro(root, rel, code):
     calls = sorted(k for k, ids in res['calls'].items() if any(i in mine for i in ids)
                    and k.split('::')[0].endswith('.py') and not _repo.is_test_path(k.split('::')[0])
                    and os.path.isfile(os.path.join(root, k.split('::')[0])))
+    global LAST_FRAMES
+    LAST_FRAMES = _repo_frames(root, [f for k in mine for f in res.get('frames', {}).get(k, [])])
     return mine, msgs, _function_calls(root, calls), res['output']
+
+
+LAST_FRAMES = []     # the repository frames of the last _run_repro's failure, innermost last
+
+
+def _repo_frames(root, frames):
+    """'path:line' traceback entries inside the repository's own code (no tests, no libraries), as (rel, line)."""
+    out = []
+    real = os.path.realpath(root)
+    for f in frames:
+        path, _, line = f.rpartition(':')
+        if not line.isdigit():
+            continue
+        full = os.path.realpath(path if os.path.isabs(path) else os.path.join(root, path))
+        if not full.startswith(real + os.sep):
+            continue
+        rel = os.path.relpath(full, real)
+        if rel.endswith('.py') and not _repo.is_test_path(rel) and not rel.endswith(REPRO_NAME):
+            out.append((rel, int(line)))
+    return out
 
 
 def _function_calls(root, calls):
@@ -602,7 +631,7 @@ def reproduce(root, st, args):
         return f'Refused: {reason}\n\n{form}\n\n{nxt}'
     failing = [k for k, v in outcomes.items() if v == 'failed']
     st['repro'] = {'rid': r['id'], 'rel': rel, 'code': code, 'ids': sorted(outcomes), 'before': msgs.get(failing[0], '')[:900],
-                   'calls': calls[:60], 'now_passes': False, 'now': ''}
+                   'calls': calls[:60], 'now_passes': False, 'now': '', 'frames': LAST_FRAMES[-6:]}
     st['repro_done'] = True
     return (f'Kept: the test fails on the code as it is now:\n{st["repro"]["before"][:600]}\nIt runs '
             f'{len(calls)} functions of the repository. ' + ('It will be run again after the edits.' if VERIFY else
@@ -642,9 +671,45 @@ def _new_members(root, st, r):
     return out
 
 
+def _failing_places(root, st, r, limit=3):
+    """The functions of the repository the reproduction test's failure went through, innermost first (the last frames
+    of its traceback in the repository's own code), as candidates: gk13-gk15 located by words alone, and a title-only
+    statement gives them nothing. The innermost one often only checks and raises (rich_3894: Text.append raises, the
+    fix is in its caller Inspect._get_signature), so its callers on the traceback come with it."""
+    repro = st.get('repro') or {}
+    if repro.get('rid') not in (r['id'], None) or not repro.get('frames'):
+        return []
+    table = _impact.Table(root, docs=False)
+    out, seen = [], set()
+    for i, (rel, line) in enumerate(reversed(repro['frames'])):
+        syms = [x for x in table.syms.get(rel, []) if x.kind == 'def' and x.start <= line <= x.end]
+        if not syms:
+            continue
+        sym = max(syms, key=lambda x: x.start)            # the innermost definition holding the line
+        if (rel, sym.name) in seen:
+            continue
+        seen.add((rel, sym.name))
+        lines = _repo.read_lines(root, rel)
+        text = lines[line - 1].strip() if line <= len(lines) else ''
+        how = 'the reproduction test fails here' if not out else 'the failure passes through here'
+        out.append({'rel': rel, 'name': sym.name, 'start': sym.start, 'end': sym.end,
+                    'line': f'({rel}, def) {_sig(sym, 100)}  [{how}: {text[:80]}]'})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _candidates(root, st, r, n=8):
     text = (r.get('quote') or '') + '\n' + r['what']
     cands, _ = step._rank_candidates(root, text, r['names'], [], n=n)
+    failing = _failing_places(root, st, r)
+    for f in reversed(failing):
+        same = next((c for c in cands if _key(c) == _key(f)), None)
+        if same is not None:
+            cands.remove(same)
+        cands.insert(0, f)
+    if failing:
+        step._set_handles(cands)
     new = _new_members(root, st, r)
     if new:
         cands = new + [c for c in cands if not any(_key(c) == _key(x) for x in new)]
@@ -1234,6 +1299,9 @@ def _refresh(root, p):
         p['new'] = False
 
 
+NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
+
+
 def specify(root, st, args):
     name = (st['current'] or (None, None))[1]
     p = _place_by(st, name) if name else None
@@ -1270,7 +1338,10 @@ def specify(root, st, args):
             if p.get('old_sentence'):
                 view.append('The sentence before: ' + p['old_sentence'])
         ids = ', '.join(r['id'] for r in reqs) or 'its requirements'
-        return ('\n\n'.join(view) + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
+        # B1 (gm4-gm9, gk14b, gk15): the numbered view was the anchor the sentences used ("after line 56", "line
+        # 103"), then refused; the specifier names code by its text, so it reads it without numbers
+        text = NUMBERED.sub(r'\1', '\n\n'.join(view))
+        return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change.'
                 '\n\n' + nxt)
     sentence = ' '.join(x.strip() for x in items)
@@ -1761,17 +1832,30 @@ def _patch_files(root):
             for rel in _tests.changed_files(root) if not rel.endswith(REPRO_NAME)}
 
 
+def _patch_sig(root):
+    """A stable signature of the patch's files. hash() of a str changes with every process (PYTHONHASHSEED), and every
+    script call is a new process: the old per-state cache never hit, and the regression check ran again at every
+    review."""
+    import hashlib
+    files = _patch_files(root)
+    h = hashlib.sha1()
+    for k, v in sorted(files.items()):
+        h.update(k.encode() + b'\0' + (v or '').encode('utf-8', 'replace') + b'\0')
+    return h.hexdigest() if files else ''
+
+
 def _regression_check(root, st):
     """The existing tests of the changed code, chosen by the changed names (no whole-suite call map), on the patch and on
     the original code, once per patch state. gk9 (fastapi_14986): the patch removed root_path from the served document,
     following a misread requirement, broke test_legitimate_root_path_still_appears, and every stage said "done": with
     the per-edit tests off nothing ran an existing test."""
-    files = _patch_files(root)
-    if not files:
+    sig = _patch_sig(root)
+    if not sig:
         return None
-    sig = str(hash(tuple(sorted((k, v or '') for k, v in files.items()))))
-    if st.get('reg') and st['reg'].get('sig') == sig:
-        return st['reg']
+    cached = (_state.load('reg_cache', {}) or {}).get(sig)     # on disk: shared with the tentative route's copy
+    if cached:
+        st['reg'] = cached
+        return cached
     changed = {}
     for p in st['plan']:
         if p.get('status') == 'done':
@@ -1787,6 +1871,7 @@ def _regression_check(root, st):
                          if l[:1] in '+-' and not l.startswith(('+++', '---')) and l[1:].strip()][:60]
     verdict, detail, failures = _tests.check(root, changed, use_map=False)
     st['reg'] = {'sig': sig, 'verdict': verdict, 'detail': detail[:1200], 'failures': list(failures)[:8]}
+    _state.save('reg_cache', {**(_state.load('reg_cache', {}) or {}), sig: st['reg']})
     return st['reg']
 
 
@@ -1795,9 +1880,49 @@ def _score(root, st):
     return [repro, -len(st['regressions']), len(_patch_files(root)) > 0]
 
 
+ERROR_KIND = re.compile(r'^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Warning|Exit|Interrupt))\b', re.M)
+
+
+def _error_kind(text):
+    """The exception class a failure message ends with ('AttributeError'), or 'AssertionError' for a failed assert."""
+    kinds = ERROR_KIND.findall(text or '')
+    return kinds[-1].split('.')[-1] if kinds else ''
+
+
+def _changed_failure(repro):
+    """True when the reproduction test still fails with the patch, but with another kind of error than on the original
+    code and not on its assertion: gk13c (fastapi_15800) failed first with AttributeError (no frontend) and then with
+    RuntimeError (the test's own 'dist' did not exist); that is not the requirement's verdict."""
+    before, now = _error_kind(repro.get('before')), _error_kind(repro.get('now'))
+    return bool(before and now and before != now and now != 'AssertionError')
+
+
+def _rerun_repro(root, st):
+    """The reproduction test on the patch as it is, once per patch state (cached on disk by the patch's signature)."""
+    import hashlib
+    sig = _patch_sig(root) + '|' + hashlib.sha1(st['repro']['code'].encode('utf-8', 'replace')).hexdigest()
+    cache = _state.load('repro_cache', {}) or {}
+    if sig not in cache:
+        outcomes, msgs, _, _ = _run_repro(root, st['repro']['rel'], st['repro']['code'])
+        passed = bool(outcomes) and all(v == 'passed' for v in outcomes.values())
+        failing = [k for k, v in outcomes.items() if v != 'passed']
+        cache[sig] = [passed, 'it passes' if passed else 'it still fails:\n' + (
+            msgs.get(failing[0], '') if failing else 'it did not run')[:500]]
+        _state.save('repro_cache', cache)
+    st['repro']['now_passes'], st['repro']['now'] = cache[sig]
+    return cache[sig][0]
+
+
+def _twins(st, places):
+    """Plan places that share a short name with these places but serve other requirements (FastAPI.frontend and
+    APIRouter.frontend): gk13c's review of R2 did not see that FastAPI.frontend had changed after its own review."""
+    shorts = {p['name'].split('.')[-1] for p in places if p['name'] != MODULE}
+    return [q for q in st['plan'] if q not in places and q['name'].split('.')[-1] in shorts]
+
+
 def _verify(root, st):
     files = _patch_files(root)
-    sig = hash(tuple(sorted((k, v or '') for k, v in files.items())))
+    sig = _patch_sig(root)
     if st['verified'] == sig or not files:
         return
     st['verified'] = sig
@@ -1859,14 +1984,14 @@ def review(root, st, args):
             if not VERIFY:
                 # gk7 (fastapi_14583, Haiku): with stage 7 off the kept test was never run on the patch, and the review
                 # said "done" while the test still failed; only this test runs here (seconds)
-                outcomes, msgs, _, _ = _run_repro(root, st['repro']['rel'], st['repro']['code'])
-                passed = bool(outcomes) and all(v == 'passed' for v in outcomes.values())
-                st['repro']['now_passes'] = passed
-                failing = [k for k, v in outcomes.items() if v != 'passed']
-                st['repro']['now'] = ('it passes' if passed else 'it still fails:\n' + (
-                    msgs.get(failing[0], '') if failing else 'it did not run')[:500])
+                _rerun_repro(root, st)
             view.append('The reproduction test, on the original code:\n' + st['repro']['before'][:400] +
                         '\nWith the patch: ' + (st['repro']['now'] or 'not run again')[:500])
+            if _changed_failure(st['repro']):
+                view.append(f'It fails with another error than before ({_error_kind(st["repro"]["before"])} on the '
+                            f'original code, {_error_kind(st["repro"]["now"])} now): either the change is still '
+                            'missing a part, or the test fails for a reason of its own (something it uses that does '
+                            'not exist). Decide from the code.')
         if st['regressions']:
             view.append('Existing tests the whole patch breaks: ' + ', '.join(t for t, _ in st['regressions'][:5]))
         reg = _regression_check(root, st) or {}
@@ -1876,6 +2001,10 @@ def review(root, st, args):
                         'them, it was read against the issue: the issue\'s own sentence decides.')
         elif reg.get('detail'):
             view.append('Existing tests of the changed code: ' + reg['detail'][:300])
+        for q in _twins(st, places):
+            diff = step._patch_here(root, q) if q.get('status') == 'done' else ''
+            view.append(f'{q["handle"]} has the same name and serves {", ".join(q["reqs"])}: '
+                        + ('its diff, for a change the two may need alike:\n' + diff[:1200] if diff else 'not edited.'))
         _, options = _related(root, st, places)
         near = [d['name'] for d in options[:8]]
         if near:
@@ -1885,7 +2014,8 @@ def review(root, st, args):
                 + nxt)
     if first in ('done', 'yes', 'cannot tell', "can't tell", 'unknown'):
         repro = st['repro'] if st['repro'] and st['repro'].get('rid') == rid else None
-        if repro and repro.get('now') and not repro.get('now_passes') and not st.get('review_refused', {}).get(rid):
+        if repro and repro.get('now') and not repro.get('now_passes') and not _changed_failure(repro) \
+                and not st.get('review_refused', {}).get(rid):
             # the test's output decides, not the opinion (design_stages.md, stage 8): s-st2 fastapi_14448 was
             # reviewed 'done' while its reproduction test still failed
             st.setdefault('review_refused', {})[rid] = True
