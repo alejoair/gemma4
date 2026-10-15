@@ -148,7 +148,9 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 - `tools/colab_vllm.ipynb` (10-15): the competition's model and vLLM (0.19.1, the gemma4 parsers) on a Colab Pro GPU,
   served through a Cloudflare quick tunnel with a key; `tools/step_gate.py --stream-upstream --api-key-file <file>`
   reaches it (a quick tunnel cuts a response whose first byte takes over 100 s). The tunnel's domain must be in the
-  environment's allowed domains.
+  environment's allowed domains. To restart vLLM there, kill its engine too (`pkill -9 -f 'VLLM::EngineCore'`, then
+  wait for the VRAM to drop): `proc.kill()` leaves the engine holding 91 GB and the new server fails (10-15). Stopping a
+  cell can kill the tunnel or vLLM started from that kernel; the repository's notebook starts both in new sessions.
 - `tools/build.py` (build + validate), `tools/bench_locate.py` (129-task localization benchmark; snapshots via
   `tools/fetch_snapshots.sh`).
 - `VERSIONS.md`: every eval run and submission.
