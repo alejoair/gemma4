@@ -62,7 +62,7 @@ def _is_test_file(rel):
     return rel.endswith('.py') and (name.startswith('test_') or name.endswith('_test.py'))
 
 
-def select(root, changed):
+def select(root, changed, use_map=True):
     """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. First the tests that
     call a changed function on the original code (the call map), grouped by file, the files with most such tests
     first. Without the map, test files score by being the changed module's own test file (test_<module>.py), then by
@@ -72,7 +72,7 @@ def select(root, changed):
     for items in changed.values():
         for item in items:
             names.update(w for w in IDENT.findall(item) if w not in COMMON)
-    m = callmap(root)
+    m = callmap(root) if use_map else None   # the stages build's review check: lexical selection only (no suite run)
     if m:
         by_file = {}
         for key, tids in m.items():
@@ -634,7 +634,7 @@ def _rerun(root, ids, stubs):
     return {i for i in ids if r['outcomes'].get(i) in ('failed', 'error')}
 
 
-def check(root, changed, renamed=(), cover=None, undo=None):
+def check(root, changed, renamed=(), cover=None, undo=None, use_map=True):
     """The verdict on the current code: ('OK' | 'UNCHECKED' | 'BROKEN', detail, new failures). A failure counts against
     the edit only when the same test, in the same groups, passes on the original code, fails again when run alone,
     and (undo = (rel, lines before the edit)) passes on the code just before this edit. OK needs passing tests that run
@@ -645,7 +645,7 @@ def check(root, changed, renamed=(), cover=None, undo=None):
     if broken_imports:
         detail = '\n'.join(f'  importing {m} fails: {err}' for m, err in broken_imports[:3])
         return 'BROKEN', 'the changed code cannot be imported any more:\n' + detail, [m for m, _ in broken_imports]
-    targets = select(root, changed)
+    targets = select(root, changed, use_map)
     if not targets:
         return 'UNCHECKED', 'no existing test uses the changed code (it imports without errors)', []
     stubs = tuple(_state.load('stubs', []))

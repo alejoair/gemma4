@@ -262,6 +262,13 @@ def _looks_like_requirements(items):
     return len(items) >= 2 and len(items) % 2 == 0 and all(len(x.split()) >= 3 for x in items[1::2])
 
 
+def _copied(r):
+    """Whether a requirement's 'what must happen' only repeats the issue's sentence."""
+    a = re.sub(r'\W+', ' ', (r.get('what') or '').lower()).strip()
+    b = re.sub(r'\W+', ' ', (r.get('quote') or '').lower()).strip()
+    return bool(a) and bool(b) and difflib.SequenceMatcher(None, a, b).ratio() > 0.9
+
+
 def _sentence(a):
     """A sentence as sent, without the quotes that wrap it whole. _args.clean strips every leading backtick, and
     '`solve_dependencies` calls `inspect.unwrap`' lost its first one (local run h2, fastapi_9555): the backticks no
@@ -312,6 +319,9 @@ def requirements(root, st, args):
             found = table.find(name.split('.')[-1]) if re.fullmatch(r'[A-Za-z_][\w.]*', name) else []
             found = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name) or
                      s.name.endswith('.' + name.split('.')[-1])]
+            exact = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name)]
+            if exact and '.' in name:
+                found = exact           # gk11: 'Session.send' also showed BaseAdapter.send
             shown = []
             for rel, s in found:
                 sig = _sig(s)
@@ -349,10 +359,22 @@ def requirements(root, st, args):
                      'concrete': concrete})
     if not reqs:
         return 'No requirement was read. ' + form
+    dropped = []
+    if len(reqs) > 1:
+        # gk11, gm8: a requirement whose "what must happen" repeats the issue's sentence states no situation and no
+        # result; locate then got nonsense candidates and review said "done" to anything (weak point 22)
+        keep = [r for r in reqs if not _copied(r)]
+        if keep:
+            dropped = [r for r in reqs if r not in keep]
+            reqs = keep
+            for i, r in enumerate(reqs):
+                r['id'] = f'R{i + 1}'
     st['reqs'] = reqs
     _save_statement(st)
     listed = '\n'.join('  ' + _req_line(r) + (f' [new: {", ".join(r["new"])}]' if r['new'] else '') for r in reqs)
-    return f'Saved {len(reqs)} requirements:\n{listed}\n\n{DONE}'
+    note = ('\nLeft out, because what must happen repeats the issue\'s sentence (no situation and result): ' +
+            '; '.join(f'"{r["what"][:80]}"' for r in dropped)) if dropped else ''
+    return f'Saved {len(reqs)} requirements:\n{listed}{note}\n\n{DONE}'
 
 
 def _sig(sym, limit=300):
@@ -440,7 +462,7 @@ def _word_template(root, text, max_lines=14):
                     continue
                 score = sum(1 for w in words if w in '\n'.join(body).lower() or w in rel.lower())
                 key = (score, -len(body))
-                if score and (best is None or key > best[0]):
+                if score >= 2 and (best is None or key > best[0]):   # gk11: one word ('response') gave test_hooks
                     best = (key, rel, body)
     return (best[1], best[2]) if best else None
 
@@ -612,6 +634,46 @@ def _candidates(root, st, r, n=8):
             c = step._candidate(index, d, m, note='the reproduction test runs it', root=root)
             cands.append(c)
         step._set_handles(cands)
+    return _with_callers(root, cands)
+
+
+def _with_callers(root, cands, top=3, limit=4):
+    """The candidates and, after them, the code that calls the first ones. gk3-gm7 (fastapi_14583, a title-only
+    statement): the words found annotation_is_pydantic_v1 and Param.__init__, never get_dependant, which calls
+    analyze_param, where the reference warns; one step up from the candidates is where such code is."""
+    table = _impact.Table(root, docs=False)
+    seen = {_key(c) for c in cands}
+    added = []
+    def eligible(c):
+        if c.get('name') in (None, MODULE) or ', class)' in (c.get('line') or ''):
+            return False
+        short = c['name'].split('.')[-1]
+        parent = c['name'].rsplit('.', 1)[0] if '.' in c['name'] else None
+        psym = table.get(c['rel'], parent) if parent else None
+        # not a dunder, a nested function, or a name called in many places ('app'): their callers say little
+        return not (short.startswith('__') or short in COMMON_METHODS or (psym is not None and psym.kind == 'def')
+                    or len(table.calls.get(short, [])) > 8)
+
+    for c in [c for c in cands if eligible(c)][:top]:
+        sites = table.calls.get(c['name'].split('.')[-1], [])
+        for r, caller, line in sites:
+            if not caller or _repo.is_test_path(r) or _repo.is_doc_path(r) or f'{r}::{caller}' in seen:
+                continue
+            res = step._resolve(root, [f'{r}::{caller}'])
+            if res:
+                d = res[0]
+                sym = table.get(r, caller)
+                sig = _sig(sym)[:100] if sym is not None else ''
+                d['line'] = f'({r}, def) {sig}  [calls {c["name"]}]'
+                seen.add(f'{r}::{caller}')
+                added.append(d)
+            if len(added) >= limit:
+                break
+        if len(added) >= limit:
+            break
+    if added:
+        cands = cands + added
+        step._set_handles(cands)
     return cands
 
 
@@ -689,7 +751,8 @@ def _uses_note(root, c, cands):
     """' [it uses X, Y from this list]' when the candidate reads or calls other candidates. g1 (fastapi_9555, the local
     31B): the issue named solve_dependencies, which only reads Dependant.is_gen_callable and its siblings, where the
     decision is made; they were on the list, but nothing said that one uses the others."""
-    if c.get('name') in (None, MODULE):
+    if c.get('name') in (None, MODULE) or ', class)' in (c.get('line') or '') or _repo.is_doc_path(c['rel']):
+        # gk12: the class FastAPI and decorated docs examples were marked as using on_event
         return ''
     used = _used_names(_repo.read_lines(root, c['rel']), c['name']) or set()
     others = [d['handle'] for d in cands if d is not c and d.get('name') not in (None, MODULE)
@@ -724,10 +787,75 @@ def _related(root, st, located):
             auto.append(d)
         elif q.name != '<exports>':
             options.append(d)
+    seen = {(d['rel'], d['name']) for d in auto + options} | set(chosen)
+    for d in _callees(root, table, located) + _importers(root, table, located):
+        if (d['rel'], d['name']) not in seen:
+            seen.add((d['rel'], d['name']))
+            options.append(d)
     return auto, options
 
 
+def _callees(root, table, located, per_place=5):
+    """The repository's functions a chosen place calls: self.<method>() of its class, and plain names defined once in
+    the repository. gk12 (fastapi_14851): scope listed copies, callers and readers, and "No other related code was
+    found"; the reference changes what on_event calls (add_event_handler, APIRouter.__init__, the lifespan)."""
+    out = []
+    for p in located:
+        if p['name'] == MODULE:
+            continue
+        sym = table.get(p['rel'], p['name'])
+        if sym is None:
+            continue
+        cls = p['name'].rsplit('.', 1)[0] if '.' in p['name'] else None
+        n = 0
+        for node in ast.walk(sym.node):
+            if not isinstance(node, ast.Call) or n >= per_place:
+                continue
+            f, target = node.func, None
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == 'self' and cls:
+                target = table.get(p['rel'], f'{cls}.{f.attr}')
+                rel = p['rel']
+            elif isinstance(f, ast.Name) and f.id not in COMMON_METHODS:
+                defs = [(r, d) for r, d in table.find(f.id) if d.name == f.id and not _repo.is_test_path(r)]
+                if len(defs) == 1:
+                    rel, target = defs[0]
+            if target is not None and target.name != p['name'] and target.kind == 'def':
+                lines = _repo.read_lines(root, p['rel'])
+                out.append({'rel': rel, 'name': target.name, 'start': target.start, 'end': target.end,
+                            'reason': f'called by {p["name"].split(".")[-1]} (line {node.lineno})',
+                            'link': lines[node.lineno - 1].strip()[:120] if node.lineno <= len(lines) else ''})
+                n += 1
+    return out
+
+
+def _importers(root, table, located, limit=4):
+    """The code that imports a module whose top-level code was chosen (gm4-gm7, fastapi_14583: no related code at all
+    for fastapi/_compat/v1.py, while the reference changes the code that uses it)."""
+    out = []
+    for p in located:
+        if p['name'] != MODULE or not p['rel'].endswith('.py'):
+            continue
+        mods = _tests._module_names(p['rel'])
+        last = os.path.basename(p['rel'])[:-3]
+        pat = re.compile(r'^\s*(from\s+(' + '|'.join(re.escape(m) for m in mods) + r'|\.+' + re.escape(last) +
+                         r')\s+import|import\s+(' + '|'.join(re.escape(m) for m in mods) + r')\b)', re.M)
+        for rel in table.syms:
+            if rel == p['rel'] or _repo.is_test_path(rel) or _repo.is_doc_path(rel):
+                continue
+            text = _repo.read_text(root, rel)
+            m = pat.search(text)
+            if m:
+                line = text[:m.start()].count('\n') + 1
+                out.append({'rel': rel, 'name': MODULE, 'start': 1, 'end': len(text.splitlines()),
+                            'reason': f'imports {os.path.basename(p["rel"])} (line {line})'})
+                if len(out) >= limit:
+                    break
+    return out
+
+
 def _link_line(root, d):
+    if d.get('link') is not None:
+        return d['link']               # the line is in the chosen place's file (a callee's link)
     m = re.search(r'\(line (\d+)\)', d['reason'])
     lines = _repo.read_lines(root, d['rel'])
     n = int(m.group(1)) if m else d['start']
@@ -768,6 +896,7 @@ def scope(root, st, args):
             else:
                 located.append({**p, 'reqs': [rid]})
     auto, options = _related(root, st, located)
+    step._set_handles(options)
     st['scope_options'] = options[:12]
     newp = _new_places(root, st)
     items = [a for a in args if a and a.strip()]
@@ -785,7 +914,8 @@ def scope(root, st, args):
         if options:
             view.append('Related code (each with the line that links it). Which of these must change too, so that the '
                         'requirements hold everywhere?\n' + '\n'.join(
-                            f'  {d["name"]} ({d["rel"]}) — {d["reason"]}: {_link_line(root, d)}' for d in options[:12]))
+                            f'  {d.get("handle") or d["name"]} ({d["rel"]}) — {d["reason"]}: {_link_line(root, d)}'
+                            for d in options[:12]))
         else:
             view.append('No other related code was found.')
         if st['repro'] and st['repro'].get('calls'):
@@ -981,6 +1111,13 @@ def specify(root, st, args):
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change.'
                 '\n\n' + nxt)
     sentence = ' '.join(x.strip() for x in items)
+    if re.search(r'\blines?\s+\d+', sentence, re.I) and not p.get('ln_warned'):
+        # gm4-gm9 (Gemma): "After line 56, add ...", "Replace line 154 ..."; numbers move after each edit and the editor
+        # sees its own window (checklist B1)
+        p['ln_warned'] = True
+        return ("Name the code by its text, not by line numbers (they move after each edit, and the editor's window "
+                "numbers its own lines): for example 'after the line `PYDANTIC_V2 = ...`' or 'replace "
+                "`return self.router.on_event(event_type)` with ...'. Send the sentence again.\n\n" + nxt)
     if len(sentence) > MAX_SENTENCE:
         return f'Too long ({len(sentence)} characters, at most {MAX_SENTENCE}). Send it shorter.\n\n{nxt}'
     if step.NO_CHANGE.match(sentence):
@@ -1420,9 +1557,32 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 f"'{first}', '<what must change in it>'], or no call: reply with one sentence for the coordinator.")
     fix = ("another ['replace', '<old lines>', '<new lines>']" if p['end'] - p['start'] + 1 > LONG_EDIT
            else 'the corrected whole definition')
+    call = _tentative(root, st)
+    if call:
+        # gk12: an accepted edit had no line for the coordinator, which then asked route.py (one call per edit);
+        # the next call is computed on a copy of the state and made real when the next agent opens (main)
+        st['tentative'] = call
+        line = f'edit is done: {p["handle"]} is changed. Next: {call}.'
+        return (f'{word}: {detail}.\n{shown}\n\nIf this is the whole change, reply to the coordinator without a call, '
+                f'with exactly this line (its next call, which you pass on):\n{line}\nIf it is wrong or incomplete, '
+                f'send {fix} instead.\n\nNEXT: no call: reply with exactly that line (or send {fix} to edit.py).')
     return (f'{word}: {detail}.\n{shown}\n\nIf this is the whole change, reply with one sentence for the coordinator, '
             f'without a call. If it is wrong or incomplete, send {fix}.\n\nNEXT: no call: '
             f'reply with one sentence for the coordinator (or send {fix} to edit.py).')
+
+
+def _tentative(root, st):
+    """The coordinator's next call if nothing changes, computed on a copy of the state (route changes it: the asks,
+    the current step); None when it is not a call of a tool."""
+    import copy
+    try:
+        out = route(root, copy.deepcopy(st), ['next'])
+    except Exception:                                   # never a traceback for the model
+        return None
+    nxt = out.strip().split('\n')[-1]
+    if not nxt.startswith('NEXT: call the tool'):
+        return None
+    return nxt[len('NEXT: '):].split('. If it replies')[0].split('; when it replies')[0].rstrip('.')
 
 
 # ------------------------------------------------------------------------------------------- 7 verify
@@ -1430,6 +1590,35 @@ def _after_edit(root, st, p, r, before, names, nxt):
 def _patch_files(root):
     return {rel: (''.join(_repo.read_lines(root, rel)) if os.path.exists(os.path.join(root, rel)) else None)
             for rel in _tests.changed_files(root) if not rel.endswith(REPRO_NAME)}
+
+
+def _regression_check(root, st):
+    """The existing tests of the changed code, chosen by the changed names (no whole-suite call map), on the patch and on
+    the original code, once per patch state. gk9 (fastapi_14986): the patch removed root_path from the served document,
+    following a misread requirement, broke test_legitimate_root_path_still_appears, and every stage said "done": with
+    the per-edit tests off nothing ran an existing test."""
+    files = _patch_files(root)
+    if not files:
+        return None
+    sig = str(hash(tuple(sorted((k, v or '') for k, v in files.items()))))
+    if st.get('reg') and st['reg'].get('sig') == sig:
+        return st['reg']
+    changed = {}
+    for p in st['plan']:
+        if p.get('status') == 'done':
+            changed.setdefault(p['rel'], [])
+            if p['name'] != MODULE:
+                changed[p['rel']].append(p['name'].split('.')[-1])
+    if not changed:
+        return None
+    for rel in changed:
+        # the changed lines' words choose the tests (the place's own name, 'openapi', is in hundreds of test files)
+        diff = _repo.git(root, 'diff', '-U0', '--', rel) or ''
+        changed[rel] += [l[1:].strip() for l in diff.splitlines()
+                         if l[:1] in '+-' and not l.startswith(('+++', '---')) and l[1:].strip()][:60]
+    verdict, detail, failures = _tests.check(root, changed, use_map=False)
+    st['reg'] = {'sig': sig, 'verdict': verdict, 'detail': detail[:1200], 'failures': list(failures)[:8]}
+    return st['reg']
 
 
 def _score(root, st):
@@ -1511,6 +1700,13 @@ def review(root, st, args):
                         '\nWith the patch: ' + (st['repro']['now'] or 'not run again')[:500])
         if st['regressions']:
             view.append('Existing tests the whole patch breaks: ' + ', '.join(t for t, _ in st['regressions'][:5]))
+        reg = _regression_check(root, st) or {}
+        if reg.get('verdict') == 'BROKEN':
+            view.append('Existing tests that pass on the original code fail with the patch:\n' + reg['detail'] +
+                        '\nThese tests show behaviour the issue keeps. If the requirement, as written, contradicts '
+                        'them, it was read against the issue: the issue\'s own sentence decides.')
+        elif reg.get('detail'):
+            view.append('Existing tests of the changed code: ' + reg['detail'][:300])
         _, options = _related(root, st, places)
         near = [d['name'] for d in options[:8]]
         if near:
@@ -1527,6 +1723,13 @@ def review(root, st, args):
             return ('The test of this requirement still fails with the patch:\n' + (repro.get('now') or '')[:600] +
                     '\nSo the patch does not do it yet: name the place that is wrong or missing and what is missing '
                     "there: ['not done', '<place>', '<what is missing>'].\n\n" + nxt)
+        reg = st.get('reg') or {}
+        if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid):
+            st.setdefault('reg_refused', {})[rid] = True
+            return ('The patch breaks existing tests that pass on the original code:\n' + reg['detail'][:700] +
+                    "\nSo it is not done yet: name the place that is wrong and what must change there so that the "
+                    "requirement holds and these tests keep passing: ['not done', '<place>', '<what is wrong>'].\n\n"
+                    + nxt)
         st['reviews'][rid] = {'verdict': 'done' if first in ('done', 'yes') else 'cannot tell'}
         return f'{rid}: {st["reviews"][rid]["verdict"]}.\n\n{DONE}'
     if first in ('not done', 'no') and len(items) >= 2:
@@ -1591,6 +1794,12 @@ def main(stage, argv):
     st = _state.load('stages') or _new()
     args = _args.split_single_quoted(list(argv))
     pending = st.get('chained')
+    if st.get('tentative'):
+        cur = (st.get('current') or ('',))[0]
+        if stage not in ('route', cur):
+            # the next agent opens after an edit that returned the next call: that call becomes real now
+            route(root, st, ['next'])
+        st['tentative'] = None
     try:
         if pending and stage == 'route':
             # the coordinator called route.py instead of the line an agent returned: the same next step, not a new

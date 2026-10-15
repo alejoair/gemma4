@@ -596,3 +596,49 @@ another agent, and that the agent does not make that call.
 | B12 contradictions | closer: "only task" and "pass this line on" are reconciled in the same sentence |
 | P3 positive rules with their reason | closer: it says why (the coordinator's next call) |
 | B8 many rules | neutral: no new form, one clause in an existing step |
+
+## The open weak points of the gated runs, fixed (2026-10-15)
+
+The list of system problems that were still open after gk2-gk12. All were checked by dry runs on the task snapshots;
+the next gated runs test them against the models.
+
+1. **Regressions (gk9).** Review runs the existing tests of the changed code once per patch state, on the patch and on
+   the original code (`_tests.check` with `use_map=False`: the changed names and the changed lines choose the tests,
+   with no whole-suite call map).
+   - The view lists the tests that pass on the original code and fail with the patch, and says that a requirement
+     contradicting them was read against the issue.
+   - A first "done" is refused while they fail.
+   - Dry run on fastapi_14986 with gk9's patch: in 6 s, three tests that expect `servers: [{'url': '/api/v1'}]` fail,
+     and "done" is refused.
+2. **A requirement or test that contradicts existing tests (gm8, gk9).** It is caught by the same check, once the
+   patch follows it.
+3. **Locate on a title-only statement (fastapi_14583).** After the candidates, the view adds the code that calls the
+   first three usable candidates (`[calls X]`). Dunders, nested functions and names called in more than 8 places are
+   left out. Dry run: `analyze_param`, `get_body_field` and `create_model_field` now appear, one step from
+   `get_dependant`.
+4. **Scope looked only upward (fastapi_14851, fastapi_14583).** The related code now includes:
+   - the repository functions a chosen place calls (`self.<method>()` of its class, and plain names defined once);
+   - the code that imports a module whose top-level code was chosen.
+
+   Each comes with its linking line.
+5. **Requirements without substance (gk11, gm8).** When there is more than one requirement, one whose "what must
+   happen" repeats the issue's sentence (similarity over 0.9) is left out, and the answer says so.
+6. **Line numbers in specify sentences (Gemma).** The first such sentence is refused, with the reason and an example of
+   naming code by its text.
+7. **Noise.**
+   - "[it uses ...]" is not shown on classes or docs examples.
+   - A dotted name in the requirements lookup matches its exact qualified name first.
+   - A word-chosen test template needs two shared words.
+8. **Cost (an accepted edit had no line for the coordinator).**
+   - The accepted edit also returns the coordinator's next call. It is computed on a copy of the state.
+   - It becomes real when the next agent opens; a correction from the editor is still accepted.
+   - Dry run: "edit is done: analyze_param is changed. Next: call the tool review with request 'R1'."
+
+| Checklist item | 1-2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| W1 choosing from named options | neutral | closer: the callers are options with their names | closer: callees are options with their lines | neutral | neutral | closer | neutral |
+| W3 code in front of it | closer: the failing assertion is shown | closer | closer | neutral | neutral | neutral | neutral |
+| W5 familiar formats | closer: pytest's own output | neutral | neutral | neutral | neutral | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | closer | neutral | neutral |
+| B11 doubting tool output | closer: "done" is checked against real tests | neutral | neutral | closer: no empty requirement to approve | neutral | closer | neutral |
+| B7 long context | slightly farther: the review view grows by the failing tests (about 700 characters); reason: the evidence is what decides | slightly farther (up to 4 lines) | slightly farther (up to 5 + 4 lines) | neutral | neutral | closer | closer: fewer coordinator turns |
