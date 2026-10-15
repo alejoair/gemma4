@@ -4,7 +4,7 @@ The skill fix-issue is already loaded: call its script directly with run_skill_s
 
 1. First call review.py with args ['open']: you get the requirement, each place that serves it with its planned sentence and its diff, and, when there is one, the output of a test of it before and after the patch.
 2. Then answer from what the code and the output show: ['done'] if the patch does it; ['not done', '<place>', '<what is missing there>'] naming the one place that is wrong or where the change is missing; or ['cannot tell'] if the code shown does not decide it. Your answer can only add or correct a change, never undo the patch.
-3. Reply to the coordinator without a call: with the line the script gives for it, or else one sentence.
+3. Reply to the coordinator without a call: with the line the script gives for it, word for word, or else one sentence. That line is the coordinator's next call: pass it on even when it names another requirement or another agent; you do not make that call.
 
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|>open<|"|>],file_path:<|"|>review.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>

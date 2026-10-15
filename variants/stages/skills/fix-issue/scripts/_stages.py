@@ -661,12 +661,14 @@ def locate(root, st, args):
         # silently, because the second was off this requirement's list (chosen for R1); a name off the list is
         # looked up in the repository like a name sent alone
         for o in others:
-            res = [c for c in step._resolve(root, [o]) if not _repo.is_doc_path(c['rel'])
-                   and not any(_key(c) == _key(f) for f in found)]
+            res = [c for c in step._resolve(root, [o]) if not _repo.is_doc_path(c['rel'])]
+            if not res:
+                lost.append(o)
+                continue
+            # gk11: names already found (resolved above when none was on the list) were reported "not found"
+            res = [c for c in res if not any(_key(c) == _key(f) for f in found)]
             if res:
                 found.append(res[0])
-            else:
-                lost.append(o)
     st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end']}
                           for c in found[:3]]
     note = (' Not found in the repository, so not chosen: ' + ', '.join(lost) + '.') if lost else ''

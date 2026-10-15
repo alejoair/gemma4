@@ -580,3 +580,19 @@ Checklist:
 | B7 middle of long context | neutral | neutral | neutral | neutral | closer: shorter answers | closer: fewer coordinator turns in its history |
 | B11 doubting tool output | closer: no false "same change is needed" | closer: the answer says what was saved | closer: no false promise | neutral | neutral | neutral |
 | B12 contradictions | neutral | neutral | closer | neutral | closer: the correction form matches the edit form | neutral |
+
+## Passing the coordinator's line on (2026-10-15)
+
+From gk2 to gk11, Haiku's locate agent refused six times to return the chained line. Its reasons were "that isn't part
+of my locate task", "my task covers only R1" and "choosing the next step is outside my task". Each refusal cost the
+coordinator one route.py call. Locate's prompt says "one requirement… that is your only task", and the line often
+names the same agent for another requirement ("call the tool locate with request 'R2'"). Every sub-agent's step 3 now
+says that the line is the coordinator's next call, passed on word for word even when it names another requirement or
+another agent, and that the agent does not make that call.
+
+| Checklist item | Effect |
+|---|---|
+| W4 a concrete NEXT | closer: the step names what to do with the line |
+| B12 contradictions | closer: "only task" and "pass this line on" are reconciled in the same sentence |
+| P3 positive rules with their reason | closer: it says why (the coordinator's next call) |
+| B8 many rules | neutral: no new form, one clause in an existing step |

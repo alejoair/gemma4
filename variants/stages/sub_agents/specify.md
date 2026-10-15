@@ -4,7 +4,7 @@ The skill fix-issue is already loaded: call its script directly with run_skill_s
 
 1. First call specify.py with args ['open']: you get the place's code, the requirements it serves, the code it uses and the other places of the fix with their sentences.
 2. Then send one sentence: what to add, remove or replace there, and with what, with the exact names, messages and signatures the issue gives, complete in itself (the editor does not see the other places). Or ['no change'] if this place keeps its code.
-3. Reply to the coordinator without a call: with the line the script gives for it, or else one sentence.
+3. Reply to the coordinator without a call: with the line the script gives for it, word for word, or else one sentence. That line is the coordinator's next call: pass it on even when it names another requirement or another agent; you do not make that call.
 
 Call forms (the values in angle brackets are placeholders):
 <|tool_call>call:run_skill_script{args:[<|"|>open<|"|>],file_path:<|"|>specify.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
