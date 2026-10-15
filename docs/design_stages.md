@@ -793,3 +793,42 @@ not travel between stages, contradictions between what is shown and what is aske
 | F4 challenges without facts | neutral | neutral | closer | neutral | neutral | neutral |
 | P3 positive rules with reason | neutral | closer: what to keep, with the reason | neutral | neutral | neutral | neutral |
 | B7 / P7 long context | slightly farther: up to 3 lines; reason: the only signal when the statement names nothing | slightly farther: one sentence | slightly farther: one line when it applies | slightly farther: up to 1,200 characters when there is a twin; reason: gk13c | closer: shorter lines | closer: fewer turns |
+
+## Gated run gm11 (fastapi_12942, the 31B on Colab vLLM): stopped in round 2, seven fixes (2026-10-15)
+
+The 31B located `analyze_param` (through the callers) and the regression check refused its first patch (a `while`
+over the outer `Annotated` broke `test_multiple_annotations`). It did not reach a fix. The faults, in the order they
+appeared, and their fixes:
+
+1. **Library names.** The name lookup showed only `fastapi.openapi.models.Tag`, so the reproduction test defined its
+   own `class Tag` and failed twice for that reason. The lookup now adds "also in the library: pydantic.Tag", taking
+   the libraries from the modules the repository imports most. The reproduce view lists the issue's names that a
+   library defines. The example's own classes (`Pie`) read "code of the issue's own example, new code ... or library
+   code".
+2. **A finished editor reopening its place advanced the route.** The editor opened its own place again after an
+   accepted edit, and the tentative next call became real under it ("Nothing to edit now"). Every agent now opens
+   with `['open', '<the request you received>']`, and an open of the place just finished does not advance.
+3. **The specifier did not see the deciding code.** It wrote "field_annotation_is_scalar, though I don't have it, I
+   can infer" and answered `no change`. Two changes:
+   - specify shows the place up to 150 lines (the `Annotated` block had been hidden in "lines 371-454 not shown");
+   - the deciding calls of 6 lines or fewer are shown whole.
+
+   The answer cap rose from 9,000 to 12,000 characters.
+4. **`no change` on a place the review sent back kept the breaking edit.** The view now says that its edit is in the
+   patch and that `no change` undoes it. `no change` restores the file when no other edited place shares it.
+5. **A repeated `replace` after an accepted edit read "not found".** It now reads "Already applied", with the
+   coordinator's line.
+6. **Line numbers leaked into specify** through the header ("lines 356-519") and the elision marker. Both are gone.
+7. **An unused call's line lacked "<stage> is done"**, so the coordinator asked route.py first (3 calls more). The
+   line is now the whole chained line.
+
+| Checklist item | 1 library | 2 open with request | 3 deciding code | 4 no change undoes | 5 already applied | 6 numbers | 7 line |
+|---|---|---|---|---|---|---|---|
+| W3 code in front | neutral | neutral | closer | neutral | closer | neutral | neutral |
+| W6 names | closer | closer | neutral | neutral | neutral | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | neutral | closer | neutral |
+| B11 doubting tool output | closer: the lookup no longer hides the library class | neutral | neutral | closer | closer: "not found" was false | neutral | neutral |
+| B12 contradictions | neutral | closer: the request and the state agree | neutral | closer: what `no change` means is said | closer | closer | closer |
+| B9 exploring | neutral | neutral | closer: nothing to infer | neutral | neutral | neutral | neutral |
+| B7 long context | slightly farther: one line per library name | neutral | farther: up to 12,000 characters; reason: the decision needs the code | neutral | neutral | neutral | neutral |
+| W4 next call | neutral | neutral | neutral | neutral | closer | neutral | closer: one call less |

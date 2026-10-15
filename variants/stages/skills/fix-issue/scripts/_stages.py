@@ -47,7 +47,7 @@ BIG_CLASS = 120         # a class place longer than this is split into the membe
 BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(45 * 60)))   # then the work goes to submit
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
-ANSWER_CHARS = 9000
+ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
 # The per-edit test check (stage 6), off for now at the user's request (2026-10-14): in requests it cost about 70 s per
 # edit, and the first edit of a task built the call map with a whole-suite run (up to 150 s). SWE_EDIT_TESTS=1 turns
 # it back on. The edit still has to compile (the whole-definition and replace forms refuse code that does not).
@@ -306,6 +306,48 @@ def _library(root, name):
     return bool(spec) and not origin.startswith(os.path.realpath(root) + os.sep)
 
 
+def _library_modules(root, top=8):
+    """The third-party modules the repository's code imports most (pydantic, starlette for fastapi), once per task."""
+    cached = _state.load('library_modules')
+    if cached is not None:
+        return cached
+    import collections
+    import _example
+    own = set(_example._packages(root))
+    count = collections.Counter()
+    for rel in _repo.iter_py(root, docs=False):
+        tree = _code.parse(_repo.read_text(root, rel))
+        for node in ast.walk(tree) if tree is not None else ():
+            mods = [a.name for a in node.names] if isinstance(node, ast.Import) else (
+                [node.module] if isinstance(node, ast.ImportFrom) and node.module and not node.level else [])
+            for m in mods:
+                head = m.split('.')[0]
+                if head not in own and head not in sys.stdlib_module_names and not head.startswith('_'):
+                    count[head] += 1
+    out = [m for m, _ in count.most_common(top)]
+    _state.save('library_modules', out)
+    return out
+
+
+def _library_homes(root, name):
+    """'pydantic.Tag' for a name a library the repository uses defines. gm11 (fastapi_12942, the 31B): the lookup
+    showed only fastapi.openapi.models.Tag, and the reproduction test defined its own class Tag instead of importing
+    pydantic's; both tries failed for that reason."""
+    short = name.split('.')[-1]
+    if not re.fullmatch(r'[A-Za-z_]\w*', short):
+        return []
+    out = []
+    import importlib
+    for mod in _library_modules(root):
+        try:
+            m = importlib.import_module(mod)
+        except Exception:
+            continue
+        if getattr(m, short, None) is not None and not short.startswith('_'):
+            out.append(f'{mod}.{short}')
+    return out[:2]
+
+
 def requirements(root, st, args):
     items = [_args.clean(a) if len(a) < 300 else a.strip() for a in args if a and a.strip()]
     if st['names'] is not None or _looks_like_requirements(items):
@@ -336,11 +378,19 @@ def requirements(root, st, args):
                 if sig not in shown and len(shown) < 2:
                     shown.append(sig)
                     lines.append(f'  {name}: {sig}  ({rel}, {s.kind} {s.name})')
+            homes = _library_homes(root, name)
+            if homes:
+                st.setdefault('lib_names', []).extend(h for h in homes if h not in st.get('lib_names', []))
+            if found and homes:
+                lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
+                             'import it from there)')
             if not found:
                 index = index or _rank.Index(root)
-                lines.append(f'  {name}: ' + ('not a function or class; the code uses this name (a parameter, '
+                lines.append(f'  {name}: ' + (f'library code: {", ".join(homes)}' if homes else
+                                              'not a function or class; the code uses this name (a parameter, '
                                               'attribute or variable)' if name.split('.')[-1] in index.names else
-                                              'not in the repository (new code the issue asks for, or library code)'))
+                                              "not in the repository (code of the issue's own example, new code the "
+                                              'issue asks for, or library code)'))
         st['names'] = names
         return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + form + '\n\n'
                 "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<sentence from "
@@ -571,6 +621,9 @@ def reproduce(root, st, args):
                 f'and pass once the issue is fixed):\n  {_req_line(r)}']
         if sig:
             view.append('Signatures in the repository:\n' + '\n'.join(sig))
+        if st.get('lib_names'):
+            view.append('Names of the issue that a library defines (import them from it): '
+                        + ', '.join(st['lib_names'][:8]) + '.')
         import _example
         pkgs = sorted(_example._packages(root))
         if pkgs:
@@ -1270,8 +1323,14 @@ def _deciding_calls(root, st, p, ctx, limit=3):
         if re.search(rf'(?m)^\s+\S*\b{re.escape(d["name"])} \(', ctx or ''):
             continue                                   # already shown by the context view
         sym = table.get(d['rel'], d['name'])
-        rows.append(f'  {d["name"]} ({d["rel"]}) {_sig(sym, 120) if sym is not None else ""}\n'
-                    f'      called here: {d["link"]}')
+        if sym is not None and sym.end - sym.start + 1 <= 6:
+            # gm11: the specifier reasoned about field_annotation_is_scalar "though I don't have it" and gave up;
+            # a short function is shown whole
+            rows.append(f'  {d["name"]} ({d["rel"]}), called here: {d["link"]}\n'
+                        + _code.numbered(_repo.read_lines(root, d['rel']), sym.start, sym.end, collapse=[]))
+        else:
+            rows.append(f'  {d["name"]} ({d["rel"]}) {_sig(sym, 120) if sym is not None else ""}\n'
+                        f'      called here: {d["link"]}')
     return ('Functions it calls in a condition or that the reproduction test runs:\n' + '\n'.join(rows)) if rows else ''
 
 
@@ -1313,7 +1372,7 @@ def specify(root, st, args):
            "changes here>'] or ['no change']")
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
-        view = [_place_view(root, st, p),
+        view = [_place_view(root, st, p, limit=150),
                 'It serves these requirements:\n' + '\n'.join('  ' + _req_line(r) for r in reqs)]
         if not p.get('new'):
             ctx = step._context_view(root, p, _focus(reqs))
@@ -1337,10 +1396,18 @@ def specify(root, st, args):
                 view.append(diff[:1500])
             if p.get('old_sentence'):
                 view.append('The sentence before: ' + p['old_sentence'])
+            if p.get('edited'):
+                # gm11 (the 31B): 'no change' for a place sent back by the review left the edit that broke a test
+                view.append(f'Its edit is in the patch now. Send the sentence for {p["handle"]} as it must end up, or '
+                            "['no change'] to undo its edit and keep its original code.")
         ids = ', '.join(r['id'] for r in reqs) or 'its requirements'
         # B1 (gm4-gm9, gk14b, gk15): the numbered view was the anchor the sentences used ("after line 56", "line
         # 103"), then refused; the specifier names code by its text, so it reads it without numbers
         text = NUMBERED.sub(r'\1', '\n\n'.join(view))
+        # gm11: "lines 356-519" and "(lines 371-454 not shown)" gave the sentence its "line 373"
+        text = re.sub(r', lines \d+-\d+\)', ')', text)
+        text = re.sub(r'\(lines (\d+)-(\d+) not shown\)', lambda m: f'({int(m.group(2)) - int(m.group(1)) + 1} lines not '
+                      'shown)', text)
         return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change.'
                 '\n\n' + nxt)
@@ -1356,6 +1423,14 @@ def specify(root, st, args):
         return f'Too long ({len(sentence)} characters, at most {MAX_SENTENCE}). Send it shorter.\n\n{nxt}'
     if step.NO_CHANGE.match(sentence):
         p['sentence'], p['status'] = 'no change', 'nochange'
+        if p.get('edited'):
+            others = [q for q in st['plan'] if q is not p and q['rel'] == p['rel'] and q.get('edited')]
+            if not others:
+                _repo.git(root, 'checkout', '--', p['rel'])
+                p['edited'] = False
+                _refresh(root, p)
+                p.pop('note', None)
+                return f'{p["handle"]} keeps its original code: its edit is undone.\n\n{DONE}'
     else:
         p['sentence'], p['status'] = sentence, 'todo'
         p['fails'], p['edits'] = 0, 0
@@ -1572,6 +1647,19 @@ def edit(root, st, args):
             _add_imports(root, p['rel'], head)
             _refresh(root, p)
         res = _replace_text(root, p, _args.code(items[1]), new_text)
+        if isinstance(res, str) and 'not found' in res and new_text.strip() and \
+                not isinstance(_replace_text(root, p, new_text, new_text), str):
+            # gm11 (the 31B): after an accepted edit the editor sent the same replace again and read 'not found' as a
+            # failure, then reopened the place
+            if head:
+                _repo.write_lines(root, p['rel'], before)
+                _refresh(root, p)
+            line = (f"edit is done: {p['handle']} is changed. Next: {st['tentative']}." if st.get('tentative')
+                    else None)
+            return ('Already applied: this place already holds these new lines (your earlier edit is in the patch). '
+                    + (f'If the change is complete, reply to the coordinator without a call, with exactly this line:\n'
+                       f'{line}\n\nNEXT: no call: reply with exactly that line.' if line else
+                       f'If the change is complete, reply with one sentence for the coordinator.\n\n{DONE}'))
         if isinstance(res, str):
             if head:
                 _repo.write_lines(root, p['rel'], before)
@@ -1780,6 +1868,7 @@ def _after_edit(root, st, p, r, before, names, nxt):
         return (f'Undone: {why}, so {p["handle"]} is back as it was:\n'
                 f'{detail}\nSend a corrected definition that fixes this.\n\n{nxt}')
     p['status'] = 'done'
+    p['edited'] = True
     if p.get('new'):
         p['new'] = False
         p['name'] = (p['owner'] + '.' if p.get('owner') not in (None, MODULE) else '') + p['name'].split('.')[-1]
@@ -2097,9 +2186,17 @@ def main(stage, argv):
     if st.get('tentative'):
         cur = (st.get('current') or ('',))[0]
         first = _args.clean(args[0]).lower() if args and args[0] else ''
+        # gm11 (the 31B): the editor whose edit was accepted called ['open'] again to look at its place, and the next
+        # call became real under it ("Nothing to edit now"); an agent opens with the request it received, so an open
+        # of the place it already finished is not the next agent
+        target = _args.clean(args[1]).lower() if first == 'open' and len(args) > 1 and args[1] else ''
+        m = re.search(r"request '([^']*)'", st['tentative'])
+        nxt_target = (m.group(1) if m else '').lower()
+        cur_target = str((st.get('current') or (None, ''))[1] or '').lower()
+        same_agent = bool(target) and target == cur_target and target != nxt_target
         if stage == 'route':
             st['tentative'] = None                  # route.py runs for real below
-        elif stage != cur or first in ('', 'open', 'start'):
+        elif not same_agent and (stage != cur or first in ('', 'open', 'start')):
             # the next agent opens after an edit that returned the next call: that call becomes real now. gk13b: an
             # edit after an edit (the same stage) was left out, and the second editor was shown the first place
             route(root, st, ['next'])
@@ -2112,8 +2209,10 @@ def main(stage, argv):
             out = f"NEXT: {pending}"
         elif pending and not (_opens(st, args) and (st.get('current') or ('',))[0] == stage):
             nxt_stage = (st.get('current') or ('',))[0]
+            # gm11: the bare 'call the tool ...' was not read as an agent's finished line, and the coordinator asked
+            # route.py first (one call more each time)
             out = ("This call was not used: your part is finished. Reply to the coordinator with exactly this line, "
-                   f"without a call:\n{pending}")
+                   f"without a call:\n{stage} is done. Next: {pending}.")
             if nxt_stage == stage:
                 # the next agent does the same stage (edit after edit): a new agent starts with 'open'
                 out += "\nIf you are a new agent that has just started, call your script with args ['open'] first."
