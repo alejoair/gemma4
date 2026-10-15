@@ -201,6 +201,11 @@ def _next_tool(root, st):
             p['status'] = 'failed'
     # 7 verify (script)
     _verify(root, st)
+    if st.get('recheck') and not any(p.get('sentence') is None or p.get('status') == 'todo' for p in st['plan']):
+        st['round'] += 1
+        for rid in st['recheck']:
+            st['reviews'].pop(rid, None)
+        st['recheck'] = []
     # 8 review, per requirement
     for r in st['reqs']:
         if r['id'] not in st['reviews']:
@@ -1528,6 +1533,9 @@ def review(root, st, args):
         name, what = _args.clean(items[1]), ' '.join(items[2:])[:600]
         st['reviews'][rid] = {'verdict': 'not done', 'place': name, 'what': what}
         if st['round'] < MAX_ROUNDS:
+            # gk12 (fastapi_14851): after the re-edit nothing reviewed R2 again; it is reviewed again once the
+            # places it sent back are done (_next_tool)
+            st.setdefault('recheck', []).append(rid)
             p = _place_by(st, name)
             if p is not None:
                 p['old_sentence'] = p.get('sentence')
