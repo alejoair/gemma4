@@ -1365,3 +1365,16 @@ V25-30s: 90 task runs; `scratchpad/slow.py`).
 reproduce kept off (`REPRO_LEFT_S` out of reach, so the procedure is the one of the 5-minute runs), on the 30 tasks of
 V25-30s (5/30 at 5 min), 4 at once on Kaggle. It measures each task's natural duration and what more time resolves;
 from it, for a cap C, the 12 h total Σ min(C, tᵢ) + setup over about 120 tasks and the tasks resolved by time C.
+
+**How the 90 runs ended, and what the cut ones resolved** (10-16, the user's question "de las tareas que cortamos
+cuántas se resolvieron?"; the submit_patch call's time in each trace):
+
+| Ending | Runs | Resolved | Empty patch |
+|---|---|---|---|
+| The harness cut at 5 min (no submit_patch) | 44 | 1 | 34 |
+| Our route submitted at its 4:30 stop | 16 | 5 | 0 |
+| Submitted before 4:30 | 30 | 16 | 1 |
+
+In the 44 harness cuts a sub-agent was working at 4:30 (specify 24, edit 12, other 8): the 4:30 stop is checked only
+when the coordinator calls `route.py`, so a batched sub-agent call runs past it. 36 of the 44 had no edit kept: the
+time went to requirements, locate and specify, and nothing was left to submit.
