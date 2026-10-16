@@ -1342,3 +1342,26 @@ one, and a wrong refusal costs a call (F4).
 Checked: replays of rich_3043, rich_4075 and fastapi_14361 (hk30 traces) on the V26 build: no traceback or internal
 error; in rich_3043 locate now chooses CONSOLE_HTML_FORMAT (`rich/_export_format.py`, lines 1-18) at the first call
 that named it. Model run: the 30 hk30 tasks with Haiku on V26 (row hk26 in VERSIONS.md).
+
+### Which tasks are slow, and the 15-minute time trial (10-16, the user's question)
+
+The 12 h are for all tasks together; `max_time_minutes` is a cap per task that we set, so a task that ends early leaves
+time for others only if the cap is raised. Data: the Gemma Kaggle runs of the stages build (V23, V24, V25, V25-30,
+V25-30s: 90 task runs; `scratchpad/slow.py`).
+
+- 60 of 90 ended at the cap (≥ 295 s), 30 under it. Resolved: 14 of the 30 under the cap, 8 of the 60 at the cap
+  (the harness takes the diff at the stop). The 22 resolved took 154-335 s (median about 265 s); 8 of them at the cap.
+- **Not the vague statements.** Title-only statements (fewer than 25 words after the title, PR-template text removed)
+  reach the cap less often: 54% (39 runs) against 76% (51 runs). Longer bodies give more requirements.
+- **The number of requirements.** 1 requirement: 56% at the cap, 18/62 resolved; 2: 90% at the cap, 3/20; 3 or more:
+  6 of 7 at the cap, 1/7 resolved. Each requirement adds a locate and a review, and its places a specify and an edit.
+- **The size of the fix.** Reference patches of up to 20 changed lines: about half at the cap, 18/46 resolved; over 20
+  lines: 82% at the cap, 4/44 resolved.
+- Per agent, the capped runs spent more in every stage, most in specify (120 s against 81 s on average).
+- Haiku on the same 30 tasks (V25-30s): median 94 s where Gemma was capped, 82 s where it was not; Haiku resolved 8 of
+  the 20 Gemma capped.
+
+**The trial (V25-T15):** the V25 build unchanged except `max_time_minutes: 15`, `BUDGET_S` 14 min 30 s and
+reproduce kept off (`REPRO_LEFT_S` out of reach, so the procedure is the one of the 5-minute runs), on the 30 tasks of
+V25-30s (5/30 at 5 min), 4 at once on Kaggle. It measures each task's natural duration and what more time resolves;
+from it, for a cap C, the 12 h total Σ min(C, tᵢ) + setup over about 120 tasks and the tasks resolved by time C.
