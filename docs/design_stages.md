@@ -1378,3 +1378,12 @@ cuántas se resolvieron?"; the submit_patch call's time in each trace):
 In the 44 harness cuts a sub-agent was working at 4:30 (specify 24, edit 12, other 8): the 4:30 stop is checked only
 when the coordinator calls `route.py`, so a batched sub-agent call runs past it. 36 of the 44 had no edit kept: the
 time went to requirements, locate and specify, and nothing was left to submit.
+
+**V26 with Haiku (hk26):** 15/30, as V25 (hk30), with three tasks exchanged. The three gained are the three the
+changes were for, and each used its change: rich_3043 chose CONSOLE_HTML_FORMAT and edited it as a whole assignment
+(62 s), fastapi_14361 chose from the text-search list, rich_4075 saw `end` as a parameter of `print` / `Console.print`.
+The three lost (fastapi_14419, rich_3718, rich_3180) went another way before any new text was shown (other places
+located or specified; rich_3718 saw none of the new texts): sampling at temperature 1.0, not the changes. In
+fastapi_14419 and rich_3180 the review then saw the new 1g wording with failing tests and answered done / cannot tell;
+the judge finds no existing test broken by the final patch in either, so the failing hidden tests are the wrong fix
+itself.
