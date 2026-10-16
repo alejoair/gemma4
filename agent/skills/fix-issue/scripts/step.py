@@ -1242,6 +1242,13 @@ def _resolve(root, names):
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
         for r, s in found[:1]:
             out.append({'rel': r, 'name': s.name, 'start': s.start, 'end': s.end, 'line': ''})
+        if not found and name and re.fullmatch(r'[A-Za-z_]\w*', name):
+            # hk30 (rich_3043): the template CONSOLE_HTML_FORMAT, a module-level constant, was "not found in the
+            # repository"; a top-level assignment is a place of its own (the file named first, then any file)
+            hit = assignment(root, table, name, rel)
+            if hit:
+                out.append(hit)
+                continue
         if not found and len(raw) >= 4 and not rel and not re.fullmatch(r'[A-Za-z_][\w.]*', raw):
             # a code fragment (not a bare name the repository does not define, such as a library's): the function or
             # class that contains it
@@ -1249,6 +1256,30 @@ def _resolve(root, names):
             if hit:
                 out.append(hit)
     return out
+
+
+def assignment_span(text, name):
+    """(first, last) line of the top-level assignment of name in a module's text ('NAME = ...', 'NAME: T = ...'), or
+    None."""
+    if not re.search(rf'(?m)^{re.escape(name)}\s*(?::[^=\n]*)?=(?!=)', text or ''):
+        return None
+    tree = _code.parse(text)
+    for node in tree.body if tree is not None else ():
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) and node.value is not None else [])
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            return node.lineno, node.end_lineno
+    return None
+
+
+def assignment(root, table, name, rel=''):
+    """A place for the top-level assignment of name: in the file rel names when it has one, else package code first."""
+    files = sorted(table.syms, key=lambda r: (not (rel and _rank.names_file(rel, r)), _repo.is_doc_path(r), r))
+    for r in files:
+        span = assignment_span(_repo.read_text(root, r), name)
+        if span:
+            return {'rel': r, 'name': name, 'start': span[0], 'end': span[1], 'line': ''}
+    return None
 
 
 def _import_alias(root, table, name):

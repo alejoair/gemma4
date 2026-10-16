@@ -154,6 +154,8 @@ def main() -> None:
         wr.writeheader()
         for i, task in enumerate(tasks, 1):
             print(f'== TASK {task.instance_id} {time.strftime("%H:%M:%S", time.gmtime())} UTC', flush=True)
+            if args.fetch_snapshots:
+                fetch(task)
             mark = judge.capture_mark()
             r = asyncio.run(evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)))
             row = dict(task_id=task.instance_id, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,

@@ -40,7 +40,8 @@ MAX_REQS = 6
 MAX_ASKS = 2            # a stage's tool is asked this many times for one target; then the script moves on
 MAX_ROUNDS = 2          # review rounds (F6)
 MAX_FAILS = 2           # undone edits of one place
-MAX_EDITS = 4           # edits of one place
+MAX_EDITS = 4           # edits of one place (applied: kept or undone by the checks)
+MAX_REFUSED = 6         # sends of one place refused before anything was applied
 MAX_SENTENCE = 1500
 LONG_EDIT = 80          # a place longer than this is edited by replacing lines, not sent whole
 BIG_CLASS = 120         # a class place longer than this is split into the members that change
@@ -429,7 +430,13 @@ def requirements(root, st, args):
             if found and homes:
                 lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
                              'import it from there)')
-            if not found:
+            owners = _param_owners(table, name) if not found and not homes else []
+            if owners:
+                # hk30 (rich_4075): 'end' was only "a parameter, attribute or variable", not tied to Console.print, and
+                # the requirement named no code (W6, W3): the functions that take it as a parameter, public first
+                more = f' and {len(owners) - 3} more' if len(owners) > 3 else ''
+                lines.append(f'  {name}: a parameter of ' + ', '.join(f'{q} ({r})' for r, q in owners[:3]) + more)
+            elif not found:
                 index = index or _rank.Index(root)
                 lines.append(f'  {name}: ' + (f'library code: {", ".join(homes)}' if homes else
                                               'not a function or class; the code uses this name (a parameter, '
@@ -481,6 +488,25 @@ def requirements(root, st, args):
     note = ('\nLeft out, because what must happen repeats the issue\'s sentence (no situation and result): ' +
             '; '.join(f'"{r["what"][:80]}"' for r in dropped)) if dropped else ''
     return f'Saved {len(reqs)} requirements:\n{listed}{note}\n\n{DONE}'
+
+
+def _param_owners(table, name):
+    """[(rel, qualified name)] of the functions that take name as a parameter, public ones and package code first."""
+    if not re.fullmatch(r'[A-Za-z_]\w*', name or ''):
+        return []
+    out = []
+    for rel, syms in table.syms.items():
+        for sym in syms:
+            if sym.kind == 'class' or not hasattr(sym.node, 'args'):
+                continue
+            a = sym.node.args
+            params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | {x.arg for x in (a.vararg, a.kwarg) if x}
+            if name in params:
+                out.append((rel, sym.name))
+    # the most called first (the public entry points an issue talks about): rich's 'end' is in 16 functions
+    out.sort(key=lambda x: (any(part.startswith('_') and not part.startswith('__') for part in x[1].split('.')),
+                            _repo.is_doc_path(x[0]), -len(table.calls.get(x[1].split('.')[-1], [])), x[0], x[1]))
+    return out
 
 
 def _sig(sym, limit=300):
@@ -929,7 +955,12 @@ def locate(root, st, args):
                                               for c in more) + '\n\nChoose from these or the list before.\n\n' + nxt)
     found, others = step._pick(cands, items)
     if not found and others:
-        res = [c for c in step._resolve(root, others) if not _repo.is_doc_path(c['rel'])]
+        # hk30 (fastapi_14361): a text fragment ('$ref') resolved silently to the first function holding it, which was
+        # not the one that decides; text is searched and every function holding it is listed to choose from (W1, B11)
+        others = [re.sub(r'^(?:async\s+)?(?:def|class)\s+(\w+)\s*[(:]?\s*$', r'\1', _args.clean(o) or '') or o
+                  for o in others]      # 'class Depends' (hk30 fastapi_14372) is the name Depends
+        is_name = re.fullmatch(r'(?:[\w./-]+\.py::)?[A-Za-z_][\w.]*|[\w./-]+\.py', others[0])
+        res = [c for c in step._resolve(root, others) if not _repo.is_doc_path(c['rel'])] if is_name else []
         if res:
             found = res
         else:
@@ -1373,6 +1404,19 @@ def _missing_names(text):
     return (dotted or names)[:3]
 
 
+def _names_code(root, text):
+    """Whether a 'missing' text names code: a definition of the repository, a new member of an existing class or
+    module, or a Python file path."""
+    if re.fullmatch(r'\s*[\w./-]+\.py\s*', _args.clean(text) or ''):
+        return True
+    for n in _missing_names(text):
+        if any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n])):
+            return True
+        if '.' in n and step._new_definition_owner(root, n):
+            return True
+    return False
+
+
 def _add_missing(root, st):
     """Code an editor or the review named as missing: added to the plan before the place that needs it, to specify."""
     while st['missing']:
@@ -1536,7 +1580,11 @@ def _place_view(root, st, p, limit=80):
         note = _members_note(root, p)
         return (f'{p["handle"]} does not exist yet: it is new code, added at {where} ({p["rel"]}).'
                 + (f'\n{note}' if note else ''))
-    body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit)
+    if _assign_place(root, p):
+        # hk30 (rich_3043): a template's text is what changes; long strings are not collapsed here
+        body = _code.numbered(_repo.read_lines(root, p['rel']), p['start'], p['end'], collapse=())
+    else:
+        body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit)
     return f'{p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}):\n{body}'
 
 
@@ -1545,12 +1593,27 @@ def _refresh(root, p):
     setter) is one place spanning them all: rich_3052's PromptBase.ask has two overloads and the implementation."""
     if p.get('new') and p.get('status') != 'done':
         return
-    syms = _code.symbols(_code.parse(_repo.read_text(root, p['rel'])))
+    text = _repo.read_text(root, p['rel'])
+    syms = _code.symbols(_code.parse(text))
     same = [x for x in syms if x.name == p['name']]
     if same:
         p['start'], p['end'] = min(x.start for x in same), max(x.end for x in same)
         p['group'] = len(same) > 1
         p['new'] = False
+    elif p['name'] != MODULE:
+        span = step.assignment_span(text, p['name'])
+        if span:
+            p['start'], p['end'] = span
+            p['new'] = False
+
+
+def _assign_place(root, p):
+    """Whether the place is a top-level assignment (a constant, a template), not a function or class."""
+    if p.get('new') or p['name'] == MODULE or '.' in p['name']:
+        return False
+    text = _repo.read_text(root, p['rel'])
+    return step.assignment_span(text, p['name']) is not None and \
+        not any(x.name == p['name'] for x in _code.symbols(_code.parse(text)))
 
 
 NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
@@ -1684,7 +1747,7 @@ def specify(root, st, args):
                 return f'{p["handle"]} keeps its original code: its edit is undone.\n\n{DONE}'
     else:
         p['sentence'], p['status'] = sentence, 'todo'
-        p['fails'], p['edits'] = 0, 0
+        p['fails'], p['edits'], p['refused'] = 0, 0, 0
     p.pop('note', None)
     if p['status'] == 'nochange':
         return f'{p["handle"]} keeps its code: it is not edited.\n\n{DONE}'
@@ -1816,7 +1879,8 @@ def edit(root, st, args):
         return 'Nothing to edit now.\n\n' + DONE
     _refresh(root, p)
     items = [a for a in args if a and a.strip()]
-    what = ('top-level code of ' + p['rel'] if p['name'] == MODULE
+    assign = _assign_place(root, p)
+    what = ('top-level code of ' + p['rel'] if p['name'] == MODULE else f'assignment {p["name"]} = ...' if assign
             else 'definition of ' + p['handle'].split('::')[-1].split('.')[-1])
     nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['<the whole new "
            + what + ", with any new imports above it>'], or "
@@ -1851,7 +1915,9 @@ def edit(root, st, args):
                    "needs>']")
             return '\n\n'.join(view) + '\n\n' + nxt
         # P6: the decision again just before NEXT (the views run to 7,000 characters)
-        view.append(f'Send the whole new definition of {p["handle"]} (from its def or class line, with its '
+        view.append(f'Send the whole new assignment {p["name"]} = ... that does this: {_brief(p["sentence"])}'
+                    if assign else
+                    f'Send the whole new definition of {p["handle"]} (from its def or class line, with its '
                     f'decorators) that does this: {_brief(p["sentence"])} New imports go above it and are moved to the '
                     'top of the file. A new helper function can come with it.')
         if re.search(r'not shown\)', view[0]):
@@ -1863,6 +1929,13 @@ def edit(root, st, args):
         if p.get('status') != 'done':
             p['status'] = 'nochange'
         return f'{p["handle"]} keeps its code.\n\n{DONE}'
+    if first == 'missing' and len(items) >= 2 and not _names_code(root, items[1]):
+        # hk30 (fastapi_13713): 'parameter list (lines 65-822)' was taken as other code; the plan got nothing new and
+        # the same window came back four times. The form is described, not quoted (checklist B5)
+        p['refused'] = p.get('refused', 0) + 1
+        return ("'missing' names other code by its name (Class.method, a function, or path.py::name) and no code of "
+                f"that name was found. To change lines of {p['handle']} itself, send ['replace', '<the old lines, as "
+                f"shown>', '<the new lines>'] or the whole new definition.\n\n{nxt}")
     if first == 'missing' and len(items) >= 2:
         done = [q for n in _missing_names(items[1]) for q in [_place_by(st, n)] if q is not None
                 and q is not p and q.get('status') == 'done']
@@ -1877,9 +1950,11 @@ def edit(root, st, args):
         st['asked'].pop(f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)   # asked again after the new code
         return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
                 f'\n\n{DONE}')
-    p['edits'] = p.get('edits', 0) + 1
-    if p['edits'] > MAX_EDITS:
+    if p.get('edits', 0) >= MAX_EDITS or p.get('refused', 0) >= MAX_REFUSED:
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
+    # hk30 (rich_3043): sends refused before anything was applied counted as edits, and the place was given up after
+    # four refusals (checklist F6: refusals stay off the failure count); they are counted apart, with a higher bound
+    p['edits'] = p.get('edits', 0) + 1
     if first == 'replace' and len(items) >= 2:
         before = _repo.read_lines(root, p['rel'])
         items = [items[0]] + [_unescaped(x) for x in items[1:]]
@@ -1909,6 +1984,7 @@ def edit(root, st, args):
                 _refresh(root, p)
             line = (f"edit is done: {p['handle']} is changed. Next: {st['tentative']}." if st.get('tentative')
                     else None)
+            _unspent(p)
             return ('Already applied: this place already holds these new lines (your earlier edit is in the patch). '
                     + (f'If the change is complete, reply to the coordinator without a call, with exactly this line:\n'
                        f'{line}\n\nNEXT: no call: reply with exactly that line.' if line else
@@ -1917,6 +1993,7 @@ def edit(root, st, args):
             if head:
                 _repo.write_lines(root, p['rel'], before)
                 _refresh(root, p)
+            _unspent(p)
             return f'Not applied: {res}.\n\n{nxt}'
         r = step._edit.apply(root, p['rel'], res[0], res[1], res[2] or 'DELETE')
         return _after_edit(root, st, p, r, before, [p['name'].split('.')[-1]], nxt)
@@ -1928,8 +2005,20 @@ def edit(root, st, args):
     if added:
         _refresh(root, p)
         target = _edit_target(root, p)
-    kept = _keep_signature(root, p, body) if not p.get('new') else None
-    if kept:
+    kept = _keep_signature(root, p, body) if not p.get('new') and not assign else None
+    if assign:
+        new = step.textwrap.dedent(body).strip('\n')
+        tree = _code.parse(new)
+        if tree is None or len(tree.body) != 1 or step.assignment_span(new, p['name']) is None:
+            if added:
+                _repo.write_lines(root, p['rel'], before)
+                _refresh(root, p)
+            _unspent(p)
+            return (f'Not applied: what was sent is not one assignment {p["name"]} = ... (whole, as Python code); to '
+                    f"change some of its lines send ['replace', '<the old lines, as shown>', '<the new lines>'].\n\n"
+                    + nxt)
+        r = step._edit.apply(root, p['rel'], p['start'], p['end'], new)
+    elif kept:
         head, pad, new_body, node = kept
         start = min([d.lineno for d in node.decorator_list] + [node.lineno])
         r = step._edit.apply(root, p['rel'], start, node.end_lineno,
@@ -2059,9 +2148,16 @@ def _undefined(lines):
     return loads - bound
 
 
+def _unspent(p):
+    """A send that changed nothing (refused before it was applied) is not an edit: it is counted apart."""
+    p['edits'] = max(0, p.get('edits', 1) - 1)
+    p['refused'] = p.get('refused', 0) + 1
+
+
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
+        _unspent(p)
         err = r.error
         if 'line number' in err:
             # the base procedure's numbered form is not an answer form here (gm9: Gemma answered it with 'ls -R')
@@ -2086,8 +2182,13 @@ def _after_edit(root, st, p, r, before, names, nxt):
             # gk3 (fastapi_14583, Haiku): the edit called annotation_is_pydantic_v1, which the file does not import;
             # the import check cannot see a name used only inside a function, and the patch raised NameError
             verdict, failures = 'BROKEN', []
+            # hk30 (fastapi_13713): the undefined name was a new parameter the sentence asked for, and "Import them"
+            # sent the editor after an import (checklist F9, B12): the fact, then both ways
+            owner = (f'a parameter of {p["handle"]} (in its def line)' if p['name'] != MODULE and not p.get('group')
+                     else 'a parameter of the function that uses it')
             detail = ('the edit uses names that this file neither defines nor imports: ' + ', '.join(new_names[:5])
-                      + '. Import them (an import line above the definition, or opening the new lines, not indented)')
+                      + f'. A value given by the callers is {owner}; code of another module is imported (an import '
+                      'line above the definition, or opening the new lines, not indented)')
         elif broken:
             verdict, failures = 'BROKEN', [m for m, _ in broken]
             detail = 'the changed module cannot be imported any more:\n' + '\n'.join(
@@ -2211,7 +2312,15 @@ def _regression_check(root, st):
         diff = _repo.git(root, 'diff', '-U0', '--', rel) or ''
         changed[rel] += [l[1:].strip() for l in diff.splitlines()
                          if l[:1] in '+-' and not l.startswith(('+++', '---')) and l[1:].strip()][:60]
-    verdict, detail, failures = _tests.check(root, changed, use_map=False)
+    # hk30 (fastapi_15661): "31 existing tests pass" came from tests that share the bare name 'main' and never ran the
+    # changed script; whether they run the changed lines is measured, and said (checklist B11, F3)
+    cover = {}
+    for rel in changed:
+        old = _repo.git(root, 'show', f'HEAD:{rel}')
+        lines = step._status.changed_statements((old or '').splitlines(True), _repo.read_lines(root, rel))
+        if lines:
+            cover[rel] = lines
+    verdict, detail, failures = _tests.check(root, changed, use_map=False, cover=cover or None)
     st['reg'] = {'sig': sig, 'verdict': verdict, 'detail': detail[:1200], 'failures': list(failures)[:8]}
     _state.save('reg_cache', {**(_state.load('reg_cache', {}) or {}), sig: st['reg']})
     return st['reg']
@@ -2338,9 +2447,12 @@ def review(root, st, args):
             view.append('Existing tests the whole patch breaks: ' + ', '.join(t for t, _ in st['regressions'][:5]))
         reg = _regression_check(root, st) or {}
         if reg.get('verdict') == 'BROKEN':
+            # hk30 (fastapi_14953): the failing snapshot held the very value the issue changes ('format': 'binary'),
+            # and the answer called it "behaviour the issue keeps" (checklist B11, F4, B12): the fact, and what decides
             view.append('Existing tests that pass on the original code fail with the patch:\n' + reg['detail'] +
-                        '\nThese tests show behaviour the issue keeps. If the requirement, as written, contradicts '
-                        'them, it was read against the issue: the issue\'s own sentence decides.')
+                        '\nA test that checks a value the issue changes fails as expected (the hidden tests replace '
+                        'it); a test of behaviour the issue keeps must keep passing. The issue\'s own sentences decide '
+                        'which one each test is.')
         elif reg.get('detail'):
             view.append('Existing tests of the changed code: ' + reg['detail'][:300])
         for q in _twins(st, places):
@@ -2368,9 +2480,9 @@ def review(root, st, args):
         if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid):
             st.setdefault('reg_refused', {})[rid] = True
             return ('The patch breaks existing tests that pass on the original code:\n' + reg['detail'][:700] +
-                    "\nSo it is not done yet: name the place that is wrong and what must change there so that the "
-                    "requirement holds and these tests keep passing: ['not done', '<place>', '<what is wrong>'].\n\n"
-                    + nxt)
+                    "\nIf they check behaviour the issue keeps, the patch is not done: name the place that is wrong "
+                    "and what must change there: ['not done', '<place>', '<what is wrong>']. If they check a value "
+                    "the issue changes, send ['done'] again.\n\n" + nxt)
         st['reviews'][rid] = {'verdict': 'done' if first in ('done', 'yes') else 'cannot tell'}
         return f'{rid}: {st["reviews"][rid]["verdict"]}.\n\n{DONE}'
     if first in ('not done', 'no') and len(items) >= 2:

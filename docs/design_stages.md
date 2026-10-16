@@ -1315,3 +1315,30 @@ Closer (+), farther (−), neutral (=) per item of `docs/llm_checklist.md`; only
 Moving farther on an item needs a reason: 1d (B7), 2a (B9), 3a/3b (P7) are bounded as written; 2b and 4b move farther on
 B10, the item that cost the most with Gemma on Kaggle (V22), so they wait for a Gemma measurement; 4c and 4d are
 deferred.
+
+#### V26: the "free" hk30 changes (10-16, the user's: "implementa lo que salga gratis")
+
+"Free" = no checklist item farther (the table above): 1a, 1b, 1c, 1e, 1f, 1g, 1h and the owner half of 4a. Not built:
+1d (B7 −), 2a (B9 −), 3a/3b (P7 −), 2b/4b (B10 −: measure on Gemma first), 4c/4d (deferred); the refusal half of 4a
+(an empty requirement refused) is not free either: no deterministic test tells an empty requirement from a short
+one, and a wrong refusal costs a call (F4).
+
+- 1a `step.assignment`/`assignment_span`: `_resolve` finds a top-level assignment (`NAME = ...`, `NAME: T = ...`)
+  when no function or class has the name, in the file named first; `_refresh` follows it; the place view shows its
+  string whole (not collapsed); the edit takes the whole new assignment (one statement assigning that name) or the
+  replace form.
+- 1b refused sends (nothing applied) are counted apart (`refused`, at most 6), not as edits (at most 4).
+- 1c locate: a text fragment (not a name) is searched and every function holding it listed; `class Depends` / `def f`
+  is the name.
+- 1e the undefined-name check gives both ways: a parameter of the place, or an import.
+- 1f edit's `missing` must name code (a definition, a new member of an existing owner, or a .py path); otherwise the
+  form is described and the replace / whole forms offered.
+- 1g review: failing existing tests are facts; "a test that checks a value the issue changes fails as expected; a test
+  of behaviour the issue keeps must keep passing"; a second `done` is accepted as before.
+- 1h the review's regression check measures whether the passing tests run the changed lines ("but none of them runs
+  the changed lines").
+- 4a requirements: a name that is a parameter is shown with the functions that take it, the most called first.
+
+Checked: replays of rich_3043, rich_4075 and fastapi_14361 (hk30 traces) on the V26 build: no traceback or internal
+error; in rich_3043 locate now chooses CONSOLE_HTML_FORMAT (`rich/_export_format.py`, lines 1-18) at the first call
+that named it. Model run: the 30 hk30 tasks with Haiku on V26 (row hk26 in VERSIONS.md).
