@@ -1255,3 +1255,36 @@ report captured after its mark, which could be another task's run. Captures now 
 judgements may have used a wrong report for some tasks; its numbers stand as recorded, with that caveat.
 
 This changes only the evaluation tools, nothing the model reads: no checklist table.
+
+### hk30: the V25 build with Haiku on 30 screened tasks (10-16), why the unresolved ones failed
+
+Haiku through tools/anthropic_proxy.py, the V25 build (= S7), 30 tasks chosen by `judge.screen` (all scorable here,
+none of V25-30's). Batches 1-2: 9/20 resolved, every task under 5 min (52-256 s). Not Kaggle evidence. The 11
+unresolved tasks of batches 1-2 were analysed by four independent agents from per-task dossiers (statement, reference,
+agent patch, failing tests, every call and answer); their reports are in `docs/analysis_hk30/`.
+
+| Task | First wrong stage | Info in the statement | The system contributed |
+|---|---|---|---|
+| rich_4076 | locate | no (title only) | no |
+| fastapi_15661 | — | no (title only; tests pin a new script's names) | no |
+| fastapi_15280 | — | no (the reference is a joke exception) | no |
+| rich_4075 | requirements, then specify "no change" | partly | yes: an empty requirement accepted; a parameter not tied to its function |
+| fastapi_9753 | locate/plan | yes | yes: siblings reading the same helper shown as "does not call them"; review shows only callers |
+| fastapi_13713 | edit | partly | yes: the signature hidden ("parameters, lines 65-822, not shown"), "Import them" for what must be a parameter, `missing` accepted for a non-name (loop) |
+| rich_3934 | requirements (title only), then locate | no | yes: reproduce off with 187 s unused; review's "not done" sends a "no change" place back to specify, not to locate |
+| fastapi_14953 | locate | partly | yes: library producers not candidates; review cut the evidence ('bina...') and framed it as "behaviour the issue keeps" |
+| rich_3043 | locate (the script) | partly | yes: a module-level constant is never a place; refused edits count toward MAX_EDITS (`p['edits'] += 1` before the apply) |
+| fastapi_14372 | locate | yes | yes: R1 names two classes, one planned; the subclass not related code; review "cannot tell" goes to submit |
+| fastapi_14361 | locate (the script) | yes | yes: a text fragment resolves silently to the first function holding it; review cannot send back to locate; its message says "goes back" and the route submits |
+
+Patterns (generic, by count):
+- Locate is the first wrong stage in 7 of 11; in 3 of them the script decided (module-level code not placeable, text
+  fragment resolved to the first hit, library producer not a candidate).
+- No route back from review to locate: a "not done" on a place specify keeps as "no change" loops or submits (3 tasks).
+- Weak checks after the edit: "Kept, not checked" and review's "cannot tell" go straight to submit (4 tasks).
+- Title-only statements: an empty requirement is accepted and reproduce is off at 5 min (`REPRO_LEFT_S = 360`), although
+  Haiku used 52-256 s (3 tasks); 3 tasks are not solvable from the statement at all.
+- Script faults to fix: module-level assignments as places; refused sends not counted as edits; a text search lists every
+  function holding the text; edit windows never hide a signature's parameters; "declare it as a parameter" instead of
+  "import it" when the undefined name is the def's own; `missing` only for code names; review evidence not cut
+  mid-value; test selection by bare name (`main`) counted as evidence.
