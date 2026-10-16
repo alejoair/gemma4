@@ -1236,3 +1236,22 @@ minutes (V24: 7 with a patch, 6 stopped). Decisions 67% of the time; specify 44%
 Four requests at once cost each only 10% of its speed: the parallel-specify proposal of `docs/time_proposals` (B1, D5,
 E1) would cut the specify stage of a plan with several places by up to about 3.5 times. It needs one state file per
 slot (the scripts lock one state) and ParallelAgent as an agent_tool; not built yet.
+
+### Screening tasks that can be scored (10-16, the user's: "Lanza otras 30 diferentes, pero asegúrate de que puedan ser puntuadas")
+
+V25-30 lost 8 of its 30 tasks to the environment (fastapi test files importing inline_snapshot and dirty_equals,
+absent from the Kaggle image). Whether a task can be scored depends on the environment, so it is checked where the run
+happens, before the agent runs: `judge.screen` judges the empty patch of each candidate (the reference twice, the
+original code twice, cached for the later judgement) and keeps a task only when the reference ran, it passes the
+harness's own whole-file check (`official_feasible`) and at least one test fails without it (FAIL_TO_PASS). Candidates
+come in a deterministic order that keeps each repository's share at every prefix (`judge.screen_order`, seed 1), so
+the first 30 that pass are a stratified sample and Kaggle and the local run screen the same order.
+`kaggle_eval.py --screen 30 --exclude <ids>` and `local_eval.py --screen 30 --exclude <ids> --fetch-snapshots
+--screen-only` (the snapshot of a task not chosen is deleted again: the local disk holds about 7 GB).
+
+A fault found while writing it: with several tasks at once (`--concurrency 4`, V25-30) the judge took the last JUnit
+report captured after its mark, which could be another task's run. Captures now carry a tag set per context
+(`contextvars`: each asyncio task and each `to_thread` call keeps its own), and a mark is `(index, tag)`. V25-30's
+judgements may have used a wrong report for some tasks; its numbers stand as recorded, with that caveat.
+
+This changes only the evaluation tools, nothing the model reads: no checklist table.
