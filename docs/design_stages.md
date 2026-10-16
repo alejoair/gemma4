@@ -1219,3 +1219,20 @@ fastapi_14851 and rich_3006 resolved; 7 of 10 tasks had a patch (V23: 6), 6 stop
 resolved in V22 and V23, was stopped with a wrong patch. Specify fell from 77 calls (47%) to 64 (42%); refused or unused
 calls from 4 to 2. Decisions stayed at 69% of the time; the coordinator rose to 12% (79 calls, 137 tokens each). With
 10 tasks at temperature 1.0 a difference of one task is noise: V23 and V24 are not distinguishable by resolve count.
+
+### V25 (10-16): 4/10, submitted as S7
+
+requests_7328, fastapi_14851, httpx_3672 and rich_3006 resolved; 9 of 10 tasks had a patch and only 2 stopped at 5
+minutes (V24: 7 with a patch, 6 stopped). Decisions 67% of the time; specify 44%; the coordinator 12% (90 calls).
+
+**vLLM concurrency on Kaggle's 4×L4** (`--bench-concurrency`, 300 tokens per request, no thinking):
+
+| Requests at once | Total tokens/s | Per request |
+|---|---|---|
+| 1 | 39.8 | 39.8 |
+| 2 | 76.4 | 38.2 |
+| 4 | 143.3 | 35.8 |
+
+Four requests at once cost each only 10% of its speed: the parallel-specify proposal of `docs/time_proposals` (B1, D5,
+E1) would cut the specify stage of a plan with several places by up to about 3.5 times. It needs one state file per
+slot (the scripts lock one state) and ParallelAgent as an agent_tool; not built yet.
