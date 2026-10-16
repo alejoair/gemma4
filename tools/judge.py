@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextvars
 import hashlib
 import json
 import re
@@ -67,6 +68,11 @@ PASSED = 'passed'
 
 _lock = threading.Lock()
 _captures: list[dict] = []
+# which run a capture belongs to: with several tasks at once (kaggle_eval --concurrency) the last report after a mark
+# could be another task's, so each mark sets a tag in its context (asyncio tasks and to_thread copy it) and only the
+# reports of that tag count
+_tag: contextvars.ContextVar[int | None] = contextvars.ContextVar('judge_capture_tag', default=None)
+_next_tag = [0]
 
 
 def install_capture() -> None:
@@ -90,22 +96,27 @@ def install_capture() -> None:
                 xml = ''
                 print(f'judge: could not read the JUnit report: {type(e).__name__}: {e}', flush=True)
             with _lock:
-                _captures.append({'xml': xml, 'exit': res.exit_code, 'stdout': res.stdout or ''})
+                _captures.append({'xml': xml, 'exit': res.exit_code, 'stdout': res.stdout or '', 'tag': _tag.get()})
         return res
 
     hv.sandbox_exec = sandbox_exec
     hv._judge_capture_installed = True
 
 
-def capture_mark() -> int:
-    """A mark to pass to judge() (capture_mark=) for a verify_task run that starts after this call."""
+def capture_mark() -> tuple[int, int]:
+    """A mark to pass to judge() (capture_mark=) for a verify_task run that starts after this call, in this context
+    (the same asyncio task, or code it awaits or starts)."""
     with _lock:
-        return len(_captures)
+        _next_tag[0] += 1
+        tag = _next_tag[0]
+        _tag.set(tag)
+        return len(_captures), tag
 
 
-def _captured_since(mark: int) -> dict | None:
+def _captured_since(mark: tuple[int, int]) -> dict | None:
+    start, tag = mark
     with _lock:
-        new = _captures[mark:]
+        new = [c for c in _captures[start:] if c.get('tag') == tag]
     return new[-1] if new else None
 
 
@@ -411,7 +422,7 @@ def _problems(rec: dict, f2p, p2p, reqs, files, universe) -> dict:
 
 
 def judge(evaluator, task, agent_patch: str, harness_result=None, cache: Path | None = None,
-          capture_mark: int | None = None) -> dict:
+          capture_mark: tuple[int, int] | None = None) -> dict:
     """{'verdict': 'resolved' | 'not resolved' | 'unscorable', 'official_feasible': bool, 'f2p': [...],
     'f2p_failing': [...], 'p2p_broken': [...], 'required_failing': [...], 'flaky': [...], 'env_failures': [...],
     'no_f2p': bool, 'why': str, ...}.
@@ -505,6 +516,76 @@ def short(v: dict) -> str:
             f'f2p_failing={v.get("f2p_failing", [])[:5]} p2p_broken={v.get("p2p_broken", [])[:5]} '
             f'required_failing={v.get("required_failing", [])[:5]} flaky={len(v.get("flaky", []))} '
             f'env_failures={len(v.get("env_failures", []))} runs={v.get("agent_runs", 0)} {v.get("why", "")}')
+
+
+# ------------------------------------------------------------------------------------------------- screening
+
+def screen_order(tasks, seed: int = 1) -> list:
+    """Every task in a deterministic order in which each repository keeps its share at every prefix (each
+    repository's tasks shuffled with the seed, then a weighted round robin): the first n that pass screen() are a
+    stratified sample."""
+    import random
+
+    by: dict[str, list] = {}
+    for t in sorted(tasks, key=lambda t: t.instance_id):
+        by.setdefault(t.repo, []).append(t)
+    rng = random.Random(seed)
+    for repo in sorted(by):
+        rng.shuffle(by[repo])
+    total = sum(len(v) for v in by.values())
+    taken = {r: 0 for r in by}
+    out = []
+    while len(out) < total:
+        r = min((r for r in sorted(by) if taken[r] < len(by[r])), key=lambda r: (taken[r] + 1) / len(by[r]) * total)
+        out.append(by[r][taken[r]])
+        taken[r] += 1
+    return out
+
+
+def unscorable_reason(v: dict) -> str:
+    """'' when the judgement of the empty patch shows the task can be scored in this environment, else why not: the
+    reference runs and passes the harness's own whole-file check, and some test fails without it (FAIL_TO_PASS)."""
+    if v['verdict'] == 'unscorable':
+        return v.get('why', 'unscorable')
+    if not v['f2p']:
+        return 'no FAIL_TO_PASS test here'
+    if not v['official_feasible']:
+        return "the reference patch does not pass the harness's whole-file check here"
+    return ''
+
+
+def screen(evaluator, candidates: list, n: int, cache: Path | None, workers: int = 4, prepare=None, discard=None,
+           log=print) -> tuple[list, list[dict]]:
+    """The first n candidates (in order) that can be scored here, by judging the empty patch: the reference and
+    no-patch runs it makes are cached, so judging the agent's patch later reuses them. prepare(task) runs before a
+    candidate's runs (a snapshot download), discard(task) after a candidate not chosen."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(t):
+        try:
+            if prepare is not None:
+                prepare(t)
+            v = judge(evaluator, t, '', cache=cache)
+            return unscorable_reason(v), v
+        except Exception as e:  # noqa: BLE001
+            return f'screen error: {type(e).__name__}: {e}'[:300], None
+
+    chosen, rows, i = [], [], 0
+    with ThreadPoolExecutor(max(1, workers)) as ex:
+        while len(chosen) < n and i < len(candidates):
+            wave = candidates[i:i + max(1, workers)]
+            i += len(wave)
+            for t, (why, v) in zip(wave, ex.map(one, wave)):
+                ok = not why and len(chosen) < n
+                rows.append({'task_id': t.instance_id, 'repo': t.repo, 'chosen': int(ok), 'why': why,
+                             'f2p': len(v['f2p']) if v else '', 'official_feasible': int(bool(v and v['official_feasible']))})
+                if ok:
+                    chosen.append(t)
+                elif discard is not None:
+                    discard(t)
+                log(f'SCREEN {t.instance_id}: {"chosen" if ok else "left out"} ({why or "scorable"}) '
+                    f'[{len(chosen)}/{n} after {i} candidates]', flush=True)
+    return chosen, rows
 
 
 def make_evaluator(data: Path, work: Path, timeout: int = 600):

@@ -361,6 +361,11 @@ def main() -> None:
     ap.add_argument('--skip-install', action='store_true')
     ap.add_argument('--concurrency', type=int, default=1, help='tasks run at once')
     ap.add_argument('--bench-concurrency', action='store_true', help='measure vLLM with 1, 2, 4 requests at once first')
+    ap.add_argument('--exclude', default='', help='comma-separated instance ids never chosen (with --screen)')
+    ap.add_argument('--screen', type=int, default=0,
+                    help='choose this many tasks that can be scored here (judge.screen), from every task not excluded')
+    ap.add_argument('--screen-seed', type=int, default=1)
+    ap.add_argument('--screen-workers', type=int, default=6)
     args = ap.parse_args()
 
     logfh = open(WORK / 'eval_log.txt', 'a', encoding='utf-8')
@@ -460,12 +465,26 @@ def main() -> None:
     )
     evaluator = Evaluator(config)
     log_sandbox_packages(evaluator, judge)
+    judge_cache = WORK / 'judge_cache'
+    if args.screen:
+        # only tasks this environment can score: the reference runs and passes the harness's whole-file check and some
+        # test fails without it (V25-30: 8 of 30 had no score here). The runs are cached for the judge.
+        banner(f'SCREEN {args.screen} tasks')
+        excluded = {x.strip() for x in args.exclude.split(',') if x.strip()}
+        cands = judge.screen_order([t for t in all_tasks if t.instance_id not in excluded], args.screen_seed)
+        tasks, srows = judge.screen(evaluator, cands, args.screen, judge_cache, workers=args.screen_workers)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out.parent / 'screen.csv', 'w', newline='') as sf:
+            sw = csv.DictWriter(sf, list(srows[0]) if srows else ['task_id'])
+            sw.writeheader()
+            sw.writerows(srows)
+        print(f'screened {len(srows)} candidates in {(time.time() - t_start) / 60:.1f} min; tasks:',
+              ','.join(t.instance_id for t in tasks), flush=True)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fields = ['task_id', 'repo', 'resolved', 'judged', 'official_feasible', 'f2p', 'f2p_failing', 'p2p_broken',
               'required_failing', 'flaky', 'judge_note', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls',
               'duration_s', 'error']
-    judge_cache = WORK / 'judge_cache'
     rows = []
     with open(args.out, 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)

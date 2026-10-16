@@ -4,15 +4,18 @@ errored on setup with any patch, V15-V16), and runs the evaluation.
 
 The Kaggle dataset (scratchpad/ds3) holds this repository's tools/kaggle_eval.py as bench/kaggle_eval.py, the builds
 as v<N>/ and the wheels as extra_wheels/ (with inline-snapshot, dirty-equals, executing and asttokens since 10-16). Set
-SUBMISSION (the build folder) and TASKS (comma-separated) per run; the values below are the 30-task set used since
-V25-30 (pick_tasks n=30 seed 0), run 4 at a time."""
+SUBMISSION (the build folder) and TASKS (comma-separated) per run, or leave TASKS empty to choose SCREEN tasks this
+environment can score (judge.screen: the reference passes the harness's check and some test fails without it) from
+every task not in EXCLUDE. EXCLUDE below is the 30-task set of V25-30 (pick_tasks n=30 seed 0); tasks run 4 at a time."""
 import glob
 import os
 import subprocess
 import sys
 
 SUBMISSION = 'v25'
-TASKS = 'fastapi_13786,fastapi_14099,fastapi_14301,fastapi_14303,fastapi_14349,fastapi_14485,fastapi_14492,fastapi_14583,fastapi_14605,fastapi_14851,fastapi_14962,fastapi_14986,fastapi_15763,fastapi_15800,fastapi_9425,fastapi_9555,httpx_3672,requests_6592,requests_7433,requests_7502,rich_3006,rich_3469,rich_3472,rich_3506,rich_3521,rich_3535,rich_3675,rich_3777,rich_3782,rich_3882'
+TASKS = ''
+EXCLUDE = 'fastapi_13786,fastapi_14099,fastapi_14301,fastapi_14303,fastapi_14349,fastapi_14485,fastapi_14492,fastapi_14583,fastapi_14605,fastapi_14851,fastapi_14962,fastapi_14986,fastapi_15763,fastapi_15800,fastapi_9425,fastapi_9555,httpx_3672,requests_6592,requests_7433,requests_7502,rich_3006,rich_3469,rich_3472,rich_3506,rich_3521,rich_3535,rich_3675,rich_3777,rich_3782,rich_3882'
+SCREEN = 30
 
 hits = glob.glob('/kaggle/input/**/bench/kaggle_eval.py', recursive=True)
 assert hits, 'bench/kaggle_eval.py not found under /kaggle/input'
@@ -36,6 +39,7 @@ if os.path.isdir(wheels):
                      'print("test deps ok, pytest", pytest.__version__)'])
 
 cmd = [sys.executable, os.path.join(root, 'bench', 'kaggle_eval.py'), '--submission', os.path.join(root, SUBMISSION),
-       '--tasks', TASKS, '--out', f'/kaggle/working/run_{SUBMISSION}.csv', '--concurrency', '4']
+       '--out', f'/kaggle/working/run_{SUBMISSION}.csv', '--concurrency', '4']
+cmd += ['--tasks', TASKS] if TASKS else ['--screen', str(SCREEN), '--exclude', EXCLUDE]
 print(' '.join(cmd), flush=True)
 sys.exit(subprocess.call(cmd))
