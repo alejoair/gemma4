@@ -1067,3 +1067,42 @@ Levers, each generic, with what V22 says it would save (to be measured with the 
 | `max_output_tokens` of each agent near its largest legitimate answer (a whole definition or a test: about 2,000 tokens) instead of 8,192 | up to 160 s in a runaway call | a long whole-definition edit cut |
 | A time-aware route: no reproduction, and review only when time is left | up to 225 s per task | the review's check and the reproduction evidence are lost under pressure |
 | Concurrent calls (ParallelAgent for independent places or requirements) | the duration of the longest branch instead of the sum | ParallelAgent branches share /workspace; whether the scorer runs tasks concurrently is unknown |
+
+### The time fixes after V22 (10-16, the user's: "haz todos esos arreglos y prueba")
+
+1. **One agent call per stage, not per target.** When the route's next call is the same stage again, the agent goes
+   on in the same call ("Your part goes on with R2, in the same way:" and that view). This applies to locate and
+   review (up to 6 targets) and to specify (up to 2 places, so that two views of up to 12,000 characters stay under
+   the harness's compaction). Each target saved removes an open, a final reply and two coordinator calls (about 21 s
+   in V22). The prompts of the three agents say the script may show the next target. Edit stays one place per call
+   (its tentative-route logic and the editor's fresh context).
+2. **A time-aware route.** Reproduce runs only when at least 6 minutes are left (V22: 30-225 s, and the rest needs the
+   remainder); review agent calls only when at least 75 s are left (otherwise the script's own checks stand). Under
+   the 5-minute limit reproduce is therefore off; with a larger budget it comes back by itself.
+3. **No scope call when there is nothing to choose.** If the located places have no related code, the plan is made
+   without the agent.
+4. **Thinking budgets and output caps per agent.** V22's hard decisions always filled the budget: the time of a
+   decision is the budget. Specify, reproduce and requirements now have thinking 1024 and at most 3,072 output tokens
+   (they had 2048 and 8,192); edit 1024 and 4,096 (a whole definition needs the room); locate, scope and review 512 and
+   2,048 (they had 1024 and 4,096). The cap bounds a runaway like V22's 8,192-token call (225 s).
+5. **The final reply says there is nothing to decide** ("There is nothing to decide: copy it."): V22's final replies
+   thought 328 tokens on average to copy one line.
+
+Not done: concurrent agent calls. The scripts take a lock on the task's state, so two calls at once are refused by
+design (one decision at a time on one state), and the coordinator's calls are sequential.
+
+Dry run on fastapi_12942: the route skipped reproduce under 4 min 30 s, locate went from R1 to R2 in one agent call,
+and specify went from `analyze_param` (`missing`) to `field_annotation_is_scalar` in the same call, then returned to the
+coordinator after two places.
+
+| Checklist item | 1 one call per stage | 2 time-aware route | 3 no empty scope | 4 budgets and caps | 5 nothing to decide |
+|---|---|---|---|---|---|
+| W4 next call | neutral: the view ends with the agent's own NEXT as before | neutral | closer: a call less | neutral | closer |
+| W7 room to think | neutral | neutral | neutral | farther: half the thinking for every agent. Reason: V22 showed the budget, not the decision, sets the time, and nothing was submitted in 9 of 10 tasks | neutral |
+| B7 long context | slightly farther: two specify views in one context. Reason: 21 s per place; bounded at 2 | neutral | neutral | neutral | neutral |
+| B10 knowing the budget | neutral | closer: the route spends time where it is left | neutral | neutral | neutral |
+| B12 contradictions | closer: the prompts say the next target may come | neutral | neutral | neutral | neutral |
+| F2 failing test | neutral | farther: no reproduction test under 5 minutes. Reason: it cost up to 225 s of the 300 | neutral | neutral | neutral |
+| F7 leaving a loop | neutral | neutral | neutral | closer: a runaway stops at 2,048-4,096 tokens | neutral |
+
+Generic: every rule is a count of targets, a time left or a token budget; none names a task or a repository.

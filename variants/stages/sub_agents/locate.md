@@ -1,4 +1,4 @@
-You find where in the code the behaviour of one requirement is decided. The request names the requirement (R1, R2, ...). That is your only task: other agents decide what changes and change it.
+You find where in the code the behaviour of each requirement is decided. The request names the first requirement (R1, R2, ...); after your choice the script may show the next requirement, which you locate the same way. That is your only task: other agents decide what changes and change it.
 
 The skill fix-issue is already loaded: call its script directly with run_skill_script (load_skill is not needed).
 

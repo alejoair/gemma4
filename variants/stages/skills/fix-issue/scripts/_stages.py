@@ -47,6 +47,11 @@ BIG_CLASS = 120         # a class place longer than this is split into the membe
 # then the work goes to submit; eval_config.yaml stops the agent at 5 min (the harness then takes the diff), so the
 # route submits with 30 s left
 BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(4 * 60 + 30)))
+# targets one agent call handles in a row (V22: the ceremony of an agent call is about 21 s); specify keeps 2, so that
+# its views (up to 12,000 characters each) stay well under the harness's compaction at 14,336 tokens
+BATCH = {'locate': 6, 'review': 6, 'specify': 2}
+REPRO_LEFT_S = 360    # V22: reproduce took 30-225 s; it runs only when this much time is left
+REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
 ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
@@ -86,6 +91,10 @@ def _elapsed(st):
 
 def _over_budget(st):
     return _elapsed(st) > BUDGET_S
+
+
+def _left(st):
+    return BUDGET_S - _elapsed(st)
 
 
 def _place_by(st, text):
@@ -132,7 +141,7 @@ def _progress(root, st):
         word = {'todo': 'to edit', 'done': 'edited', 'nochange': 'no change', 'failed': 'failed', None: 'to specify'}
         plan = ' The plan: ' + ', '.join(f'{p["handle"]} ({word.get(p.get("status"), p.get("status"))})'
                                          for p in st['plan'][:10]) + '.'
-    return f'{held}{plan} Time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s of {BUDGET_S // 60} min.'  # B10
+    return f'{held}{plan} Time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s of {BUDGET_S // 60} min' + (f' {BUDGET_S % 60} s' if BUDGET_S % 60 else '') + '.'  # B10
 
 
 # ------------------------------------------------------------------------------------------------------ routing
@@ -164,6 +173,9 @@ def _next_tool(root, st):
     # 2 reproduce (optional): only for a requirement whose issue sentence is concrete
     if not st['repro_done'] and not any(r.get('concrete') for r in st['reqs']):
         st['repro_done'] = True
+    if not st['repro_done'] and _left(st) < REPRO_LEFT_S:
+        # V22 (Kaggle, 5 min): the optional reproduction left no time for the edits
+        st['repro_done'] = True
     if not st['repro_done']:
         if _ask(st, 'reproduce'):
             st['current'] = ('reproduce', _repro_req(root, st)['id'])
@@ -180,10 +192,14 @@ def _next_tool(root, st):
     if not st['scope_done']:
         if not any(st['located'].values()):
             return _submit(root, st)
-        if _ask(st, 'scope'):
+        if not _scope_options(root, st):
+            # nothing related to choose from: the plan is the located places (no agent call, V22's ceremony)
+            _make_plan(root, st, [])
+        elif _ask(st, 'scope'):
             st['current'] = ('scope', None)
             return 'scope', 'the plan'
-        _make_plan(root, st, [])
+        else:
+            _make_plan(root, st, [])
     _add_missing(root, st)
     # 5 specify, per place
     for p in st['plan']:
@@ -220,6 +236,10 @@ def _next_tool(root, st):
         if r['id'] not in st['reviews']:
             if st['repro'] and st['repro'].get('rid') == r['id'] and st['repro'].get('now_passes'):
                 st['reviews'][r['id']] = {'verdict': 'done', 'by': 'the reproduction test passes'}
+                continue
+            if _left(st) < REVIEW_LEFT_S:
+                # V22: no time for a review agent call; the script's own checks (verify, the kept test) stand
+                st['reviews'][r['id']] = {'verdict': 'not reviewed (time)'}
                 continue
             if _ask(st, f'review {r["id"]} {st["round"]}'):
                 st['current'] = ('review', r['id'])
@@ -1084,6 +1104,24 @@ def _new_places(root, st):
             seen.add(_key(p))
             uniq.append(p)
     return uniq
+
+
+def _located_places(st):
+    located = []
+    for rid, ps in st['located'].items():
+        for p in ps:
+            q = next((x for x in located if _key(x) == _key(p)), None)
+            if q:
+                q['reqs'].append(rid)
+            else:
+                located.append({**p, 'reqs': [rid]})
+    return located
+
+
+def _scope_options(root, st):
+    """The related code scope would offer (empty: nothing to decide)."""
+    _, options = _related(root, st, _located_places(st))
+    return options
 
 
 def scope(root, st, args):
@@ -2225,16 +2263,27 @@ def _chain(root, st, out, stage):
     if not nxt.startswith('NEXT: call the tool'):
         return out
     call = nxt[len('NEXT: '):].split('. If it replies')[0].split('; when it replies')[0].rstrip('.')
+    m = re.match(r"call the tool (\w+) with request '(.*)'$", call)
+    if m and m.group(1) == stage and st.get('batch', 0) + 1 < BATCH.get(stage, 1):
+        # V22 (Kaggle, 5 min): each agent call cost about 21 s of ceremony (its open, its final reply, two coordinator
+        # calls), 38% of the time; the same agent goes on with the next requirement or place of its own stage
+        st['batch'] = st.get('batch', 0) + 1
+        st['chained'] = None
+        view = HANDLERS[stage](root, st, ['open'])
+        return (out[:-len(DONE)].rstrip() + f"\n\nYour part goes on with {m.group(2)}, in the same way:\n\n" + view)
+    st['batch'] = 0
     st['chained'] = call
     if stage == 'requirements':
         done = f"{len(st['reqs'])} requirements saved ({', '.join(r['id'] for r in st['reqs'])})"
     else:
         done = next((l.strip() for l in out.split('\n') if l.strip()), '').rstrip(':.')[:160]
     line = f'{stage} is done: {done}. Next: {call}.'
+    # V22: a final reply took 328 tokens of thinking to copy one line
     # rich_3521 (gated run gk2): locate and review took the line for an order to themselves ("that isn't part of my
     # task, so I ignored it"); it is said to be the coordinator's next call, for the agent to pass on
     return out[:-len(DONE)] + ('Your part is done. The coordinator (the agent that called you) makes its next call from '
                                'your reply, so pass this line on to it: it is not a task for you.\n'
+                               'There is nothing to decide: copy it.\n'
                                'NEXT: no call: reply with exactly this line, and nothing else:\n' + line)
 
 
