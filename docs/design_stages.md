@@ -1106,3 +1106,42 @@ coordinator after two places.
 | F7 leaving a loop | neutral | neutral | neutral | closer: a runaway stops at 2,048-4,096 tokens | neutral |
 
 Generic: every rule is a count of targets, a time left or a token budget; none names a task or a repository.
+
+### V23 (10-16): the time fixes on Kaggle, 3/10
+
+requests_7328, fastapi_14851 and rich_3006 resolved (judged); 6 of 10 tasks had a patch (V22: 1). The fastapi tasks
+were scorable again after the eval_env fix (fastapi_14583 still unscorable).
+
+| Kind of call | V22 wall time | V23 wall time | V22 tokens/call | V23 tokens/call |
+|---|---|---|---|---|
+| Decisions | 1,412 s (51%) | 1,822 s (69%) | 785 | 663 |
+| Final replies | 533 s (19%) | 235 s (9%) | 328 | 114 |
+| Opens | 293 s (11%) | 227 s (9%) | 241 | 185 |
+| Coordinator | 221 s (8%) | 276 s (10%) | 95 | 118 |
+| Refused, errors, unused | 319 s (11%) | 74 s (3%) | 1,251 | 642 |
+
+By agent, specify took 47% of the time (77 calls). Three causes, each fixed generically after the run:
+1. **Copies of the same code** (httpx_3672: the same methods in `src/httpx/` and `src/ahttpx/`, six places specified
+   and edited one by one). A place whose original code is the same as another place of the plan with the same
+   qualified name takes that place's sentence without a specify call, and that place's accepted edit is made in it
+   too (with the imports the edit added), when it still has the shared original code and the file still parses.
+2. **A refused `missing`** (rich_3521): the specifier of `split_cells` named `_split_cells`, which another specifier
+   had left `no change`; the script refused it as "already a place of the fix" three times (about 90 s). A place that
+   is finished (no change, edited or failed) named by `missing` is now specified again with the note.
+3. **A chain of `missing`** (fastapi_14986): `get_openapi` named `OpenAPI`, which named `Server`; both ended `no
+   change`, and the sentence for `get_openapi` came at 298 s. Code that was itself named by a specifier names no
+   further code.
+Also: specify handles up to 3 places in one agent call (the ceremony is now about 12 s a call).
+
+Dry run on httpx_3672: the `ahttpx` copy of `HTTPParser.__repr__` took the sentence of the `httpx` one and got its
+edit, with no agent call for either.
+
+| Checklist item | 1 copies | 2 re-open by missing | 3 no chain | specify 3 |
+|---|---|---|---|---|
+| B9 exploring | neutral | neutral | closer: no browsing through `missing` | neutral |
+| B12 contradictions | neutral | closer: a finished place can be named, as the prompt says | closer: the refusal says why | neutral |
+| W4 next call | closer: fewer calls | closer: no refused calls | closer | closer |
+| B7 long context | neutral | neutral | neutral | slightly farther: up to 3 views; reason: 12 s a call, and V23's views were shorter |
+| B11 doubting tool output | slightly farther: a copied edit is checked only by parsing and the later review. Reason: the copy is the same code with the same sentence | neutral | neutral | neutral |
+
+Generic: a copy is decided by identical original code and qualified name; the other two rules hold for any place.

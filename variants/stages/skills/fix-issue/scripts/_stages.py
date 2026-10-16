@@ -47,9 +47,9 @@ BIG_CLASS = 120         # a class place longer than this is split into the membe
 # then the work goes to submit; eval_config.yaml stops the agent at 5 min (the harness then takes the diff), so the
 # route submits with 30 s left
 BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(4 * 60 + 30)))
-# targets one agent call handles in a row (V22: the ceremony of an agent call is about 21 s); specify keeps 2, so that
-# its views (up to 12,000 characters each) stay well under the harness's compaction at 14,336 tokens
-BATCH = {'locate': 6, 'review': 6, 'specify': 2}
+# targets one agent call handles in a row (V22: the ceremony of an agent call is about 21 s); specify keeps 3 (V23), so
+# that its views (up to 12,000 characters each) stay under the harness's compaction at 14,336 tokens
+BATCH = {'locate': 6, 'review': 6, 'specify': 3}
 REPRO_LEFT_S = 360    # V22: reproduce took 30-225 s; it runs only when this much time is left
 REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
 REPRO_NAME = 'test_swe_reproduce_issue.py'
@@ -204,6 +204,13 @@ def _next_tool(root, st):
     # 5 specify, per place
     for p in st['plan']:
         if p.get('sentence') is None:
+            q = _copy_of(root, st, p)
+            if q is not None and q.get('sentence') is not None and q.get('status') != 'failed' and not p.get('note'):
+                # V23 (httpx_3672): the same method in httpx/ and ahttpx/, specified and edited one by one; a copy whose
+                # original code is the same takes the other's sentence
+                p['sentence'], p['status'], p['copy_of'] = q['sentence'], ('nochange' if q.get('status') == 'nochange'
+                                                                           else 'todo'), _key(q)
+                continue
             if _ask(st, f'specify {_key(p)} {st["round"]} {p.get("respecs", 0)}'):
                 st['current'] = ('specify', p['handle'])
                 return 'specify', p['handle']
@@ -212,6 +219,10 @@ def _next_tool(root, st):
     # 6 edit, per place
     for p in st['plan']:
         if p.get('status') == 'todo':
+            q = _copy_of(root, st, p)
+            if q is not None and q.get('status') == 'done' and q.get('sentence') == p.get('sentence') \
+                    and _apply_copy(root, st, p, q):
+                continue
             if _ask(st, f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}'):
                 st['current'] = ('edit', p['handle'])
                 p['opened'] = False
@@ -1106,6 +1117,57 @@ def _new_places(root, st):
     return uniq
 
 
+def _orig_text(root, rel, name):
+    """The definition's text in the original commit (HEAD), or None."""
+    text = _repo.git(root, 'show', 'HEAD:' + rel)
+    if not text:
+        return None
+    lines = text.splitlines(keepends=True)
+    sym = next((x for x in _code.symbols(_code.parse(text)) if x.name == name), None)
+    return ''.join(lines[sym.start - 1:sym.end]) if sym else None
+
+
+def _cur_span(root, rel, name):
+    lines = _repo.read_lines(root, rel)
+    sym = next((x for x in _code.symbols(_code.parse(''.join(lines))) if x.name == name), None)
+    return (lines, sym.start, sym.end) if sym else (lines, None, None)
+
+
+def _copy_of(root, st, p):
+    """Another place of the plan with the same qualified name in another file and the same original code (a module
+    kept in two copies, such as a sync package and its async twin), or None."""
+    if p.get('new') or p['name'] == MODULE:
+        return None
+    mine = _orig_text(root, p['rel'], p['name'])
+    if not mine:
+        return None
+    return next((q for q in st['plan'] if q is not p and q['name'] == p['name'] and q['rel'] != p['rel']
+                 and not q.get('new') and _orig_text(root, q['rel'], q['name']) == mine), None)
+
+
+def _apply_copy(root, st, p, q):
+    """q's accepted edit made in p as well, when p still has the original code they share: the same new definition
+    and the imports q's edit added. True when it is applied and the file still parses."""
+    lines, s0, e0 = _cur_span(root, p['rel'], p['name'])
+    qlines, qs, qe = _cur_span(root, q['rel'], q['name'])
+    if s0 is None or qs is None or ''.join(lines[s0 - 1:e0]) != _orig_text(root, p['rel'], p['name']):
+        return False
+    new = lines[:s0 - 1] + qlines[qs - 1:qe] + lines[e0:]
+    if _code.parse(''.join(new)) is None:
+        return False
+    head = (_repo.git(root, 'show', 'HEAD:' + q['rel']) or '').splitlines()
+    added = [l.strip() for l in qlines if IMPORT.match(l.strip()) and not l.startswith((' ', '\t'))
+             and l.rstrip('\n') not in head]
+    _repo.write_lines(root, p['rel'], new)
+    _add_imports(root, p['rel'], added)
+    if _code.parse(_repo.read_text(root, p['rel'])) is None:
+        _repo.git(root, 'checkout', '--', p['rel'])
+        return False
+    p['status'], p['edited'], p['copied_from'] = 'done', True, _key(q)
+    _refresh(root, p)
+    return True
+
+
 def _located_places(st):
     located = []
     for rid, ps in st['located'].items():
@@ -1495,7 +1557,16 @@ def specify(root, st, args):
         q = next((_place_by(st, n) for n in _missing_names(name) or [name] if _place_by(st, n)), None)
         if q is p:
             return f'{name} is this place. Send what changes here, or [\'no change\'].\n\n' + nxt
-        if q is not None:
+        if (p.get('note') or '').startswith('the specifier of'):
+            # V23 (fastapi_14986): get_openapi named OpenAPI, which named Server, then both were 'no change' (170 s);
+            # code named by a specifier names no further code
+            return (f'{p["handle"]} was itself named for this change, so it names no further code: send what changes '
+                    "here, or ['no change'].\n\n" + nxt)
+        if q is not None and q.get('status') in ('nochange', 'done', 'failed'):
+            # V23 (rich_3521): Segment._split_cells had been specified 'no change'; the specifier of split_cells named
+            # it for the change three times and was refused each time
+            pass
+        elif q is not None:
             said = f' (its sentence: {q["sentence"]})' if q.get('sentence') else ''
             return (f'{q["handle"]} is already a place of the fix{said}; its own specifier writes its change. Send what '
                     f"changes in {p['handle']}, or ['no change'].\n\n" + nxt)
