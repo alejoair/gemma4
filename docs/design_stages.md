@@ -1145,3 +1145,34 @@ edit, with no agent call for either.
 | B11 doubting tool output | slightly farther: a copied edit is checked only by parsing and the later review. Reason: the copy is the same code with the same sentence | neutral | neutral | neutral |
 
 Generic: a copy is decided by identical original code and qualified name; the other two rules hold for any place.
+
+### Can the per-task limit be longer? (10-16, the user's question)
+
+**The rule (the competition's Evaluation page, read 10-16):** "Your agent has a limit of 12 hours to submit patches for
+all tasks, inclusive of sandbox setup time, but excluding time for patch validation." The test set has "about 120
+tasks" (Data page). The harness runs one task at a time by default (`swegemma` `EvalConfig.concurrency = 1`; the
+official `inference.py` is not public, so sequential is the assumption). S6, with 60 minutes per task, finished
+without a score.
+
+**Measured on Kaggle's 4×L4 (V23):**
+- fixed cost of the run: vLLM ready after 442 s, wheels 66 s, about 8.5 minutes;
+- per task: the agent stops at the limit plus up to 16 s (the running model call finishes: durations 302-316 s for a
+  300-s limit); our subprocess sandbox's own setup and teardown are 3-20 s (the official Docker container's setup is
+  not known, and counts);
+- 8 of 10 tasks used the whole limit (mean 289 s of 300).
+
+**The limit that fits** (12 h, every task using the whole limit, 15 s of overrun):
+
+| Tasks | Setup per task | No margin | 5% margin |
+|---|---|---|---|
+| 120 | 9 s (ours) | 5.5 min | 5.2 min |
+| 120 | 30 s | 5.2 min | 4.9 min |
+| 120 | 60 s | 4.7 min | 4.4 min |
+| 125 | 9 s | 5.3 min | 5.0 min |
+| 125 | 30 s | 4.9 min | 4.7 min |
+| 130 | 30 s | 4.7 min | 4.5 min |
+
+**Conclusion:** 5 minutes is already at the edge. The most it could grow is about 5.25 minutes, and only if the
+official setup is as short as ours and there are no more than 120 tasks; with 30 s of setup or 125 tasks, 5 minutes is
+already over a 5% margin. Lengthening it risks the whole score (S6) for at most 5% more time per task. The time must
+come from the procedure (V22 → V23: decisions from 51% to 69% of the time), not from the limit.
