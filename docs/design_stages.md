@@ -1387,3 +1387,25 @@ located or specified; rich_3718 saw none of the new texts): sampling at temperat
 fastapi_14419 and rich_3180 the review then saw the new 1g wording with failing tests and answered done / cannot tell;
 the judge finds no existing test broken by the final patch in either, so the failing hidden tests are the wrong fix
 itself.
+
+#### The time trial's result (V25-T15, 10-16)
+
+10/30 resolved with 15 minutes, against 5/30 with 5 (V25-30s, the same tasks and build). Natural durations: mean
+519 s, median 488 s, 154-907 s; 4 tasks hit 15 minutes; empty patches 5 (V25-30s: 18). The resolved tasks finished
+at 154-516 s; none after 8 min 36 s.
+
+| Cap | Resolved by then | Mean time per task | 120 tasks, 9 s setup | 120 tasks, 30 s setup |
+|---|---|---|---|---|
+| 5 min | 5 | 298 s | 10.4 h | 11.1 h |
+| 6 min | 7 | 341 s | 11.8 h | 12.5 h |
+| 7 min | 8 | 380 s | 13.1 h | 13.8 h |
+| 8 min | 9 | 414 s | 14.3 h | 15.0 h |
+| 10 min | 10 | 461 s | 15.8 h | 16.5 h |
+
+("Resolved by then": resolved in the trial and finished by the cap plus 15 s; a run with that cap would stop the route
+earlier, so this is an estimate. Totals add the fixed 8.5 min. Durations were measured 4 at once, about 10% slower
+per request than one at a time.)
+
+Reading: more time resolves more (the extra 5 come at 5.1-8.6 min), but the 12 h hold only up to about 6 minutes,
+and only with a short official setup per task. The rest of the gain has to come from making the tasks faster: the
+same resolved tasks in less time.
