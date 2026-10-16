@@ -1212,3 +1212,10 @@ editor call.
 | F5 what is done | neutral | neutral | neutral | neutral | closer: a patch exists earlier |
 
 Generic: every rule depends on the plan's structure, the form of a sentence or the time; none names a task.
+
+### V24 (10-16): 2/10
+
+fastapi_14851 and rich_3006 resolved; 7 of 10 tasks had a patch (V23: 6), 6 stopped at 5 minutes (V23: 7). requests_7328,
+resolved in V22 and V23, was stopped with a wrong patch. Specify fell from 77 calls (47%) to 64 (42%); refused or unused
+calls from 4 to 2. Decisions stayed at 69% of the time; the coordinator rose to 12% (79 calls, 137 tokens each). With
+10 tasks at temperature 1.0 a difference of one task is noise: V23 and V24 are not distinguishable by resolve count.
