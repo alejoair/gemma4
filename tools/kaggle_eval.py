@@ -28,6 +28,7 @@ import random
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
@@ -358,6 +359,7 @@ def main() -> None:
     ap.add_argument('--tasks', default='', help='comma-separated instance ids (overrides --n/--seed)')
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--skip-install', action='store_true')
+    ap.add_argument('--concurrency', type=int, default=1, help='tasks run at once')
     ap.add_argument('--bench-concurrency', action='store_true', help='measure vLLM with 1, 2, 4 requests at once first')
     args = ap.parse_args()
 
@@ -469,11 +471,14 @@ def main() -> None:
         wr = csv.DictWriter(fh, fields)
         wr.writeheader()
         t0 = time.time()
-        for i, task in enumerate(tasks, 1):
-            banner(f'TASK {i}/{len(tasks)} {task.instance_id} ({task.repo})  elapsed {(time.time() - t0) / 60:.1f} min')
+        lock = threading.Lock()
+        state = {'vllm_offset': vllm_offset}
+
+        def run_one(i, task, r=None, err=None, mark=None):
+            """Everything after the agent's run: the row, the logs, the judge (r is the harness's result)."""
             try:
-                mark = judge.capture_mark()
-                r = run_sync(evaluator.evaluate_task, task=task, task_index=i, total_tasks=len(tasks))
+                if err is not None:
+                    raise err
                 row = dict(task_id=task.instance_id, repo=task.repo, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                            patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
                            duration_s=round(r.duration_seconds, 1), error=(r.error_message or '')[:300])
@@ -513,13 +518,38 @@ def main() -> None:
                 summarize_trace(task.instance_id, results_dir)
             except Exception as e:  # noqa: BLE001
                 print(f'(trace summary failed: {type(e).__name__}: {e})')
-            vllm_offset = vllm_new_lines(server, vllm_offset)
-            rows.append(row)
-            wr.writerow(row)
-            fh.flush()
+            with lock:
+                state['vllm_offset'] = vllm_new_lines(server, state['vllm_offset'])
+                rows.append(row)
+                wr.writerow(row)
+                fh.flush()
             print(f"\n[{i}/{len(tasks)}] {row['task_id']} resolved={row['resolved']} patch={row['patch_chars']} "
                   f"tools={row['tool_calls']} llm={row['llm_calls']} {row['duration_s']}s error={row['error'][:120]!r} "
                   f"(elapsed {(time.time() - t0) / 60:.1f} min)", flush=True)
+
+        # several tasks at once (--concurrency): vLLM on the 4xL4 gives 3.6x the throughput with 4 requests (V25's
+        # bench), each about 10% slower than alone; the harness's own CLI runs tasks concurrently the same way
+        # in one event loop, as the harness's CLI does it; what follows the agent (judge, logs) runs in a thread
+        async def run_all():
+            sem = asyncio.Semaphore(max(1, args.concurrency))
+
+            async def worker(i, task):
+                async with sem:
+                    banner(f'TASK {i}/{len(tasks)} {task.instance_id} ({task.repo})  elapsed '
+                           f'{(time.time() - t0) / 60:.1f} min')
+                    mark = judge.capture_mark()
+                    try:
+                        r, err = await evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)), None
+                    except Exception as e:  # noqa: BLE001
+                        r, err = None, e
+                    if args.concurrency <= 1:
+                        run_one(i, task, r, err, mark)
+                    else:
+                        await asyncio.to_thread(run_one, i, task, r, err, mark)
+
+            await asyncio.gather(*(worker(i, task) for i, task in enumerate(tasks, 1)))
+
+        asyncio.run(run_all())
 
     banner('SUMMARY')
     solved = sum(r['resolved'] for r in rows)
