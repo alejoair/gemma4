@@ -192,15 +192,25 @@ def _next_tool(root, st):
     if not st['scope_done']:
         if not any(st['located'].values()):
             return _submit(root, st)
-        if not _scope_options(root, st):
-            # nothing related to choose from: the plan is the located places (no agent call, V22's ceremony)
-            _make_plan(root, st, [])
-        elif _ask(st, 'scope'):
-            st['current'] = ('scope', None)
-            return 'scope', 'the plan'
-        else:
-            _make_plan(root, st, [])
+        # docs/time_proposals (C1, F1): the scope agent answered 'none' in 6 of 8 decisions and the places it or the
+        # script added were never edited; the plan is the located places and their identical copies, and the related
+        # code is shown to each specifier, who adds what must change too with 'missing'
+        _make_plan(root, st, [])
     _add_missing(root, st)
+    # docs/time_proposals (D1): the place chosen first for the first requirement is specified and edited before the
+    # others, so that a patch exists early (V22-V23: the first diff came at about 240 s, after every place was specified)
+    main = _main_place(st)
+    if main is not None and main.get('sentence') is None and not main.get('copy_of'):
+        if _ask(st, f'specify {_key(main)} {st["round"]} {main.get("respecs", 0)}'):
+            st['current'] = ('specify', main['handle'])
+            return 'specify', main['handle']
+    if main is not None and main.get('status') == 'todo':
+        if _try_literal(root, st, main):
+            pass
+        elif _ask(st, f'edit {_key(main)} {st["round"]} {main.get("respecs", 0)}'):
+            st['current'] = ('edit', main['handle'])
+            main['opened'] = False
+            return 'edit', main['handle']
     # 5 specify, per place
     for p in st['plan']:
         if p.get('sentence') is None:
@@ -222,6 +232,8 @@ def _next_tool(root, st):
             q = _copy_of(root, st, p)
             if q is not None and q.get('status') == 'done' and q.get('sentence') == p.get('sentence') \
                     and _apply_copy(root, st, p, q):
+                continue
+            if _try_literal(root, st, p):
                 continue
             if _ask(st, f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}'):
                 st['current'] = ('edit', p['handle'])
@@ -1133,6 +1145,13 @@ def _cur_span(root, rel, name):
     return (lines, sym.start, sym.end) if sym else (lines, None, None)
 
 
+def _same_code(root, d, places):
+    """d has the same qualified name and original code as one of these places (a copy kept in another module)."""
+    mine = _orig_text(root, d['rel'], d['name'])
+    return bool(mine) and any(q['name'] == d['name'] and q['rel'] != d['rel'] and not q.get('new')
+                              and _orig_text(root, q['rel'], q['name']) == mine for q in places)
+
+
 def _copy_of(root, st, p):
     """Another place of the plan with the same qualified name in another file and the same original code (a module
     kept in two copies, such as a sync package and its async twin), or None."""
@@ -1166,6 +1185,48 @@ def _apply_copy(root, st, p, q):
     p['status'], p['edited'], p['copied_from'] = 'done', True, _key(q)
     _refresh(root, p)
     return True
+
+
+def _main_place(st):
+    """The plan's place chosen first for the first requirement that has one."""
+    for r in st['reqs']:
+        for c in st['located'].get(r['id']) or []:
+            p = next((q for q in st['plan'] if _key(q) == _key(c)), None)
+            if p is not None:
+                return p
+    return None
+
+
+LITERAL = re.compile(r"^\s*(?:in\s+`[^`]+`\s*,\s*)?replace\s+(?:the\s+\w+(?:\s+\w+)?\s+)?`([^`]+)`\s+with\s+`([^`]*)`\s*\.?\s*$",
+                     re.I | re.S)
+
+
+def _try_literal(root, st, p):
+    """A sentence that is one literal replacement ("replace `A` with `B`", 6 of the 15 sentences of V23) is applied by
+    the script through the editor's own checks, when A occurs once in the place; True when the edit is kept. The editor
+    only copied it (20-29 s a place)."""
+    m = LITERAL.match(p.get('sentence') or '')
+    if not m or p.get('lit_tried') or p.get('new') or p['name'] == MODULE:
+        return False
+    p['lit_tried'] = True
+    old, new = _unescaped(m.group(1)), _unescaped(m.group(2))
+    lines, s0, e0 = _cur_span(root, p['rel'], p['name'])
+    if s0 is None:
+        return False
+    text = ''.join(lines[s0 - 1:e0])
+    if text.count(old) != 1:
+        return False
+    saved = {k: p.get(k) for k in ('fails', 'edits', 'status')}
+    cur, tent = st.get('current'), st.get('tentative')
+    st['current'] = ('edit', p['handle'])
+    edit(root, st, [text.replace(old, new).rstrip('\n')])
+    st['current'], st['tentative'] = cur, tent
+    if p.get('status') == 'done':
+        p['literal'] = True
+        return True
+    for k, v in saved.items():
+        p[k] = v
+    return False
 
 
 def _located_places(st):
@@ -1247,6 +1308,7 @@ def _make_plan(root, st, extra, located=None, auto=None, newp=None):
                 else:
                     located.append({**p, 'reqs': [rid]})
         auto, _ = _related(root, st, located)
+        auto = [d for d in auto if _same_code(root, d, located)]
         newp = _new_places(root, st)
     all_reqs = [r['id'] for r in st['reqs']]
     plan = []
@@ -1514,6 +1576,16 @@ def specify(root, st, args):
             deciding = _deciding_calls(root, st, p, ctx)
             if deciding:
                 view.append(deciding)
+            if not (p.get('note') or '').startswith('the specifier of'):
+                # the scope agent's question, asked here (docs/time_proposals C1, F1): related code that may need the
+                # same change, each with the line that links it
+                _, options = _related(root, st, [p])
+                options = [d for d in options if not any(_key(q) == _key(d) for q in st['plan'])
+                           and d['name'] != '<exports>'][:6]
+                if options:
+                    view.append('Related code (callers, overrides, copies; it keeps its code unless you name it with '
+                                "'missing'):\n" + '\n'.join(f'  {d["name"]} ({d["rel"]}) — {d["reason"]}: '
+                                                             f'{_link_line(root, d)}' for d in options))
         others = [f'  {q["handle"]}: {q["sentence"]}' if q.get('sentence') else f'  {q["handle"]}: (to specify)'
                   for q in st['plan'] if q is not p]
         if others:
@@ -1541,6 +1613,7 @@ def specify(root, st, args):
         text = NUMBERED.sub(r'\1', '\n\n'.join(view))
         # gm11: "lines 356-519" and "(lines 371-454 not shown)" gave the sentence its "line 373"
         text = re.sub(r', lines \d+-\d+\)', ')', text)
+        text = re.sub(r' \(line \d+\):', ':', text)     # the related code's link lines (B1)
         text = re.sub(r'\(lines (\d+)-(\d+) not shown\)', lambda m: f'({int(m.group(2)) - int(m.group(1)) + 1} lines not '
                       'shown)', text)
         return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
@@ -1548,6 +1621,7 @@ def specify(root, st, args):
                 'If the change belongs in other code (a function this place calls, for example), name that code with '
                 "'missing': it joins the plan and is specified first, then this place again."
                 '\n\n' + nxt)
+    self_named = False
     if _args.clean(items[0]).lower() == 'missing':
         # gm11b (the 31B, fastapi_12942): the fix was in field_annotation_is_scalar, which analyze_param calls; the
         # specifier saw it, believed it could only change analyze_param, and wrote a workaround there
@@ -1556,7 +1630,11 @@ def specify(root, st, args):
         name, what = _args.clean(items[1]), ' '.join(items[2:]).strip()
         q = next((_place_by(st, n) for n in _missing_names(name) or [name] if _place_by(st, n)), None)
         if q is p:
-            return f'{name} is this place. Send what changes here, or [\'no change\'].\n\n' + nxt
+            if not what:
+                return f'{name} is this place. Send what changes here, or [\'no change\'].\n\n' + nxt
+            # V23 (rich_3521): the specifier named its own place with what must change there; that is its sentence
+            items, self_named = [what], True
+    if not self_named and _args.clean(items[0]).lower() == 'missing':
         if (p.get('note') or '').startswith('the specifier of'):
             # V23 (fastapi_14986): get_openapi named OpenAPI, which named Server, then both were 'no change' (170 s);
             # code named by a specifier names no further code
@@ -1610,6 +1688,8 @@ def specify(root, st, args):
     p.pop('note', None)
     if p['status'] == 'nochange':
         return f'{p["handle"]} keeps its code: it is not edited.\n\n{DONE}'
+    if LITERAL.match(sentence) and not p.get('new'):
+        return f'Saved for {p["handle"]}: the script makes this replacement.\n\n{DONE}'
     return f'Saved for {p["handle"]}: its editor writes the change from this sentence.\n\n{DONE}'
 
 

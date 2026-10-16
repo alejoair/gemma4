@@ -307,6 +307,49 @@ def start_watchdog(server, probe_every: int = 30, misses: int = 3):
     threading.Thread(target=loop, daemon=True).start()
 
 
+def bench_concurrency(port=8000, levels=(1, 2, 4), max_tokens=300):
+    """Aggregate generation speed with 1, 2 and 4 requests at once (docs/time_proposals: parallel agents pay off only
+    if vLLM batches them on the 4xL4). Each request asks for max_tokens tokens without thinking."""
+    import json as _json
+    import threading
+    import urllib.request
+
+    base = f'http://127.0.0.1:{port}/v1'
+    try:
+        model = _json.loads(urllib.request.urlopen(base + '/models', timeout=30).read())['data'][0]['id']
+    except Exception as e:                        # never stop the evaluation for the benchmark
+        print(f'bench: no model list ({e})')
+        return
+
+    def one(i, out):
+        body = {'model': model, 'max_tokens': max_tokens, 'temperature': 0.0, 'ignore_eos': True,
+                'chat_template_kwargs': {'enable_thinking': False},
+                'messages': [{'role': 'user', 'content': f'Write a long story about a lighthouse keeper number {i}.'}]}
+        req = urllib.request.Request(base + '/chat/completions', data=_json.dumps(body).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        try:
+            r = _json.loads(urllib.request.urlopen(req, timeout=600).read())
+            out.append(r['usage']['completion_tokens'])
+        except Exception as e:
+            print(f'bench: request failed ({e})')
+
+    one(0, [])                                    # warm-up
+    for k in levels:
+        threads = []
+        res = []
+        t0 = time.time()
+        for i in range(k):
+            th = threading.Thread(target=one, args=(i, res))
+            th.start()
+            threads.append(th)
+        for th in threads:
+            th.join()
+        dt = time.time() - t0
+        tok = sum(res)
+        print(f'BENCH concurrency={k}: {tok} tokens in {dt:.1f}s = {tok / dt:.1f} tok/s aggregate, '
+              f'{tok / dt / max(1, k):.1f} tok/s per request', flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--submission', type=Path, required=True)
@@ -315,6 +358,7 @@ def main() -> None:
     ap.add_argument('--tasks', default='', help='comma-separated instance ids (overrides --n/--seed)')
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--skip-install', action='store_true')
+    ap.add_argument('--bench-concurrency', action='store_true', help='measure vLLM with 1, 2, 4 requests at once first')
     args = ap.parse_args()
 
     logfh = open(WORK / 'eval_log.txt', 'a', encoding='utf-8')
@@ -383,6 +427,8 @@ def main() -> None:
     start_watchdog(server)
     print(f'vLLM ready after {time.time() - t0:.0f}s; log file: {server.log_path}')
     print(sh(f'tail -n 25 {server.log_path}'))
+    if args.bench_concurrency:
+        bench_concurrency()
     models = server.create_model_registry(aliases=[declared, MODEL], model_prefix='openai/', api_key='EMPTY')
     vllm_offset = len(Path(server.log_path).read_text(encoding='utf-8', errors='replace'))
 

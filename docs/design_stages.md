@@ -1176,3 +1176,39 @@ without a score.
 official setup is as short as ours and there are no more than 120 tasks; with 30 s of setup or 125 tasks, 5 minutes is
 already over a 5% margin. Lengthening it risks the whole score (S6) for at most 5% more time per task. The time must
 come from the procedure (V22 → V23: decisions from 51% to 69% of the time), not from the limit.
+
+### V25: the recommended block of the six agents' proposals (10-16, the user's: "me voy con tus recomendaciones")
+
+From `docs/time_proposals/` (where six independent agents agreed):
+1. **The coordinator thinks less**: thinking 256 and at most 1,024 output tokens (it had 512 and 4,096). V23's
+   coordinator calls had a median of 89 tokens; the long ones (300-430) were doubts about a line.
+2. **A literal sentence is applied by the script**: a sentence that is one replacement ("replace `A` with `B`", 6 of
+   V23's 15 sentences) is made by the script through the editor's own checks (whole new definition, syntax, tests,
+   undo), when A occurs once in the place; the editor agent is called only when that fails. The specify answer says
+   so ("the script makes this replacement").
+3. **`missing` naming the place itself is its sentence** (rich_3521 in V23 named its own place with the change).
+4. **No scope agent.** The plan is the located places and their identical copies (other "same pattern" or twin places
+   are no longer added: in V22-V23 they were never edited); each specifier's view lists the related code (callers,
+   overrides, copies, with the linking line, without line numbers) and the specifier names what must change too with
+   `missing`. The agent is gone from `agent.yaml`, the coordinator's prompt and SKILL.md.
+5. **The main place first**: the place chosen first for the first requirement is specified and edited (or applied
+   literally) before the other places are specified, so that a patch exists early (V22-V23: the first diff came at
+   about 240 s).
+6. `tools/kaggle_eval.py --bench-concurrency` measures vLLM with 1, 2 and 4 requests at once before the tasks (the
+   check the parallel-specify proposal needs).
+
+Dry run on fastapi_12942: locate went straight to specify (no scope), the specify view listed the six related functions
+without line numbers, and a literal sentence for `analyze_param` was applied by the script and routed to review with no
+editor call.
+
+| Checklist item | 1 coordinator 256 | 2 literal by script | 3 missing on self | 4 no scope | 5 main first |
+|---|---|---|---|---|---|
+| W4 next call | neutral | closer: a call less | closer: no refusal | closer: an agent less | neutral |
+| W7 room to think | slightly farther: reason: routing needs no deliberation; the long calls were doubts | neutral | neutral | neutral | neutral |
+| W3 code in front | neutral | neutral | neutral | closer: the related code is in the specifier's view, next to the place's code | neutral |
+| B8 many forms | neutral | neutral | neutral | neutral: missing already existed | neutral |
+| B11 doubting tool output | neutral | neutral: the same checks as an editor's edit | neutral | neutral | neutral |
+| B12 contradictions | closer: the answer says who makes the change | neutral | closer | neutral | neutral |
+| F5 what is done | neutral | neutral | neutral | neutral | closer: a patch exists earlier |
+
+Generic: every rule depends on the plan's structure, the form of a sentence or the time; none names a task.

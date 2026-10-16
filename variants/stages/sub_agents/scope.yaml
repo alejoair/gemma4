@@ -1,6 +1,0 @@
-name: scope
-description: Decides which code related to the chosen places must change too.
-model: gemma-4-31b-it-qat-w4a16-ct
-instruction: !include scope.md
-skills: [skills/fix-issue]
-generate_content_config: !include sampling_512.yaml
