@@ -1288,3 +1288,30 @@ Patterns (generic, by count):
   function holding the text; edit windows never hide a signature's parameters; "declare it as a parameter" instead of
   "import it" when the undefined name is the def's own; `missing` only for code names; review evidence not cut
   mid-value; test selection by bare name (`main`) counted as evidence.
+
+#### The hk30 proposals through the checklist (10-16, the user's: "pasa esa propuesta por el checklist")
+
+Closer (+), farther (−), neutral (=) per item of `docs/llm_checklist.md`; only the items each change moves are listed.
+
+| # | Change | Items | Why generic | Verdict |
+|---|---|---|---|---|
+| 1a | Module-level assignments (constants, templates) are places: chosen by name, shown whole, edited as a whole `NAME = ...` | W1 + (a found name can be chosen), W2 + (whole unit), W3 + (the text that must change is shown), B1 + (no line range for module code), B8 = (same forms) | every repository has module-level constants and templates | do |
+| 1b | A refused send does not count toward MAX_EDITS | F6 + ("refusals stay off the failure count"), F7 + | about the counter, not about the code | do |
+| 1c | A text fragment gives the list of every function and class holding it, with the matching line, ranked by the requirement's words, instead of the first hit silently | W1 +, B11 + (no hidden decision), B13 + (best first), B9 = (the list is the answer, not a new read form), B8 = | any text in any repository | do |
+| 1d | Edit windows never hide parameters: long default/doc text inside a signature is folded to `...`, every parameter line stays | W3 +, B16 + (no guessing the hidden part), B1 + (no line guessing), B7 − (a longer window; bounded by folding the docs text) | long signatures exist in any library | do |
+| 1e | The undefined-name check states the fact (not defined in the def, not imported in the file) and gives both ways: a parameter of the def or an import | F9 + (fact first), F1 + (where), B12 + ("import it" contradicted a parameter the sentence asks for) | any undefined name | do |
+| 1f | `missing` takes only a code name (or a new file path); anything else gets the place's code again with the forms | B6 + (a misused form answered with the right call), F7 + (the loop ends), B5 = (described, not quoted) | about the form | do |
+| 1g | Review evidence keeps whole values (expected vs actual never cut mid-value) and is labelled as a fact: "passed before, fails now", without "behaviour the issue keeps" | B11 +, F2 + (expected vs actual), F4 + (no framing that pushes a reconsideration), B12 + | any test output | do |
+| 1h | Tests count as evidence for a place only when the call map shows they call it, not by a shared bare name | B11 +, F3 + (no false OK) | about test selection | do |
+| 2a | Review's "not done" on a place that specify kept as "no change" sends the requirement back to locate, without the places already tried, once per requirement and only with time left | W4 + (route agrees with the message: today it says "goes back" and submits), B12 +, B10 = (gated by time left), B9 − (one more search; bounded to once, time-aware) | about the route | do |
+| 2b | Review's "cannot tell" with time left runs a check (the reproduction test if one exists) before submit | F3 +, B11 +, B10 − (time: Gemma on Kaggle has little to spare) | about the route | measure on Gemma first |
+| 3a | When a requirement names several definitions of the repository and only some are planned, locate's answer lists the ones left out to choose from | W1 +, W6 + (the statement's own names), B11 +, B8 = (same choice form), P7 − (more names shown; limited to those the requirement names) | names taken from the requirement | do |
+| 3b | Subclasses that re-declare the class (decorators, overrides) and siblings that read the same helper are related code; the label says what they share ("reads the same _helper") instead of "does not call them" | W3 +, B12 + (the old label invited a local fix), P7 − (more related code; only same-helper readers and direct subclasses) | structure of any code base | do |
+| 4a | The requirements step refuses a requirement with no situation or no expected result (described, not quoted) and ties every name to its owner ("end: a parameter of Console.print") | W6 +, W3 +, F9 + (fact), B5 = (described), B8 = | any statement | do |
+| 4b | Reproduce runs when time is left at the point it would start, not only with 6 min left (today never at 5 min) | F2 +, F3 +, B11 +, W5 + (pytest output), B10 − (time: V22 reproduce took 30-225 s with Gemma), B9 − | any task | measure on Gemma first |
+| 4c | A requirement about something that is not code (packaging, Python versions) can be marked "not code" in locate | B8 − (one more form; reason: two wasted steps in rich_4075), W1 + | any statement | defer: one task, and a new form |
+| 4d | Library code the repository re-exports becomes a candidate | W1 +, P7 − (distractors from large libraries), B13 − (longer list) | any library | defer: the distractor risk is not measured |
+
+Moving farther on an item needs a reason: 1d (B7), 2a (B9), 3a/3b (P7) are bounded as written; 2b and 4b move farther on
+B10, the item that cost the most with Gemma on Kaggle (V22), so they wait for a Gemma measurement; 4c and 4d are
+deferred.
