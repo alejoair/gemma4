@@ -263,3 +263,33 @@ What still fails is understanding, not the process: in rich_3180 the model found
 | B10 budget / time | farther | One more call per place: about 30 s at Kaggle's speed for an easy place |
 
 **Why it is generic:** every issue describes behaviour the current code does not have. The checks compare text with the place's own lines. Nothing depends on a repository or a task.
+
+## Acceptance test with vf7 (10 cases × 2 samples, budget 1024)
+
+The full tables are in `docs/specify_lab_vf7_results.md`.
+
+Two fixes were made during the runs:
+- **rich_3934, sample 1:** 'no change' was accepted with the evidence `def stop(self) -> None:`.
+- **fastapi_14419, sample 2:** it was accepted with the parameter lines of `get_dependant`'s signature.
+
+Now only lines of the body count, without the signature or the docstring (found with the AST). fastapi_14419 was run once more with the fix.
+
+**Against the criterion:**
+
+| Criterion | Result | Status |
+|---|---|---|
+| System faults | 1, signature lines accepted as evidence (2 occurrences); fixed, and the rerun was clean | fixed |
+| Turns ending without a call in the middle of the work | 0 | pass |
+| All "no change" with the location right | 1 of 12 runs (fastapi_14419 sample 2, through the signature loophole); vf6: 3 of 4 runs of the two hard cases | pass (at the limit) |
+| Correct or partial | 15 of 20 (16 of 20 with the rerun in place of the loophole run) | pass |
+| Controls | 8 of 8 correct (vf6: 3 correct and 1 partial in sample 1) | pass |
+| Median decision time per place at 35 tokens/s | 55 s | pass |
+| Whole step within about 90 s | single-place cases 29-69 s; two- and three-place cases 95-189 s | **fail for several places** |
+
+The fast build has 3 specify workers in parallel. Its places are split between them, so the wall time of a 3-place case is closer to one worker's share.
+
+**Still wrong:**
+- rich_3180, both samples: the diagnosis names the reversed loop, but the sentence keeps it. This is understanding, not the process.
+- rich_3934, sample 1: a two-word statement.
+
+**Verdict:** the step meets the agreed criterion except the whole-step time when one specifier holds two or three places. The next check is the Kaggle eval of the whole build.

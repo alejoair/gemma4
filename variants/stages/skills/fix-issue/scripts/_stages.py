@@ -1692,9 +1692,27 @@ def _collapse(s):
     return re.sub(r'\s+', ' ', s or '').strip()
 
 
+HEADER_LINE = re.compile(r'^\s*(@|(async\s+)?def\s|class\s|"""|\'\'\'|\)\s*(->.*)?:\s*$)')
+
+
 def _in_place(root, p, text):
-    """Whether a line of text (whitespace aside, at least 4 characters) is in the place's code."""
-    code = _collapse(''.join(_repo.read_lines(root, p['rel'])[p['start'] - 1:p['end']]))
+    """Whether a line of text (whitespace aside, at least 4 characters) is in the place's body. Its signature,
+    decorators and docstring quotes do not count: vf7 lab (rich_3934) gave 'def stop(self) -> None:' as the line that
+    already does what the requirement says."""
+    lines = _repo.read_lines(root, p['rel'])
+    start = p['start']
+    node = next((n for n in ast.walk(_code.parse(''.join(lines)) or ast.Module(body=[], type_ignores=[]))
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.lineno >= p['start']
+                 and n.end_lineno == p['end']), None)
+    if node is not None and node.body:
+        # vf7 lab (fastapi_14419): the parameter lines of get_dependant's signature passed as that line; only the body
+        # counts, without its docstring
+        first = node.body[0]
+        doc = isinstance(first, ast.Expr) and isinstance(getattr(first, 'value', None), ast.Constant) \
+            and isinstance(first.value.value, str)
+        start = (node.body[1].lineno if doc and len(node.body) > 1 else first.end_lineno + 1 if doc else first.lineno)
+    body = [l for l in lines[start - 1:p['end']] if not HEADER_LINE.match(l)]
+    code = _collapse(''.join(body))
     lines = [_collapse(_args.clean(l)).strip('`') for l in re.split(r'\n|\\n', text or '')]
     return any(len(l) >= 4 and l in code for l in lines)
 
