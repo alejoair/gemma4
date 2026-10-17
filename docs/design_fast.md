@@ -222,3 +222,15 @@ agent, are in `docs/prompt_audit_fast.md`. The fixes add no stage and no agent.
 **Why it is generic:** every fix changes what an answer says or which form it accepts. Each one keys on the state of
 the procedure (a finished part, a planned place, an empty diff, the files searched), never on a repository, a
 library or a task.
+
+## vf4 on Kaggle (10-17): 9/30
+
+vf4 resolved 9/30 (judged; vf3 7/30).
+- **Gains:** it resolved every task vf3 resolved, plus fastapi_14361 and rich_2943.
+- **Time stops:** 4 tasks stopped at 5 minutes (vf3: 7).
+- **Empty patches:** 10 (vf3: 14).
+- **Mean time:** 255 s per task.
+
+The requirements fix removed the loop of vf3: there are 28 log lines with "already finished", against 80 calls after "reply done" in vf3.
+
+The kernel's outputs were replaced by the next version before they were downloaded, so only the notebook log is kept. The per-stage spans of vf4 are therefore not measured.
