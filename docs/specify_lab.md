@@ -201,4 +201,4 @@ The first four cases ran with an inflated clock (1-3.5 minutes used at the start
 | Correct or partial | 7 of 10 | pass |
 | Controls | 3 correct, 1 partial | to watch |
 
-**The two empty plans have the same cause.** The thought is cut at the budget just as the reasoning reaches the fault, and the call after a cut thought is "no change". In 8 of the 11 decisions with a cut thought, the decision was "no change" or no call. The only decision that finished below the cap (rich_3905, 492 tokens) was right.
+**The two empty plans have the same cause.** The thought is cut at the budget just as the reasoning reaches the fault, and the call after a cut thought is "no change". Of the 16 decisions of round 1, 15 had their thought cut at the cap; 8 of those 15 were "no change" or no call. The only one that finished below the cap (rich_3905, 492 tokens) was right.
