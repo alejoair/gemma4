@@ -212,9 +212,11 @@ def complete(api_base, key, model, messages, sampling, timeout=900):
     return ''.join(text), ''.join(thoughts), [calls[i] for i in sorted(calls)], usage, time.time() - t0
 
 
+OUT = []      # what a step prints, held until the session is saved (a closed pipe must not lose a step)
+
+
 def show(title, body, width=110):
-    print(f'\n--- {title} ' + '-' * max(0, width - len(title) - 5))
-    print(body.rstrip())
+    OUT.append(f'\n--- {title} ' + '-' * max(0, width - len(title) - 5) + '\n' + body.rstrip())
 
 
 def tool_result(ws, scripts, c):
@@ -274,8 +276,8 @@ class Session:
             if spec.get('calls') and spec['agent'] not in self.s['live']:
                 for fp, a in spec['calls']:
                     res = self.ws.run(self.scripts, fp, a)
-                    print(f'\n[fixed] {spec["agent"]}: {fp} {json.dumps(a, ensure_ascii=False)[:300]}')
-                    print('   -> ' + (res.get('stdout') or json.dumps(res))[:800].replace('\n', '\n      '))
+                    OUT.append(f'\n[fixed] {spec["agent"]}: {fp} {json.dumps(a, ensure_ascii=False)[:300]}\n   -> '
+                               + (res.get('stdout') or json.dumps(res))[:800].replace('\n', '\n      '))
                     self.log({'agent': spec['agent'], 'fixed': [fp, a], 'result': res})
                 self.s['context'] = f'[{spec["agent"]}] said: {spec.get("says", "done")}'
                 self.s['index'] += 1
@@ -298,7 +300,7 @@ class Session:
 
     def next(self):
         if self.s['messages'] is None:
-            print('The case is finished: start a new session.')
+            OUT.append('The case is finished: start a new session.')
             return
         agent = self.agent()
         self.s['turn'] += 1
@@ -315,7 +317,7 @@ class Session:
         if not calls:
             self.s['context'] = f'[{agent.name}] said: {text}'
             self.s['index'] += 1
-            print(f'\n[{agent.name} ended its turn without a call]')
+            OUT.append(f'\n[{agent.name} ended its turn without a call]')
             self.advance()
             return
         ids = [c['id'] or f'call_{turn}_{i}' for i, c in enumerate(calls)]
@@ -369,8 +371,11 @@ def main():
         ses.save()
     else:
         ses = Session(args.session)
-        ses.next()
-        ses.save()
+        try:
+            ses.next()
+        finally:
+            ses.save()
+    print('\n'.join(OUT))
 
 
 if __name__ == '__main__':

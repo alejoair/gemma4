@@ -49,3 +49,27 @@ The reference changes `Dependant.cache_key`, adds a `Dependant._uses_scopes`, an
 | Show the fields of the class and the code that sets the fields the place reads | W3; P7 if the unrelated members are dropped |
 | A class attribute named with `missing` is answered with its definition and where it is set, not "new code" | B11 |
 | A read form that changes nothing (the code of a named function or field), so that `missing` means a change | B16 |
+
+## Session 2: rich_3180, the same setup
+
+The state is the one Kaggle reached in vf3/vf4:
+- R1: "CJK characters should not disappear when the fold location is within a double-width character";
+- located at `divide_line` and `Text.wrap`.
+
+The reference rewrites `chop_cells` (`rich/cells.py`) to walk the characters forwards instead of `reversed()`. In `divide_line` it only renames variables and adapts the call to the new signature.
+
+| Turn | Gemma sent | Its thinking | The script answered |
+|---|---|---|---|
+| 1 | `open` | — | `divide_line` whole, with `words` and `loop_last`; `chop_cells` as a signature only |
+| 2 | `missing chop_cells` "Ensure it does not split a double-width character…" | half of it copies `divide_line` verbatim; **cut mid-sentence** (580 tokens) | `chop_cells` whole |
+| 3 | "replace the loop that processes characters in reverse with one that processes them in forward order … remove the 'reversed()' call" | copies both functions again; **cut** (603 tokens) | saved: **the reference's change**; back to `divide_line` |
+| 4 | `no change` on `divide_line` | cut while working an example | (the answer was lost: the lab's output was piped to `head`, which killed it; the session was rebuilt from the script's view, and the tool now saves before it prints) |
+| 5 | **no call**: 3,072 output tokens, 52 s | the thinking was cut at about 512 tokens, then **the model went on reasoning in its visible text**. It found the fault ("`Aሴ` has width 3. But width was 2! … because `chop_cells` was splitting from the end") and stopped at `max_output_tokens` with no call. | the agent ends; `Text.wrap` is never specified |
+
+## What the two sessions show together
+
+1. **Every decision turn hits the thinking budget**: 551-603 output tokens against 512, in 11 of 11 decision turns. Kaggle shows the same at 1024 (vf4: 49 of 77 long thoughts are at the cap).
+   - When the thought is cut, Gemma either emits the default call, "no change" (5 of 6 in session 1),
+   - or it keeps reasoning in its visible text until `max_output_tokens` and ends without a call (session 2, turn 5).
+2. **Gemma spends much of the budget copying code it was just shown into its thought.** In session 2 about half of each thought is a verbatim copy of a function from the window.
+3. **When the window shows the code that decides the behaviour, the decision is right even with a cut thought.** In session 2, turn 3, the `chop_cells` sentence is the reference's change. In session 1 the deciding code (the class fields and who sets them) was never shown, and Gemma asked for it three times through `missing`.

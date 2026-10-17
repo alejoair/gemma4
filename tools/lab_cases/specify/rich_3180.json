@@ -1,0 +1,7 @@
+{"task": "rich_3180",
+ "note": "vf3/vf4: the specifiers answered 'no change' on divide_line and Text.wrap (reference: rich/_wrap.py words/divide_line, rich/cells.py set_cell_size); empty patch",
+ "agents": [
+  {"agent": "requirements", "calls": [["req.py", ["Update wrapping logic to fix issues with CJK charcters disappearing when the \"fold\" location sat *within* a double-width character.", "CJK characters should not disappear when the fold location is within a double-width character."]]]},
+  {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["divide_line", "Text.wrap"]]]},
+  {"agent": "specify1", "context": "[requirements] said: done"}
+ ]}
