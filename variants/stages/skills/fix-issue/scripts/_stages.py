@@ -313,6 +313,9 @@ def _submit(root, st):
 
 # ------------------------------------------------------------------------------------------- 1 requirements
 
+COMMAND = re.compile(r'^\s*(?:grep|rg|find|ls|cat|cd|sed|awk|git|python3?|pytest|pip|head|tail|echo)\s')
+
+
 def _looks_like_requirements(items):
     return len(items) >= 2 and len(items) % 2 == 0 and all(len(x.split()) >= 3 for x in items[1::2])
 
@@ -402,8 +405,11 @@ def requirements(root, st, args):
     form = ("Send the requirements: ['<a sentence copied from the issue>', '<what must happen: the situation and the "
             "expected result, with the exact names>', ...], one pair per requirement, 1 to 6 pairs.")
     if st['names'] is None and not _looks_like_requirements(items):
+        if any(COMMAND.match(x) for x in items):
+            items = []          # vf3: a shell command is not a name (req.py runs no commands)
         if not items:
-            return ('Send the names the issue mentions (functions, classes, parameters, files), one per item.\n\n'
+            return ('Send the names the issue mentions (functions, classes, parameters, files), one per item. req.py '
+                    'runs no commands: it shows what the repository defines for those names.\n\n'
                     "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<name>', "
                     "'<name>', ...]")
         table = _impact.Table(root, docs=False)
@@ -432,7 +438,13 @@ def requirements(root, st, args):
                 lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
                              'import it from there)')
             owners = _param_owners(table, name) if not found and not homes else []
-            if owners:
+            assigned = step.assignment(root, table, name) if not found and not homes and not owners and \
+                re.fullmatch(r'[A-Za-z_]\w*', name) else None
+            if assigned:
+                # the template CONSOLE_HTML_FORMAT (rich_3043) read as "not a function or class"
+                lines.append(f'  {name}: a module-level assignment in {assigned["rel"]} (lines {assigned["start"]}-'
+                             f'{assigned["end"]})')
+            elif owners:
                 # hk30 (rich_4075): 'end' was only "a parameter, attribute or variable", not tied to Console.print, and
                 # the requirement named no code (W6, W3): the functions that take it as a parameter, public first
                 more = f' and {len(owners) - 3} more' if len(owners) > 3 else ''
@@ -448,6 +460,12 @@ def requirements(root, st, args):
         return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + form + '\n\n'
                 "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<sentence from "
                 "the issue>', '<what must happen>', ...]")
+    if any(COMMAND.match(x) for x in items) or (len(items) == 1 and len(items[0].split()) < 6):
+        # vf3 (Gemma, requests_7205 and 3 more): req.py was called with 'grep -r "netrc" src/requests', the command was
+        # saved as R1, and every later try to send the requirements was told the part was finished
+        return ('Not saved: req.py runs no commands and does not search the code (the other agents find the code); '
+                'it saves the requirements, as pairs. ' + form + "\n\nNEXT: call run_skill_script with skill_name "
+                "fix-issue, file_path req.py and args ['<sentence from the issue>', '<what must happen>', ...]")
     if len(items) == 1:
         items = ['', items[0]]
     if len(items) % 2:
@@ -2799,6 +2817,13 @@ def main_fast(stage, worker, argv):
     try:
         _tests.record_preexisting(root)
         cur = st.setdefault('wcur', {}).get(worker)
+        if stage == 'requirements' and cur is None and st['reqs'] and not st['located'] and len(args) >= 2 \
+                and _looks_like_requirements([_sentence(a) for a in args]):
+            # vf3: an agent whose saved requirement was wrong sent the right ones and was told it was finished; before
+            # anything is located, new requirements replace the old
+            st['reqs'] = []
+            st.get('wfinished', {}).pop(worker, None)
+            st['asked'].pop('requirements', None)
         if _over_budget(st):
             # B10 (docs/design_stages.md, "How the 90 runs ended"): the harness cut 44 of 90 runs while an agent worked
             _release(st, worker)
