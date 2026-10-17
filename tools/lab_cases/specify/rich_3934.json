@@ -1,7 +1,41 @@
-{"task": "rich_3934",
- "note": "vf3/vf4: the specifier answered 'no change' on Live (reference: Live.stop, LiveRender.__init__); empty patch",
+{
+ "task": "rich_3934",
+ "note": "empty in vf4; the reference places are located (the step is tested alone)",
+ "feasible_from_statement": false,
  "agents": [
-  {"agent": "requirements", "calls": [["req.py", ["empty live", "empty live"]]]},
-  {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["Live"]]]},
-  {"agent": "specify1", "context": "[requirements] said: done"}
- ]}
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "empty live",
+      "A Live display behaves correctly when what it renders is empty."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "Live.stop",
+      "LiveRender"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

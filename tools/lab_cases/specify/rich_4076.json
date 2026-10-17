@@ -1,0 +1,40 @@
+{
+ "task": "rich_4076",
+ "note": "empty in vf4 (wrong place located there); the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "preserve newlines",
+      "AnsiDecoder.decode preserves the newlines of the terminal text it decodes."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "AnsiDecoder.decode"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

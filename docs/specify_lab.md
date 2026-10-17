@@ -153,3 +153,52 @@ Whether it passes the tests is not checked: the editor and the tests are the nex
 - dataclass `__init__`.
 
 No name, library or task is special-cased.
+
+## Acceptance test of the specify step (agreed with the user, 10-17)
+
+**The step is tested alone.** Each case starts with the reference's places located, so a failure is the step's own. The requirements quote the statement and add nothing it does not say. `feasible_from_statement` marks the cases whose change can be inferred from it.
+
+**The cases** are in `tools/lab_cases/specify/`:
+- 6 that ended with an empty patch in vf4: fastapi_14419, rich_3180, rich_3043, rich_3934, rich_3772, rich_4076. rich_4076 replaces rich_3942, whose statement ("Update to markdown styles") cannot give the reference's colours.
+- 4 controls that vf4 resolved: fastapi_14361, rich_3905, fastapi_5624, fastapi_11194.
+
+**The protocol:** 2 samples per case, run step by step with `tools/step_lab.py`.
+
+**The step is accepted when:**
+- there are 0 system faults;
+- at most 1 turn in 10 ends without a call;
+- at most 1 run in 12 ends with every place "no change" when the location is right;
+- at least 2 in 3 runs give a sentence describing the reference's change, wholly or in part;
+- the controls do not regress;
+- the median time per place is 60 s or less at Kaggle's speed.
+
+**The final check** is a Kaggle eval of the 30 tasks.
+
+### Round 1 (vf6 build: the view fix; local 31B, reasoning budget 512; 10 cases × 1 sample)
+
+| Case | Turns | Decisions | Faults | No call | Grade | Note |
+|---|---|---|---|---|---|---|
+| rich_4076 | 2 | 1 sentence | 0 | 0 | partial | `splitlines(keepends=True)`; the reference splits after each `\n` and strips it in `decode_line` |
+| rich_3772 | 2 | 1 sentence | 0 | 0 | partial | a visited set for exception groups; the reference passes it into the recursive calls |
+| rich_3934 | 3 | no change + 1 sentence | 0 | 0 | wrong | adds a blank line in `LiveRender`; the reference skips the line in `Live.stop`. The statement is two words. |
+| rich_3043 | 2 | 1 sentence | 0 | 0 | correct | moves `<html>` before `<head>` |
+| fastapi_14419 | 5 | 4 × no change | 0 | 0 | **wrong (empty)** | every thought cut at 551 tokens; it judged the key already right and never linked the parent's scopes passed down by `get_dependant` |
+| rich_3180 | 4 | 2 × no change, then no call | 0 | 1 | **wrong (empty)** | turn 2 was cut while finding the bug (`Result: ["CB", "A`) and sent no change; turn 4 reasoned in its text to 3,072 tokens (44 s) |
+| fastapi_14361 (control) | 2 | 1 sentence | 0 | 0 | correct | skip a schema without `"$ref"` |
+| rich_3905 (control) | 2 | 1 sentence | 0 | 0 | correct | `if not self.disable`; it checked the field in the new "also declares" line |
+| fastapi_5624 (control) | 2 | 1 sentence | 0 | 0 | partial | right fault (a shared list mutated); copies it once instead of on each pass of the loop |
+| fastapi_11194 (control) | 2 | 1 sentence | 0 | 0 | correct | each field's `field_info` instead of the first one's |
+
+The first four cases ran with an inflated clock (1-3.5 minutes used at the start), because the states were prepared about 20 minutes before. The lab now pauses the task clock between steps (`shift_clock`).
+
+**Against the criterion after round 1:**
+
+| Criterion | Result | Status |
+|---|---|---|
+| System faults | 0 | pass |
+| Turns without a call | 1 of 26 | pass |
+| Empty plan with the location right | 2 of 6 (fastapi_14419, rich_3180) | **fail** |
+| Correct or partial | 7 of 10 | pass |
+| Controls | 3 correct, 1 partial | to watch |
+
+**The two empty plans have the same cause.** The thought is cut at the budget just as the reasoning reaches the fault, and the call after a cut thought is "no change". In 8 of the 11 decisions with a cut thought, the decision was "no change" or no call. The only decision that finished below the cap (rich_3905, 492 tokens) was right.

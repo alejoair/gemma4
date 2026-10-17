@@ -243,6 +243,16 @@ def tool_result(ws, scripts, c):
     return a, {'error': f"Tool '{c['name']}' not found."}
 
 
+def shift_clock(state, seconds):
+    """Moves the task's start time (t0 of each journal under state) later by seconds: the time between two lab steps
+    (the reader's) is not the agent's, and the scripts' 5-minute budget counts only model and script time."""
+    for f in Path(state).glob('*/stages.json'):
+        d = json.loads(f.read_text())
+        if isinstance(d, dict) and 't0' in d:
+            d['t0'] += seconds
+            f.write_text(json.dumps(d))
+
+
 class Session:
     """A step-by-step run kept in <dir>/session.json: each 'next' makes one model call and stops."""
 
@@ -258,6 +268,7 @@ class Session:
         self.ws.state = self.s['state']
 
     def save(self):
+        self.s['idle_from'] = time.time()
         (self.path / 'session.json').write_text(json.dumps(self.s, ensure_ascii=False, indent=1))
 
     def log(self, rec):
@@ -302,6 +313,8 @@ class Session:
         if self.s['messages'] is None:
             OUT.append('The case is finished: start a new session.')
             return
+        if self.s.get('idle_from'):
+            shift_clock(self.s['state'], time.time() - self.s['idle_from'])
         agent = self.agent()
         self.s['turn'] += 1
         turn = self.s['turn']

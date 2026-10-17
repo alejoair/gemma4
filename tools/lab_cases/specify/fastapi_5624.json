@@ -1,0 +1,40 @@
+{
+ "task": "fastapi_5624",
+ "note": "resolved in vf4 (control); the reference places are located (the step is tested alone)",
+ "feasible_from_statement": false,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "Fix hierarchical security scope propagation",
+      "Security scopes declared on a dependency propagate correctly down the hierarchy of its sub-dependencies."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "get_dependant"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}
