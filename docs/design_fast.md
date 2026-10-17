@@ -233,4 +233,31 @@ vf4 resolved 9/30 (judged; vf3 7/30).
 
 The requirements fix removed the loop of vf3: there are 28 log lines with "already finished", against 80 calls after "reply done" in vf3.
 
-The kernel's outputs were replaced by the next version before they were downloaded, so only the notebook log is kept. The per-stage spans of vf4 are therefore not measured.
+The kernel's outputs were replaced by the next version before they were downloaded. Only the notebook log is kept (scratchpad `kout_vf4`); it holds the cut-down trace of every task, which is what follows comes from.
+
+**Why the 21 tasks were not resolved:**
+
+| Cause | Tasks | Detail |
+|---|---|---|
+| The specifiers wrote "no change" on every place: empty patch | 10 | In 6 of them the place located is the reference's place or one next to it: fastapi_14419 (`solve_dependencies`, `Dependant.cache_key`), rich_3043 (`rich/_export_format.py`), rich_3180 (`divide_line` in `rich/_wrap.py`), rich_3934 (`Live`), rich_3942 (`rich/default_styles.py`), rich_3772 (`Traceback`). In the other 4 the place was wrong or missing: rich_4076, rich_4075 (partly right), fastapi_14459 (partly right), and fastapi_15661, which needs a new file. |
+| A patch that fails the hidden tests | 7 | fastapi_15280, requests_7505, requests_7205, fastapi_13207, rich_3718, fastapi_14953, rich_3480 |
+| Stopped at 5 minutes with a partial patch | 4 | fastapi_14258 and fastapi_14372 in repair; fastapi_13713 and rich_3278 in edit |
+
+How a "no change" empties the patch:
+- Each specifier sees one place. When two places share a requirement, each one judged that the change belongs to the other (fastapi_14419: both sent "no change" in the same second).
+- In rich_3043 the specifier thought, after its "no change": "Wait, if I say no change, then the fix is not applied". Its next call was answered "Your part is already finished".
+- Review and repair then had nothing to do, and the empty patch was submitted with 1.5-2.5 minutes left.
+
+vf5 already holds the two fixes for this:
+- the specifier whose "no change" would leave every place unchanged is warned once that the patch would be empty;
+- repair retries the main place once when the diff is empty and time is left.
+
+vf5's Kaggle run measures whether they work.
+
+Stage spans (medians over the 30 tasks):
+- requirements end at about 45 s;
+- locate takes about 15-20 s;
+- specify about 40 s;
+- edit 5-35 s (2 calls when nothing is left to edit).
+
+Calls after a part was finished are few: 28 log lines, at most 5 per task.
