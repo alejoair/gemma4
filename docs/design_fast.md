@@ -134,3 +134,35 @@ build. `_stages.main_fast` holds the workers' claims, their chains and the budge
   - Not Kaggle evidence: Haiku is fast enough that time was never the limit.
 - **Next:** the Kaggle eval with Gemma at 5 minutes on the V25-30s tasks (V25: 5/30), one task at a time as the
   official harness is assumed to run them (the fast build's own workers run at once).
+
+## Can a global clock replace the per-task limit? (10-17, the user's question)
+
+The user asked whether one time budget for all tasks could replace a fixed per-task limit: a large limit such as
+15 minutes, with tasks that end early leaving time to the long ones, and no harm if the last tasks are not reached.
+
+**What the competition says** (Evaluation page): "Your agent has a limit of 12 hours to submit patches for all tasks,
+inclusive of sandbox setup time, but excluding time for patch validation. You may, but are not required, to set
+per-task time limits in your submission's `eval_config.yaml`." Nothing is said about a run that passes 12 h. Stage 1
+(`scripts/inference.py`, not public) writes `submission.parquet` with one prediction per task, and Stage 2 scores it.
+S6, with 60 minutes per task, ended COMPLETE with no score at all, not a partial one. That is the only evidence: going
+over the 12 h loses the whole submission, so "some tasks not reached" is not safe.
+
+**Whether the agent can know the global time:**
+- **Session state.** The harness gives the agent only `problem_description` and `hints`; it says nothing of the run's
+  start, the task's index or the number of tasks.
+- **Fresh containers.** In `swegemma/sandbox/docker.py`, `reuse_containers` defaults to `False`: each task gets a fresh
+  container, and the sandbox is gVisor (runsc) without network.
+- **Pooled containers are wiped.** When containers are pooled, `stop()` kills every process and empties `/workspace`,
+  `/tmp`, `/var/tmp` and `/root` between tasks.
+- **So a script sees only its own task's clock.** Keeping state elsewhere in the container to get around this
+  isolation would work against the harness's design and could fail silently: it is not done.
+
+**What follows:**
+- The only control is the fixed per-task limit (`max_time_minutes`) and our own stop inside it (`BUDGET_S`).
+- A task that ends early does leave time to the others, but only for a limit chosen in advance. The limit has to satisfy
+  120 × (mean of min(duration, limit) + setup) + about 8.5 min ≤ 12 h, with a margin, because the official setup per
+  task and the number of tasks are not known exactly.
+- With the stages build, the trial V25-T15 gave a mean of 341 s per task at 6 minutes and 380 s at 7, which is the most
+  that fits.
+- The fast build ends tasks sooner. To choose its limit, the same kind of trial is needed: the fast build at 15 minutes,
+  for its natural durations, then the largest limit whose total fits.
