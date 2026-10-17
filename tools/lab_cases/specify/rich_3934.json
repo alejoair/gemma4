@@ -3,5 +3,5 @@
  "agents": [
   {"agent": "requirements", "calls": [["req.py", ["empty live", "empty live"]]]},
   {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["Live"]]]},
-  {"agent": "specify1"}
+  {"agent": "specify1", "context": "[requirements] said: done"}
  ]}

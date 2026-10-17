@@ -3,5 +3,5 @@
  "agents": [
   {"agent": "requirements", "calls": [["req.py", ["Fix the HTML export template", "the HTML export template must be fixed"]]]},
   {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["rich/_export_format.py"]]]},
-  {"agent": "specify1"}
+  {"agent": "specify1", "context": "[requirements] said: done"}
  ]}

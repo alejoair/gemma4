@@ -5,10 +5,17 @@ It is a model run of one step (docs/design_fast.md, "A test bench per step"), no
 driven by the model; the agents before it are driven by fixed calls from a case file, so every sample starts from
 the same state.
 
-    python tools/step_lab.py --case cases/specify/fastapi_14419.json --build <dir>/submission \
-        --api-base http://127.0.0.1:8790/v1 --model claude-haiku-5-5 --samples 3 --out <dir>
+    python tools/step_lab.py start <session dir> --case tools/lab_cases/specify/fastapi_14419.json \
+        --build <dir>/submission --data <comp dir> --repos <dir> --api-base <url>/v1 --model <name>
+    python tools/step_lab.py next <session dir>      # one model call, its tool calls run, then it stops
 
-A case file (JSON) names the task and the agents in order. An agent with "calls" is driven by those calls (each
+It goes step by step (the user's, 10-17): 'start' resets the snapshot, runs the fixed agents and stops before the
+first model call; each 'next' makes exactly one model call, runs the tool calls it makes, prints the thinking, the
+calls and the script's answers whole, and stops, so each answer is read before the next call.
+
+A case file (JSON) names the task and the agents in order. "context" on an agent the model drives sets the
+message it gets after "For context:" (an agent after a ParallelAgent stage sees the last sequential agent's, as in
+the ADK requests logged on 10-17: specify sees "[requirements] said: done"). An agent with "calls" is driven by those calls (each
 [script, [args...]]); an agent without calls, or named in --live, is driven by the model:
 
     {"task": "fastapi_14419",
@@ -23,10 +30,10 @@ tools, the "For context:" user message, and the sampling of the agent's yaml (te
 tokens, thinking budget). A tool result is the ADK's dict (skill_name, file_path, stdout, stderr, status). Earlier
 thoughts are not sent back, as the ADK does not send them.
 
---instruction <file> replaces the agent's instruction (the same {problem_description} placeholder) to test a new
-wording on the same state. Each sample starts from the snapshot (git checkout + clean, the harness's test setup)
-and an empty journal. Output: the whole transcript of each sample on stdout, and with --out a JSONL of every
-request and answer plus report.md.
+--instruction <agent>=<file> replaces the agent's instruction (the same {problem_description} placeholder) to test
+a new wording on the same state. A session starts from the snapshot (git checkout + clean, the harness's test
+setup) and an empty journal; <session dir> keeps session.json (the conversation so far), log.jsonl (every model
+answer and script answer) and the system instruction of each agent the model drives.
 """
 import argparse
 import json
@@ -144,11 +151,11 @@ class Workspace:
                 t.extractall(self.repo, filter='data')
         self.state = None
 
-    def reset(self):
+    def reset(self, state):
         subprocess.run(['git', 'checkout', '-q', '.'], cwd=self.repo)
         subprocess.run(['git', 'clean', '-qfd'], cwd=self.repo)
         hermetic(str(self.repo))
-        self.state = tempfile.mkdtemp(prefix='lab_state_')
+        self.state = state
 
     def run(self, scripts, file_path, args):
         """The ADK's result dict for one run_skill_script call."""
@@ -210,131 +217,160 @@ def show(title, body, width=110):
     print(body.rstrip())
 
 
-def drive(agent, ws, scripts, statement, context, args, log, max_turns):
-    """The model drives one agent until it answers without a tool call. Returns (final text, calls)."""
-    messages = [{'role': 'system', 'content': agent.system(statement)},
-                {'role': 'user', 'content': [{'type': 'text', 'text': 'For context:'},
-                                             {'type': 'text', 'text': context}]}]
-    made = []
-    for turn in range(1, max_turns + 1):
-        text, thoughts, calls, usage, secs = complete(args.api_base, args.key, args.model, messages,
+def tool_result(ws, scripts, c):
+    """(parsed arguments, the ADK's answer) for one tool call of the model."""
+    try:
+        a = json.loads(c['arguments'] or '{}')
+    except json.JSONDecodeError:
+        a = None
+    if c['name'] == 'run_skill_script' and isinstance(a, dict) and a.get('skill_name') == SKILL \
+            and a.get('file_path'):
+        cargs = a.get('args') or []
+        return a, ws.run(scripts, a['file_path'], cargs if isinstance(cargs, list) else [json.dumps(cargs)])
+    if c['name'] == 'run_skill_script' and isinstance(a, dict) and not a.get('file_path'):
+        return a, {'error': "Argument 'file_path' is required"}
+    if c['name'] == 'run_skill_script' and isinstance(a, dict):
+        return a, {'error': f"Skill '{a.get('skill_name')}' not found."}
+    if c['name'] == 'load_skill':
+        return a, {'skill_name': SKILL, 'instructions': (Path(scripts).parent / 'SKILL.md').read_text()}
+    if c['name'] == 'list_skills':
+        return a, {'skills': [{'name': SKILL}]}
+    if c['name'] == 'load_skill_resource':
+        p = Path(scripts).parent / str((a or {}).get('file_path', ''))
+        return a, ({'content': p.read_text()} if p.is_file() else {'error': 'Resource not found.'})
+    return a, {'error': f"Tool '{c['name']}' not found."}
+
+
+class Session:
+    """A step-by-step run kept in <dir>/session.json: each 'next' makes one model call and stops."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.s = json.loads((self.path / 'session.json').read_text())
+        self.case = self.s['case']
+        task = next(json.loads(l) for l in open(Path(self.s['data']) / 'tasks.jsonl')
+                    if json.loads(l)['instance_id'] == self.case['task'])
+        self.statement = task['problem_statement']
+        self.scripts = Path(self.s['build']) / 'skills' / SKILL / 'scripts'
+        self.ws = Workspace(self.s['data'], self.case['task'], self.s['repos'])
+        self.ws.state = self.s['state']
+
+    def save(self):
+        (self.path / 'session.json').write_text(json.dumps(self.s, ensure_ascii=False, indent=1))
+
+    def log(self, rec):
+        with open(self.path / 'log.jsonl', 'a') as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+
+    def agent(self):
+        spec = self.case['agents'][self.s['index']]
+        return Agent(self.s['build'], spec['agent'], self.s['instructions'].get(spec['agent']))
+
+    def advance(self):
+        """Runs the fixed agents from the current one on, up to the next agent the model drives."""
+        agents = self.case['agents']
+        while self.s['index'] < len(agents):
+            spec = agents[self.s['index']]
+            if spec.get('calls') and spec['agent'] not in self.s['live']:
+                for fp, a in spec['calls']:
+                    res = self.ws.run(self.scripts, fp, a)
+                    print(f'\n[fixed] {spec["agent"]}: {fp} {json.dumps(a, ensure_ascii=False)[:300]}')
+                    print('   -> ' + (res.get('stdout') or json.dumps(res))[:800].replace('\n', '\n      '))
+                    self.log({'agent': spec['agent'], 'fixed': [fp, a], 'result': res})
+                self.s['context'] = f'[{spec["agent"]}] said: {spec.get("says", "done")}'
+                self.s['index'] += 1
+                continue
+            agent = self.agent()
+            system = agent.system(self.statement)
+            self.s['messages'] = [{'role': 'system', 'content': system},
+                                  {'role': 'user', 'content': [{'type': 'text', 'text': 'For context:'},
+                                                               {'type': 'text', 'text': spec.get('context')
+                                                                or self.s['context']}]}]
+            self.s['turn'] = 0
+            (self.path / f'system_{agent.name}.md').write_text(system)
+            show(f'{agent.name}: driven by the model; its system instruction is in system_{agent.name}.md '
+                 f'({len(system)} chars); first message', self.s['messages'][1]['content'][1]['text'])
+            show(f'{agent.name}: sampling', json.dumps(agent.sampling))
+            return
+        diff = subprocess.run(['git', 'diff'], cwd=self.ws.repo, capture_output=True, text=True).stdout
+        show('every agent of the case is done; the diff', diff or '(empty)')
+        self.s['messages'] = None
+
+    def next(self):
+        if self.s['messages'] is None:
+            print('The case is finished: start a new session.')
+            return
+        agent = self.agent()
+        self.s['turn'] += 1
+        turn = self.s['turn']
+        msgs = self.s['messages']
+        text, thoughts, calls, usage, secs = complete(self.s['api_base'], self.s['key'], self.s['model'], msgs,
                                                       agent.sampling)
-        log({'agent': agent.name, 'turn': turn, 'request_messages': len(messages), 'thoughts': thoughts,
-             'text': text, 'calls': calls, 'usage': usage, 'secs': round(secs, 1)})
-        tok = usage.get('completion_tokens', '?')
-        if thoughts:
-            show(f'{agent.name} turn {turn}: thinking ({len(thoughts)} chars, {secs:.0f} s, {tok} tokens out)',
-                 thoughts)
+        self.log({'agent': agent.name, 'turn': turn, 'thoughts': thoughts, 'text': text, 'calls': calls,
+                  'usage': usage, 'secs': round(secs, 1)})
+        head = f'{agent.name} turn {turn} ({secs:.0f} s, {usage.get("completion_tokens", "?")} tokens out)'
+        show(f'{head}: thinking ({len(thoughts)} chars)', thoughts or '(none returned)')
         if text:
-            show(f'{agent.name} turn {turn}: text', text)
+            show(f'{head}: text', text)
         if not calls:
-            return text, made
+            self.s['context'] = f'[{agent.name}] said: {text}'
+            self.s['index'] += 1
+            print(f'\n[{agent.name} ended its turn without a call]')
+            self.advance()
+            return
         ids = [c['id'] or f'call_{turn}_{i}' for i, c in enumerate(calls)]
-        messages.append({'role': 'assistant', 'tool_calls': [
+        msgs.append({'role': 'assistant', 'tool_calls': [
             {'type': 'function', 'id': ids[i], 'function': {'name': c['name'], 'arguments': c['arguments']}}
             for i, c in enumerate(calls)]})
         for i, c in enumerate(calls):
-            try:
-                a = json.loads(c['arguments'] or '{}')
-            except json.JSONDecodeError:
-                a = None
-            if c['name'] == 'run_skill_script' and isinstance(a, dict) and a.get('skill_name') == SKILL \
-                    and a.get('file_path'):
-                cargs = a.get('args') or []
-                cargs = cargs if isinstance(cargs, list) else [json.dumps(cargs)]
-                res = ws.run(scripts, a['file_path'], cargs)
-                made.append([a['file_path'], cargs])
-            elif c['name'] == 'run_skill_script' and isinstance(a, dict) and not a.get('file_path'):
-                res = {'error': "Argument 'file_path' is required"}
-            elif c['name'] == 'run_skill_script' and isinstance(a, dict):
-                res = {'error': f"Skill '{a.get('skill_name')}' not found."}
-            elif c['name'] == 'load_skill':
-                res = {'skill_name': SKILL, 'instructions': (Path(scripts).parent / 'SKILL.md').read_text()}
-            elif c['name'] == 'list_skills':
-                res = {'skills': [{'name': SKILL}]}
-            elif c['name'] == 'load_skill_resource':
-                p = Path(scripts).parent / str((a or {}).get('file_path', ''))
-                res = {'content': p.read_text()} if p.is_file() else {'error': 'Resource not found.'}
-            else:
-                res = {'error': f"Tool '{c['name']}' not found."}
-            show(f'{agent.name} turn {turn}: call {c["name"]}', json.dumps(a, ensure_ascii=False, indent=1)
+            a, res = tool_result(self.ws, self.scripts, c)
+            show(f'{head}: call {c["name"]}', json.dumps(a, ensure_ascii=False, indent=1)
                  if a is not None else c['arguments'])
-            show(f'{agent.name} turn {turn}: answer', res.get('stdout') or json.dumps(res, ensure_ascii=False)
+            show(f'{head}: the script answers', res.get('stdout') or json.dumps(res, ensure_ascii=False)
                  + ('\n[stderr] ' + res['stderr'] if res.get('stderr') else ''))
-            log({'agent': agent.name, 'turn': turn, 'call': c['name'], 'args': a, 'result': res})
-            messages.append({'role': 'tool', 'tool_call_id': ids[i], 'content': json.dumps(res, ensure_ascii=False)})
-    return '(max turns)', made
+            self.log({'agent': agent.name, 'turn': turn, 'call': c['name'], 'args': a, 'result': res})
+            msgs.append({'role': 'tool', 'tool_call_id': ids[i], 'content': json.dumps(res, ensure_ascii=False)})
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--case', required=True)
-    ap.add_argument('--build', required=True, help='the submission directory (agent.yaml, sub_agents/, skills/)')
-    ap.add_argument('--data', default=os.environ.get('LAB_DATA', ''), help='holds tasks.jsonl and snapshots/')
-    ap.add_argument('--repos', default=os.environ.get('LAB_REPOS', ''), help='where snapshots are unpacked')
-    ap.add_argument('--api-base', required=True)
-    ap.add_argument('--model', required=True)
-    ap.add_argument('--key-file', default='', help="a file holding the endpoint's key (never the repository)")
-    ap.add_argument('--live', default='', help='agents driven by the model even if the case gives calls')
-    ap.add_argument('--instruction', action='append', default=[],
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    st = sub.add_parser('start', help='reset the snapshot, run the fixed agents, stop before the first model call')
+    st.add_argument('session', help='a new directory for this run')
+    st.add_argument('--case', required=True)
+    st.add_argument('--build', required=True, help='the submission directory (agent.yaml, sub_agents/, skills/)')
+    st.add_argument('--data', required=True, help='holds tasks.jsonl and snapshots/')
+    st.add_argument('--repos', required=True, help='where snapshots are unpacked')
+    st.add_argument('--api-base', required=True)
+    st.add_argument('--model', required=True)
+    st.add_argument('--key-file', default='', help="a file holding the endpoint's key (never the repository)")
+    st.add_argument('--live', default='', help='agents driven by the model even if the case gives calls')
+    st.add_argument('--instruction', action='append', default=[],
                     help='<agent>=<file>: a replacement instruction for that agent')
-    ap.add_argument('--samples', type=int, default=1)
-    ap.add_argument('--max-turns', type=int, default=12)
-    ap.add_argument('--out', default='')
+    nx = sub.add_parser('next', help='one model call of the current agent, its tool calls run, then stop')
+    nx.add_argument('session')
     args = ap.parse_args()
-    args.key = Path(args.key_file).read_text().strip() if args.key_file else ''
-    case = json.loads(Path(args.case).read_text())
-    task = next(json.loads(l) for l in open(Path(args.data) / 'tasks.jsonl')
-                if json.loads(l)['instance_id'] == case['task'])
-    statement = task['problem_statement']
-    build = Path(args.build).resolve()
-    scripts = build / 'skills' / SKILL / 'scripts'
-    live = {x for x in args.live.split(',') if x}
-    repl = dict(x.split('=', 1) for x in args.instruction)
-    ws = Workspace(args.data, case['task'], Path(args.repos).resolve() if args.repos
-                   else tempfile.mkdtemp(prefix='lab_repos_'))
-    out = Path(args.out) if args.out else None
-    if out:
-        out.mkdir(parents=True, exist_ok=True)
-    report = [f'# step_lab: {case["task"]}, {args.model}, {args.samples} sample(s)', '']
-    for n in range(1, args.samples + 1):
-        print(f'\n{"=" * 110}\n== sample {n}/{args.samples}: {case["task"]}\n{"=" * 110}')
-        ws.reset()
-        logf = open(out / f'sample{n}.jsonl', 'w') if out else None
-
-        def log(rec):
-            if logf:
-                logf.write(json.dumps(rec, ensure_ascii=False) + '\n')
-                logf.flush()
-        context = case.get('context', '[requirements] said: done')
-        report.append(f'## Sample {n}')
-        for spec in case['agents']:
-            name = spec['agent']
-            if spec.get('calls') and name not in live:
-                for fp, a in spec['calls']:
-                    res = ws.run(scripts, fp, a)
-                    print(f'\n[fixed] {name}: {fp} {json.dumps(a, ensure_ascii=False)[:200]}')
-                    print('   -> ' + (res.get('stdout') or json.dumps(res))[:600].replace('\n', '\n      '))
-                    log({'agent': name, 'fixed': [fp, a], 'result': res})
-                context = f'[{name}] said: {spec.get("says", "done")}'
-                continue
-            agent = Agent(build, name, repl.get(name))
-            if n == 1:
-                show(f'{name}: system instruction ({len(agent.system(statement))} chars)', agent.system(statement))
-                show(f'{name}: sampling', json.dumps(agent.sampling))
-                if out:
-                    (out / f'system_{name}.md').write_text(agent.system(statement))
-            final, made = drive(agent, ws, scripts, statement, context, args, log, args.max_turns)
-            report.append(f'- **{name}**: ' + '; '.join(f'`{fp} {json.dumps(a, ensure_ascii=False)[:300]}`'
-                                                        for fp, a in made) + f' → final: {final[:200]!r}')
-            context = f'[{name}] said: {final}'
-        diff = subprocess.run(['git', 'diff'], cwd=ws.repo, capture_output=True, text=True).stdout
-        report.append(f'- diff: {len(diff)} chars')
-        if logf:
-            logf.close()
-    print('\n' + '\n'.join(report))
-    if out:
-        (out / 'report.md').write_text('\n'.join(report) + '\n')
+    if args.cmd == 'start':
+        path = Path(args.session)
+        path.mkdir(parents=True, exist_ok=False)
+        (path / 'state').mkdir()
+        s = {'case': json.loads(Path(args.case).read_text()), 'build': str(Path(args.build).resolve()),
+             'data': str(Path(args.data).resolve()), 'repos': str(Path(args.repos).resolve()),
+             'state': str((path / 'state').resolve()), 'api_base': args.api_base, 'model': args.model,
+             'key': Path(args.key_file).read_text().strip() if args.key_file else '',
+             'live': [x for x in args.live.split(',') if x],
+             'instructions': {k: str(Path(v).resolve()) for k, v in (x.split('=', 1) for x in args.instruction)},
+             'index': 0, 'context': '[requirements] said: done', 'messages': None, 'turn': 0}
+        (path / 'session.json').write_text(json.dumps(s))
+        os.chmod(path / 'session.json', 0o600)        # it may hold the endpoint's key
+        ses = Session(path)
+        ses.ws.reset(ses.s['state'])
+        ses.advance()
+        ses.save()
+    else:
+        ses = Session(args.session)
+        ses.next()
+        ses.save()
 
 
 if __name__ == '__main__':

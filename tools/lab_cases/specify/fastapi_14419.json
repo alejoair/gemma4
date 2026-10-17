@@ -3,5 +3,5 @@
  "agents": [
   {"agent": "requirements", "calls": [["req.py", ["Cache dependencies that don't use scopes and don't have sub-dependencies with scopes", "A dependency that doesn't use scopes and doesn't have sub-dependencies with scopes is cached based on the function"]]]},
   {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["solve_dependencies", "Dependant.cache_key"]]]},
-  {"agent": "specify1"}
+  {"agent": "specify1", "context": "[requirements] said: done"}
  ]}
