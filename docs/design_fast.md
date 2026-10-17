@@ -166,3 +166,25 @@ over the 12 h loses the whole submission, so "some tasks not reached" is not saf
   that fits.
 - The fast build ends tasks sooner. To choose its limit, the same kind of trial is needed: the fast build at 15 minutes,
   for its natural durations, then the largest limit whose total fits.
+
+## vf1 on Kaggle with Gemma (10-17): 4/30, and why
+
+vf1 is the fast build at 5 minutes, one task at a time, on the V25-30s tasks. The harness resolved 4/30, against 5/30
+for V25. There were 17 empty patches and 16 stops at 5 minutes. Median stage spans: requirements 30 s, locate 21 s, the
+specify stage 117 s, edit 39 s. 8 of the 30 tasks never reached edit.
+
+1. **The reproduce branch held the specify stage open.** A ParallelAgent ends when all its branches end. In rich_3905
+   the specifiers were done at 119 s; the reproduce agent's test was kept on its first try, and it sent it 8 more times
+   until the time was up, answered only "No reproduction test is needed now". Reproduce is off in the fast build
+   (`tools/make_fast.py`, `REPRODUCE = False`) until it can end on its own.
+2. **Agents did not stop when told to reply done.** 161 calls came after that answer: reproduce 61, specify2 41,
+   requirements 23. The idle specifiers' thoughts show why: the progress line listed places "to specify", while the
+   answer said every place was specified or taken. Gemma opened again to find the place it believed it was missing
+   (checklist B12). Two fixes:
+   - an idle worker is told which agent holds each item, with no plan line;
+   - a worker that already finished is told what it finished.
+
+   These are in vf3.
+
+The Haiku runs showed neither fault: Haiku stops when told to. Only the model run of the competition's model showed
+them.
