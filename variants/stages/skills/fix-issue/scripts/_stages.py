@@ -2756,6 +2756,18 @@ IDLE = {'requirements': 'The requirements are already saved.',
         'repair': 'Nothing is left to change.'}
 
 
+def _idle(st, stage, worker):
+    """The answer to a worker with nothing to take. vf1 (Gemma, fastapi_12942): the progress line listed places 'to
+    specify' while the answer said every place was taken; the idle specifiers opened again 40 times, trying to find the
+    place they were missing (checklist B12). The answer names who holds each item and leaves the plan out."""
+    held = [(k.split(' ', 1)[1], w) for k, w in _claims(st).items()
+            if k.split(' ', 1)[0] == ('specify' if stage == 'repair' else stage) and w != worker]
+    who = (' The other agents of this stage hold every open item: ' + ', '.join(f'{t} ({w})' for t, w in held[:6]) + '.'
+           if held else '')
+    return (f'{IDLE.get(stage, "Nothing to do.")}{who} There is nothing left for you in this stage, so your part ends '
+            f'here (time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s).\n\n{FAST_DONE}')
+
+
 def _for_worker(out, stage, worker):
     """The handlers' NEXT lines name the stage's own script; a worker calls its own."""
     names = ('specify.py', 'edit.py') if stage == 'repair' else (SCRIPT[stage],)
@@ -2805,10 +2817,11 @@ def main_fast(stage, worker, argv):
                 if done_before:
                     # vf1 (Gemma, rich_3905): the reproduce agent whose test was kept sent it 8 more times, told only
                     # "No reproduction test is needed now", and the stage waited for it until the time was up
-                    out = (_progress(root, st) + '\n\nYour part is already finished: ' + '; '.join(done_before[-3:])
-                           + '. Nothing more is needed from you.\n\n' + FAST_DONE)
+                    out = ('Your part is already finished: ' + '; '.join(done_before[-3:]) + '. Nothing more is '
+                           f'needed from you (time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s).\n\n'
+                           + FAST_DONE)
                 else:
-                    out = _progress(root, st) + '\n\n' + IDLE.get(stage, 'Nothing to do.') + '\n\n' + FAST_DONE
+                    out = _idle(st, stage, worker)
             else:
                 out = _progress(root, st) + '\n\n' + _view(root, st, stage, worker, target)
         else:
