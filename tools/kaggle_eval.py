@@ -561,10 +561,10 @@ def main() -> None:
                         r, err = await evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)), None
                     except Exception as e:  # noqa: BLE001
                         r, err = None, e
-                    if args.concurrency <= 1:
-                        run_one(i, task, r, err, mark)
-                    else:
-                        await asyncio.to_thread(run_one, i, task, r, err, mark)
+                    # the judge runs verify_task with asyncio.run, which cannot run inside this loop: always in a
+                    # thread (vf1, one task at a time: every judgement failed with 'asyncio.run() cannot be called
+                    # from a running event loop')
+                    await asyncio.to_thread(run_one, i, task, r, err, mark)
 
             await asyncio.gather(*(worker(i, task) for i, task in enumerate(tasks, 1)))
 

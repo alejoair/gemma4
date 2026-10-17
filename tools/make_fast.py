@@ -11,6 +11,10 @@ import shutil
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'variants', 'fast')
 MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
 WORKERS = {'locate': 2, 'specify': 3, 'edit': 2}
+# vf1 (Gemma, Kaggle): the reproduce branch kept the specify stage open after the specifiers ended (a ParallelAgent
+# waits for every branch): its agent sent its kept test 8 more times in rich_3905, and 8 of 30 tasks never reached
+# edit; off until it can end on its own
+REPRODUCE = False
 
 FORM = ('<|tool_call>call:run_skill_script{{args:[{args}],file_path:<|"|>{script}<|"|>,'
         'skill_name:<|"|>fix-issue<|"|>}}<tool_call|>')
@@ -189,7 +193,7 @@ def main():
                                                       STAGES[stage]['sampling']))
             write(os.path.join(scripts, script), ENTRY.format(stage=stage, worker=name))
             members.append(f'{name}.yaml')
-        if stage == 'specify':
+        if stage == 'specify' and REPRODUCE:
             # docs/design_fast.md: the reproduction test is written beside the specifiers, at almost no wall time
             write('sub_agents/reproduce.md', prompt('reproduce', 'repro.py'))
             write('sub_agents/reproduce.yaml', llm_yaml('reproduce', 'reproduce', 'repro.py',

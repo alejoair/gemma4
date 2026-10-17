@@ -5,4 +5,3 @@ sub_agents:
   - config_path: specify1.yaml
   - config_path: specify2.yaml
   - config_path: specify3.yaml
-  - config_path: reproduce.yaml

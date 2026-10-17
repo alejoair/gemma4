@@ -2655,10 +2655,11 @@ def _take(st, stage, target, worker, handler):
     return target
 
 
-def _release(st, worker):
+def _release(st, worker, what=None):
     cur = st.setdefault('wcur', {}).pop(worker, None)
     if cur:
         _claims(st).pop(f'{cur[0]} {cur[1]}', None)
+        st.setdefault('wfinished', {}).setdefault(worker, []).append(what or f'{cur[1]} is finished')
 
 
 def _claim(root, st, stage, worker):
@@ -2800,7 +2801,14 @@ def main_fast(stage, worker, argv):
             if target is None:
                 if stage == 'repair' and not st['submitted']:
                     _submit(root, st)
-                out = _progress(root, st) + '\n\n' + IDLE.get(stage, 'Nothing to do.') + '\n\n' + FAST_DONE
+                done_before = st.setdefault('wfinished', {}).get(worker)
+                if done_before:
+                    # vf1 (Gemma, rich_3905): the reproduce agent whose test was kept sent it 8 more times, told only
+                    # "No reproduction test is needed now", and the stage waited for it until the time was up
+                    out = (_progress(root, st) + '\n\nYour part is already finished: ' + '; '.join(done_before[-3:])
+                           + '. Nothing more is needed from you.\n\n' + FAST_DONE)
+                else:
+                    out = _progress(root, st) + '\n\n' + IDLE.get(stage, 'Nothing to do.') + '\n\n' + FAST_DONE
             else:
                 out = _progress(root, st) + '\n\n' + _view(root, st, stage, worker, target)
         else:
@@ -2812,7 +2820,7 @@ def main_fast(stage, worker, argv):
             out = HANDLERS[handler](root, st, args)
             if out.endswith(DONE):
                 body = out[:-len(DONE)].rstrip()
-                _release(st, worker)
+                _release(st, worker, f'{cur[1]}: ' + (body.split('\n')[0][:160] if body else 'done'))
                 limit = BATCH.get(stage, 3) * 2
                 st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
                 target = _claim(root, st, stage, worker) if st['wdone'][worker] < limit else None
