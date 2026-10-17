@@ -118,6 +118,9 @@ class Gate(BaseHTTPRequestHandler):
     api_key = ''              # the upstream's key, sent instead of the client's (a Colab vLLM behind a tunnel)
     stream_upstream = False   # ask the upstream for a stream and assemble it: a Cloudflare quick tunnel ends a
                               # response whose first byte takes over 100 s (a long non-streamed generation)
+    serial = None             # a lock: one upstream request at a time. A one-slot server queues the parallel stages'
+                              # requests, and a request that waits about 30 s without a byte is cut on the way (10-17,
+                              # the local llama-server); waiting here, on the local side, cuts nothing
 
     def log_message(self, *a):
         pass
@@ -134,6 +137,12 @@ class Gate(BaseHTTPRequestHandler):
         auth = f'Bearer {self.api_key}' if self.api_key else self.headers.get('authorization', 'Bearer EMPTY')
         req = urllib.request.Request(self.upstream.rstrip('/') + path, data=data, method=method, headers={
             'content-type': 'application/json', 'authorization': auth, 'user-agent': 'swe-monitor'})
+        if self.serial is not None and method == 'POST':
+            with self.serial:
+                return self._send_upstream(req, method)
+        return self._send_upstream(req, method)
+
+    def _send_upstream(self, req, method):
         try:
             with urllib.request.urlopen(req, timeout=3600) as r:
                 if self.stream_upstream and method == 'POST':
@@ -259,11 +268,13 @@ def main():
     ap.add_argument('--port', type=int, default=8791)
     ap.add_argument('--api-key-file', default='', help="a file holding the upstream's key (never the repository)")
     ap.add_argument('--stream-upstream', action='store_true', help='stream from the upstream and assemble (tunnels)')
+    ap.add_argument('--serial', action='store_true', help='one upstream request at a time (a one-slot server)')
     a = ap.parse_args()
     a.dir.mkdir(parents=True, exist_ok=True)
     if a.cmd == 'serve':
         Gate.upstream, Gate.dir = a.upstream, a.dir
         Gate.stream_upstream = a.stream_upstream
+        Gate.serial = threading.Lock() if a.serial else None
         if a.api_key_file:
             Gate.api_key = Path(a.api_key_file).read_text().strip()
         for f in ('count', 'allow'):
