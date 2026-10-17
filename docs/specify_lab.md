@@ -317,3 +317,27 @@ All 112 specify calls of the run were counted from the gate's records (`step_gat
 **What it costs:** every decision call fills the thinking budget, easy or hard. The split doubled the number of decision calls per place.
 
 **The fix to test:** keep the finding before the decision, but in **one call**: `['<the lines that make it fail>', '<what they do now>', '<what they must do instead>']`. The written finding still comes first, and is still kept in the conversation. A 'no change' without a body line is refused once, not twice.
+
+## vf8 on the bench (one call: finding + sentence; 10 cases × 1, local 31B, budget 1024)
+
+Per-turn tables: `tools/step_lab_report.py` on the sessions.
+
+| Case | Calls | Output tokens (vf7 s1 / s2 / vf8) | Grade vf8 |
+|---|---|---|---|
+| fastapi_14419 | 6 | 5,646 / 6,628 / 6,521 | partial (sub-dependency scopes lifted to the parent; cache_key unchanged) |
+| rich_3180 | 4 | 4,804 / 3,472 / 4,569 | wrong (chop_cells "no change", divide_line chops from line_position) |
+| rich_3043 | 1 | 1,874 / 1,369 / 1,232 | correct |
+| rich_3934 | 4 | 3,313 / 4,864 / 4,389 | wrong (an empty line yielded) |
+| rich_3772 | 1 | 2,368 / 2,355 / 1,270 | partial ("keeping track of seen exceptions") |
+| rich_4076 | 1 | 2,212 / 2,206 / 1,134 | partial (keepends) |
+| fastapi_14361 | 1 | 1,238 / 1,668 / 1,145 | correct |
+| rich_3905 | 1 | 1,008 / 1,081 / 618 | correct |
+| fastapi_5624 | 1 | 2,281 / 1,940 / 1,203 | correct |
+| fastapi_11194 | 1 | 2,416 / 2,377 / 1,290 | correct |
+| **total** | | 27,160 / 27,960 / **23,371** (776 / 799 / **668 s** at 35 tokens/s) | **8/10 correct or partial** (vf7 s1: 8/10) |
+
+- **One-place cases:** one call, and half the tokens of vf7 (1,100-1,300 against 2,000-2,400) with the same grades.
+- **Multi-place cases did not get cheaper.** The waste is now in two answers, 9 of the 20 decision calls of the 3 multi-place cases:
+  - **`missing` naming a place that is already planned** (5 calls). The answer says "its own specifier writes its change", which is false when the same specifier gets that place next. Its NEXT does not offer the three-part form, and the model repeated the call (fastapi_14419 turns 4-5).
+  - **A refused 'no change' sent again** (rich_3180, rich_3934). The second send is accepted with the same signature line, because only one refusal is made. That line is the function's `def` line, so the refusal does not help: it only costs a call.
+- **The thought is still cut** in every decision call but one (rich_3905, 615 tokens).
