@@ -116,3 +116,21 @@ worker slots hold for any repository and any issue.
      harness with Haiku: each worker sees only its own calls, and the claims do not collide;
   2. then the full pipeline on the hk30 tasks with Haiku, for system faults;
   3. then a Kaggle eval with Gemma at 5 minutes on the V25-30s tasks (V25: 5/30), 4 tasks at once as before.
+
+## Built and tested with Haiku (10-17)
+
+`tools/make_fast.py` writes `variants/fast/`, and `tools/build.py <out> --variant stages,fast` stacks it on the stages
+build. `_stages.main_fast` holds the workers' claims, their chains and the budget check.
+
+- **Feasibility (hf1, rich_3905):** resolved in 74 s.
+  - Each worker's prompt was about 3,000 tokens: its instruction and its own calls only.
+  - The three specifiers and reproduce opened in the same second; idle workers replied `done`.
+  - Review, repair and finish ran in order.
+  - One fault was found and fixed: the requirements agent's first call already holds the names, and it was answered
+    with the first question instead.
+- **The 30 hk30 tasks (hf):** 18/30 against 15/30 for V25 and V26.
+  - Mean 80 s per task against 128 s for V26.
+  - No internal error, no refused or unused call.
+  - Not Kaggle evidence: Haiku is fast enough that time was never the limit.
+- **Next:** the Kaggle eval with Gemma at 5 minutes on the V25-30s tasks (V25: 5/30), one task at a time as the
+  official harness is assumed to run them (the fast build's own workers run at once).

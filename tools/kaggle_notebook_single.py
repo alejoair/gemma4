@@ -12,10 +12,12 @@ import os
 import subprocess
 import sys
 
-SUBMISSION = 'v25t15'
+SUBMISSION = 'vf1'
 TASKS = 'fastapi_9753,rich_4075,fastapi_13207,rich_4076,fastapi_14419,fastapi_14953,rich_3043,fastapi_11194,fastapi_13537,rich_3905,fastapi_14459,fastapi_14361,rich_2943,fastapi_14372,rich_3718,fastapi_15661,requests_7505,rich_3934,fastapi_15280,rich_3180,fastapi_13713,rich_3480,fastapi_12942,rich_3278,fastapi_14258,requests_7205,fastapi_14297,rich_3772,fastapi_5624,rich_3942'
 EXCLUDE = 'fastapi_13786,fastapi_14099,fastapi_14301,fastapi_14303,fastapi_14349,fastapi_14485,fastapi_14492,fastapi_14583,fastapi_14605,fastapi_14851,fastapi_14962,fastapi_14986,fastapi_15763,fastapi_15800,fastapi_9425,fastapi_9555,httpx_3672,requests_6592,requests_7433,requests_7502,rich_3006,rich_3469,rich_3472,rich_3506,rich_3521,rich_3535,rich_3675,rich_3777,rich_3782,rich_3882'
 SCREEN = 30
+# tasks at once: 1 as the official harness is assumed to run them; the fast build runs its own workers at once
+CONCURRENCY = 1
 
 hits = glob.glob('/kaggle/input/**/bench/kaggle_eval.py', recursive=True)
 assert hits, 'bench/kaggle_eval.py not found under /kaggle/input'
@@ -39,7 +41,7 @@ if os.path.isdir(wheels):
                      'print("test deps ok, pytest", pytest.__version__)'])
 
 cmd = [sys.executable, os.path.join(root, 'bench', 'kaggle_eval.py'), '--submission', os.path.join(root, SUBMISSION),
-       '--out', f'/kaggle/working/run_{SUBMISSION}.csv', '--concurrency', '4']
+       '--out', f'/kaggle/working/run_{SUBMISSION}.csv', '--concurrency', str(CONCURRENCY)]
 cmd += ['--tasks', TASKS] if TASKS else ['--screen', str(SCREEN), '--exclude', EXCLUDE]
 print(' '.join(cmd), flush=True)
 sys.exit(subprocess.call(cmd))
