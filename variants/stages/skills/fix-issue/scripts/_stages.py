@@ -65,6 +65,7 @@ EDIT_TESTS = os.environ.get('SWE_EDIT_TESTS', '0') == '1'
 VERIFY = os.environ.get('SWE_VERIFY', '0') == '1'
 
 DONE = 'NEXT: no call: reply with one sentence for the coordinator.'
+FAST = False            # the fast build (docs/design_fast.md): stage agents in a pipeline, workers in parallel
 
 
 # ------------------------------------------------------------------------------------------------------- state
@@ -1985,6 +1986,9 @@ def edit(root, st, args):
             line = (f"edit is done: {p['handle']} is changed. Next: {st['tentative']}." if st.get('tentative')
                     else None)
             _unspent(p)
+            if FAST:
+                return ('Already applied: this place already holds these new lines (your earlier edit is in the '
+                        f'patch).\n\n{DONE}')
             return ('Already applied: this place already holds these new lines (your earlier edit is in the patch). '
                     + (f'If the change is complete, reply to the coordinator without a call, with exactly this line:\n'
                        f'{line}\n\nNEXT: no call: reply with exactly that line.' if line else
@@ -2232,6 +2236,13 @@ def _after_edit(root, st, p, r, before, names, nxt):
     if dropped:
         lines = [f'  {d}, still used by ' + ', '.join(f'{u} ({r}:{l})' for r, u, l in users) for d, users in dropped]
         first = dropped[0][0]
+        if FAST:
+            return (f'{word}: {detail}.\n{shown}\n\nThis edit stops using code that other code still uses, and that '
+                    'code keeps the old behaviour:\n' + '\n'.join(lines) + '\nIf the requirement must hold there too, '
+                    f"the change belongs in that code itself: send ['missing', '{first}', '<what must change in it>'] (it "
+                    "goes into the plan and is changed after). If not, send ['no change'] to go on."
+                    f"\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args "
+                    f"['missing', '{first}', '<what must change in it>'], or ['no change'].")
         return (f'{word}: {detail}.\n{shown}\n\nThis edit stops using code that other code still uses, and that '
                 'code keeps the old behaviour:\n' + '\n'.join(lines) + '\nIf the requirement must hold there too, '
                 f"the change belongs in that code itself: send ['missing', '{first}', '<what must change in it>'] (it "
@@ -2240,6 +2251,9 @@ def _after_edit(root, st, p, r, before, names, nxt):
                 f"'{first}', '<what must change in it>'], or no call: reply with one sentence for the coordinator.")
     fix = ("another ['replace', '<old lines>', '<new lines>']" if p['end'] - p['start'] + 1 > LONG_EDIT
            else 'the corrected whole definition')
+    if FAST:
+        # docs/design_fast.md: no coordinator line; the worker goes on with its next place (main_fast)
+        return f'{word}: {detail}.\n{shown}\n\n{DONE}'
     call = _tentative(root, st)
     if call:
         # gk12: an accepted edit had no line for the coordinator, which then asked route.py (one call per edit);
@@ -2607,6 +2621,216 @@ def main(stage, argv):
                ("Call route.py with ['next'] again.\n\nNEXT: call run_skill_script with skill_name fix-issue, "
                 "file_path route.py and args ['next']" if stage == 'route' else DONE))
     _state.record({'stage': stage, 'args': [a[:300] for a in args][:8], 'answer': out[:300]})
+    _state.save('stages', st)
+    if len(out) > ANSWER_CHARS:
+        out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
+    print(out)
+
+
+# ------------------------------------------------------------------------------- the fast build (docs/design_fast.md)
+#
+# No coordinator: the root is a SequentialAgent of stage agents (include_contents: none), and a stage with several
+# items runs K identical workers in a ParallelAgent. Each worker has its own entry script (specify2.py: the slot is the
+# file name, never sent by the model) and claims the next open item of its stage here; when an item is finished it goes
+# on with the next one ("Your part goes on with ..."), and with none left it replies done. Script calls hold the state
+# lock (_state.lock), so the workers' calls run one at a time while their model calls run at once.
+
+FAST_DONE = 'NEXT: no call: reply with exactly: done'
+REPRO_MIN_S = 150       # reproduce runs beside specify only with this much time left (V22: it took 30-225 s)
+WORK_STAGE = {'repair': None}    # repair specifies and edits, by the state of its place
+
+
+def _claims(st):
+    return st.setdefault('claims', {})
+
+
+def _claimed(st, stage, target, worker):
+    owner = _claims(st).get(f'{stage} {target}')
+    return owner is not None and owner != worker
+
+
+def _take(st, stage, target, worker, handler):
+    _claims(st)[f'{stage} {target}'] = worker
+    st.setdefault('wcur', {})[worker] = [stage, target, handler]
+    return target
+
+
+def _release(st, worker):
+    cur = st.setdefault('wcur', {}).pop(worker, None)
+    if cur:
+        _claims(st).pop(f'{cur[0]} {cur[1]}', None)
+
+
+def _claim(root, st, stage, worker):
+    """The next open item of stage for worker (its target, also set as the worker's current), or None."""
+    if stage == 'requirements':
+        if not st['reqs'] and not _claimed(st, stage, 'the issue', worker) and _ask(st, 'requirements'):
+            return _take(st, stage, 'the issue', worker, 'requirements')
+        if not st['reqs']:
+            st['reqs'] = [{'id': 'R1', 'quote': '', 'what': 'Fix the issue as the statement describes.',
+                           'names': list(st.get('names') or []), 'new': []}]
+            _save_statement(st)
+        return None
+    if stage == 'reproduce':
+        if not st['repro_done'] and (not any(r.get('concrete') for r in st['reqs']) or _left(st) < REPRO_MIN_S):
+            st['repro_done'] = True
+        if not st['repro_done'] and st['reqs'] and _ask(st, 'reproduce'):
+            return _take(st, stage, _repro_req(root, st)['id'], worker, 'reproduce')
+        return None
+    if stage == 'locate':
+        for r in st['reqs']:
+            if r['id'] in st['located'] or _claimed(st, stage, r['id'], worker):
+                continue
+            if _ask(st, 'locate ' + r['id']):
+                return _take(st, stage, r['id'], worker, 'locate')
+            st['located'][r['id']] = _fallback_locate(root, st, r)
+        return None
+    if stage in ('specify', 'edit', 'repair'):
+        if not st['scope_done']:
+            if not any(st['located'].values()):
+                for r in st['reqs']:
+                    if r['id'] not in st['located']:
+                        st['located'][r['id']] = _fallback_locate(root, st, r)
+            if any(st['located'].values()):
+                _make_plan(root, st, [])
+        _add_missing(root, st)
+    if stage in ('specify', 'repair'):
+        for p in st['plan']:
+            if p.get('sentence') is not None or _claimed(st, 'specify', p['handle'], worker):
+                continue
+            q = _copy_of(root, st, p)
+            if q is not None and q.get('sentence') is not None and q.get('status') != 'failed' and not p.get('note'):
+                # V23 (httpx_3672): a copy of the same code takes the other's sentence
+                p['sentence'], p['status'], p['copy_of'] = q['sentence'], ('nochange' if q.get('status') == 'nochange'
+                                                                           else 'todo'), _key(q)
+                continue
+            if q is not None and q.get('sentence') is None and _claimed(st, 'specify', q['handle'], worker):
+                continue            # its copy is being specified now: it takes that sentence
+            if _ask(st, f'specify {_key(p)} {p.get("respecs", 0)} {stage}'):
+                return _take(st, 'specify', p['handle'], worker, 'specify')
+            p['sentence'] = '; '.join(_req(st, rid)['what'] for rid in p['reqs'] if _req(st, rid)) or 'no change'
+            p['status'] = 'todo'
+        if stage == 'specify':
+            return None
+    if stage in ('edit', 'repair'):
+        for p in st['plan']:
+            if p.get('status') != 'todo' or _claimed(st, 'edit', p['handle'], worker):
+                continue
+            q = _copy_of(root, st, p)
+            if q is not None and q.get('status') == 'done' and q.get('sentence') == p.get('sentence') \
+                    and _apply_copy(root, st, p, q):
+                continue
+            if _try_literal(root, st, p):
+                continue
+            if _ask(st, f'edit {_key(p)} {p.get("respecs", 0)} {stage}'):
+                p['opened'] = False
+                return _take(st, 'edit', p['handle'], worker, 'edit')
+            p['status'] = 'failed'
+        return None
+    if stage == 'review':
+        _verify(root, st)
+        for r in st['reqs']:
+            if r['id'] in st['reviews'] or _claimed(st, stage, r['id'], worker):
+                continue
+            if st['repro'] and st['repro'].get('rid') == r['id'] and _patch_files(root) and _rerun_repro(root, st) \
+                    and (_regression_check(root, st) or {}).get('verdict') != 'BROKEN':
+                st['reviews'][r['id']] = {'verdict': 'done', 'by': 'the reproduction test passes'}
+                continue
+            if not _patch_files(root) or _left(st) < REVIEW_LEFT_S:
+                st['reviews'][r['id']] = {'verdict': 'not reviewed'}
+                continue
+            if _ask(st, f'review {r["id"]}'):
+                return _take(st, stage, r['id'], worker, 'review')
+            st['reviews'][r['id']] = {'verdict': 'cannot tell'}
+        return None
+    return None
+
+
+IDLE = {'requirements': 'The requirements are already saved.',
+        'reproduce': 'No reproduction test is needed now.',
+        'locate': 'Every requirement is located or taken by another agent.',
+        'specify': 'Every place is specified or taken by another agent.',
+        'edit': 'Every place is edited or taken by another agent.',
+        'review': 'Nothing to review.',
+        'repair': 'Nothing is left to change.'}
+
+
+def _for_worker(out, stage, worker):
+    """The handlers' NEXT lines name the stage's own script; a worker calls its own."""
+    names = ('specify.py', 'edit.py') if stage == 'repair' else (SCRIPT[stage],)
+    for n in names:
+        out = out.replace(f'file_path {n}', f'file_path {worker}.py')
+    return out
+
+
+def _view(root, st, stage, worker, target):
+    handler = st['wcur'][worker][2]
+    st['current'] = (handler, target)
+    # the requirements stage opens with its first question (the names), not with an 'open' item
+    return HANDLERS[handler](root, st, [] if handler == 'requirements' else ['open'])
+
+
+def main_fast(stage, worker, argv):
+    """One call of a worker of the fast build: stage is its stage ('repair' specifies and edits), worker its script's
+    name (specify2)."""
+    global FAST
+    FAST = True
+    root = _repo.repo_root()
+    if not _state.lock():
+        print('This call was not run: the call sent before it is still running. Send it again when that one has '
+              'answered.')
+        return
+    st = _state.load('stages') or _new()
+    args = _args.split_single_quoted(list(argv))
+    first = _args.clean(args[0]).lower() if args and args[0] else ''
+    try:
+        _tests.record_preexisting(root)
+        cur = st.setdefault('wcur', {}).get(worker)
+        if _over_budget(st):
+            # B10 (docs/design_stages.md, "How the 90 runs ended"): the harness cut 44 of 90 runs while an agent worked
+            _release(st, worker)
+            if stage == 'repair' and not st['submitted']:
+                _submit(root, st)
+            out = _progress(root, st) + '\n\nThe time is up: the patch as it is will be submitted.\n\n' + FAST_DONE
+        elif cur is None and not (stage == 'requirements' and first not in ('', 'open', 'start', 'next')
+                                  and _claim(root, st, stage, worker) is not None):
+            # hf1 (rich_3905): the requirements agent's first call already holds the names (its prompt's step 1): it
+            # is answered, not replaced by the first question
+            target = _claim(root, st, stage, worker)
+            if target is None:
+                if stage == 'repair' and not st['submitted']:
+                    _submit(root, st)
+                out = _progress(root, st) + '\n\n' + IDLE.get(stage, 'Nothing to do.') + '\n\n' + FAST_DONE
+            else:
+                out = _progress(root, st) + '\n\n' + _view(root, st, stage, worker, target)
+        else:
+            cur = st['wcur'][worker]
+            handler = cur[2]
+            st['current'] = (handler, cur[1])
+            if first in ('open', 'next', 'start'):
+                args = [] if handler == 'requirements' else ['open']
+            out = HANDLERS[handler](root, st, args)
+            if out.endswith(DONE):
+                body = out[:-len(DONE)].rstrip()
+                _release(st, worker)
+                limit = BATCH.get(stage, 3) * 2
+                st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
+                target = _claim(root, st, stage, worker) if st['wdone'][worker] < limit else None
+                if target is not None:
+                    out = (body + f'\n\nYour part goes on with {target}, in the same way:\n\n'
+                           + _view(root, st, stage, worker, target))
+                else:
+                    if stage == 'repair' and not st['submitted']:
+                        _submit(root, st)
+                    out = body + '\n\nYour part is done.\n\n' + FAST_DONE
+        out = _for_worker(out, stage, worker)
+    except Exception as e:                      # never a traceback for the model
+        _state.record({'error': f'{worker} {type(e).__name__}: {e}'})
+        import traceback
+        _state.record({'trace': traceback.format_exc()[-2000:]})
+        _release(st, worker)
+        out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
+    _state.record({'stage': worker, 'args': [a[:300] for a in args][:8], 'answer': out[:300]})
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
