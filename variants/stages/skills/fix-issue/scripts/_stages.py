@@ -1637,8 +1637,10 @@ def _place_view(root, st, p, limit=80):
         note = _members_note(root, p)
         return (f'{p["handle"]} does not exist yet: it is new code, added at {where} ({p["rel"]}).'
                 + (f'\n{note}' if note else ''))
-    if _assign_place(root, p):
-        # hk30 (rich_3043): a template's text is what changes; long strings are not collapsed here
+    if _assign_place(root, p) or (p['name'] == MODULE and p['end'] - p['start'] < limit):
+        # hk30 (rich_3043): a template's text is what changes; long strings are not collapsed here. hf7 (Haiku,
+        # rich_3043): the same template as the module's top level was shown '... (16 lines of text) ...', and the
+        # finding could not copy its lines
         body = _code.numbered(_repo.read_lines(root, p['rel']), p['start'], p['end'], collapse=())
     else:
         body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit)
@@ -1695,12 +1697,16 @@ def _collapse(s):
 HEADER_LINE = re.compile(r'^\s*(@|(async\s+)?def\s|class\s|"""|\'\'\'|\)\s*(->.*)?:\s*$)')
 
 
-def _in_place(root, p, text):
+def _in_place(root, p, text, body_only=False):
     """Whether a line of text (whitespace aside, at least 4 characters) is in the place's body. Its signature,
     decorators and docstring quotes do not count: vf7 lab (rich_3934) gave 'def stop(self) -> None:' as the line that
     already does what the requirement says."""
     lines = _repo.read_lines(root, p['rel'])
     start = p['start']
+    if not body_only:
+        # hf7 (Haiku, fastapi_14372): the fault was the @dataclass decorator; a finding may name any line of the place
+        return any(len(l) >= 4 and l in _collapse(''.join(lines[start - 1:p['end']]))
+                   for l in (_collapse(_args.clean(x)).strip('`') for x in re.split(r'\n|\\n', text or '')))
     node = next((n for n in ast.walk(_code.parse(''.join(lines)) or ast.Module(body=[], type_ignores=[]))
                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.lineno >= p['start']
                  and n.end_lineno == p['end']), None)
@@ -1850,7 +1856,7 @@ def specify(root, st, args):
     first = _args.clean(items[0])
     if step.NO_CHANGE.match(first or '') and not p.get('edited') and not p.get('new') and DIAGNOSE:
         evidence = ' '.join(items[1:]).strip()
-        if not _in_place(root, p, evidence) and p.get('nc_refused', 0) < NC_REFUSALS:
+        if not _in_place(root, p, evidence, body_only=True) and p.get('nc_refused', 0) < NC_REFUSALS:
             p['nc_refused'] = p.get('nc_refused', 0) + 1
             what = 'names no line' if not evidence else f'names a line that is not in {p["handle"]}'
             return (f"This 'no change' {what}. 'no change' means a line of {p['handle']} already does what {ids} "
