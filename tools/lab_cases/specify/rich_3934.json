@@ -1,0 +1,7 @@
+{"task": "rich_3934",
+ "note": "vf3/vf4: the specifier answered 'no change' on Live (reference: Live.stop, LiveRender.__init__); empty patch",
+ "agents": [
+  {"agent": "requirements", "calls": [["req.py", ["empty live", "empty live"]]]},
+  {"agent": "locate1", "calls": [["locate1.py", ["open"]], ["locate1.py", ["Live"]]]},
+  {"agent": "specify1"}
+ ]}
