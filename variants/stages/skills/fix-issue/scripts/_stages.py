@@ -1674,6 +1674,33 @@ def _assign_place(root, p):
 
 
 NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
+NXT_DIAG = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<the lines that make "
+            "it fail>', '<what they do now>'] or ['no change', '<the line that already does it>'] or ['missing', "
+            "'<name of other code>', '<what must change there>']")
+
+
+# vf6 lab (the 31B, step by step): 15 of 16 specify decisions were cut at the thinking budget, and 8 of those were
+# 'no change' or no call; the thought restarts from nothing each turn (earlier thoughts are not sent back) and 43% of
+# it copied code. The decision is split: first the lines that make the requirement fail and what they do now (kept
+# in the conversation as the call's own text), then what they must do; 'no change' names the line that already does
+# what the requirement says.
+DIAGNOSE = True
+NC_REFUSALS = 2          # 'no change' without a line of the place is refused at most this many times
+
+
+def _collapse(s):
+    return re.sub(r'\s+', ' ', s or '').strip()
+
+
+def _in_place(root, p, text):
+    """Whether a line of text (whitespace aside, at least 4 characters) is in the place's code."""
+    code = _collapse(''.join(_repo.read_lines(root, p['rel'])[p['start'] - 1:p['end']]))
+    lines = [_collapse(_args.clean(l)).strip('`') for l in re.split(r'\n|\\n', text or '')]
+    return any(len(l) >= 4 and l in code for l in lines)
+
+
+def _diagnosing(p):
+    return DIAGNOSE and not p.get('new') and not p.get('diag') and not p.get('edited')
 
 
 def specify(root, st, args):
@@ -1685,6 +1712,9 @@ def specify(root, st, args):
     items = [a for a in args if a and a.strip()]
     nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<one sentence: what "
            "changes here>'] or ['no change'] or ['missing', '<name of other code>', '<what must change there>']")
+    if DIAGNOSE and not p.get('new') and not p.get('edited'):
+        # the NEXT agrees with the rule that 'no change' names the line that already does it (B12)
+        nxt = nxt.replace("['no change']", "['no change', '<the line that already does it>']")
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
         view = [_place_view(root, st, p, limit=150),
@@ -1727,6 +1757,9 @@ def specify(root, st, args):
                 # gm11 (the 31B): 'no change' for a place sent back by the review left the edit that broke a test
                 view.append(f'Its edit is in the patch now. Send the sentence for {p["handle"]} as it must end up, or '
                             "['no change'] to undo its edit and keep its original code.")
+        if p.get('diag'):
+            view.append(f'Your finding: these lines make it fail:\n{p["diag"]["lines"]}\nWhat they do now: '
+                        f'{p["diag"]["now"]}')
         ids = ', '.join(r['id'] for r in reqs) or 'its requirements'
         # B1 (gm4-gm9, gk14b, gk15): the numbered view was the anchor the sentences used ("after line 56", "line
         # 103"), then refused; the specifier names code by its text, so it reads it without numbers
@@ -1736,7 +1769,16 @@ def specify(root, st, args):
         text = re.sub(r' \(line \d+\):', ':', text)     # the related code's link lines (B1)
         text = re.sub(r'\(lines (\d+)-(\d+) not shown\)', lambda m: f'({int(m.group(2)) - int(m.group(1)) + 1} lines not '
                       'shown)', text)
-        return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if ',' in ids or ids == 'its requirements' else 'holds') + ': one '
+        plural = ',' in ids or ids == 'its requirements'
+        if _diagnosing(p):
+            return (text + f'\n\n{ids} {"do" if plural else "does"} not hold in the current code: that is why the issue '
+                    f'exists, and {p["handle"]} was located as where {"they are" if plural else "it is"} decided. First '
+                    f'find what breaks {ids} here: send the lines of {p["handle"]} that make {ids} fail, copied as '
+                    'written above, and what they do now. Your next call then says what they must do instead. If this '
+                    f"place already does what {ids} {'say' if plural else 'says'}, send ['no change', '<the line that "
+                    "already does it>']; if the change belongs in other code (a function this place calls, for "
+                    "example), send ['missing', '<its name>', '<what must change there>'].\n\n" + NXT_DIAG)
+        return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if plural else 'holds') + ': one '
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change. '
                 'If the change belongs in other code (a function this place calls, for example), name that code with '
                 "'missing': it joins the plan and is specified first, then this place again."
@@ -1786,6 +1828,29 @@ def specify(root, st, args):
         p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
         _reset_asks(st, 'specify', p)
         return (f'{name} goes into the plan: it is specified next, then {p["handle"]} again.\n\n{DONE}')
+    ids = ', '.join(p['reqs']) or 'the requirements'
+    first = _args.clean(items[0])
+    if step.NO_CHANGE.match(first or '') and not p.get('edited') and not p.get('new') and DIAGNOSE:
+        evidence = ' '.join(items[1:]).strip()
+        if not _in_place(root, p, evidence) and p.get('nc_refused', 0) < NC_REFUSALS:
+            p['nc_refused'] = p.get('nc_refused', 0) + 1
+            what = 'names no line' if not evidence else f'names a line that is not in {p["handle"]}'
+            return (f"This 'no change' {what}. 'no change' means a line of {p['handle']} already does what {ids} "
+                    f"says: send it with that line copied as written, ['no change', '<that line>']. If no line does "
+                    f'it, {ids} fails here: send the lines that make it fail and what they do now.\n\n'
+                    + (NXT_DIAG if _diagnosing(p) else nxt))
+        items = ['no change']
+    elif _diagnosing(p) and len(items) >= 2:
+        lines, now = items[0], ' '.join(items[1:]).strip()
+        if not _in_place(root, p, lines) and p.get('diag_refused', 0) < NC_REFUSALS:
+            p['diag_refused'] = p.get('diag_refused', 0) + 1
+            return (f'None of these lines is in {p["handle"]} as written: copy one or more lines from its code above, '
+                    'then say what they do now.\n\n' + NXT_DIAG)
+        p['diag'] = {'lines': lines.strip()[:800], 'now': now[:400]}
+        return (f'Saved: these lines of {p["handle"]} make {ids} fail:\n{p["diag"]["lines"]}\nWhat they do now: '
+                f'{p["diag"]["now"]}\n\nNow write what {p["handle"]} must do instead so that {ids} '
+                f"{'hold' if ',' in ids else 'holds'}: one sentence, complete in itself (its editor sees only this "
+                'place), with the exact names.\n\n' + nxt)
     sentence = ' '.join(x.strip() for x in items)
     if re.search(r'\blines?\s+\d+', sentence, re.I) and not p.get('ln_warned'):
         # gm4-gm9 (Gemma): "After line 56, add ...", "Replace line 154 ..."; numbers move after each edit and the editor

@@ -202,3 +202,64 @@ The first four cases ran with an inflated clock (1-3.5 minutes used at the start
 | Controls | 3 correct, 1 partial | to watch |
 
 **The two empty plans have the same cause.** The thought is cut at the budget just as the reasoning reaches the fault, and the call after a cut thought is "no change". Of the 16 decisions of round 1, 15 had their thought cut at the cap; 8 of those 15 were "no change" or no call. The only one that finished below the cap (rich_3905, 492 tokens) was right.
+
+## Fix 2: the decision split in two (vf7, 10-17; tested with the reasoning budget at 1024, Kaggle's)
+
+Why each decision needed so much reasoning (21 decision turns of rounds 1-2):
+- 43% of the thought's characters were code copied from the window;
+- "Wait" came 1.6 times per turn and a re-read 0.9 times;
+- the model ran code by hand, character by character;
+- earlier thoughts are not sent back, so each turn starts from nothing.
+
+The model fills whatever budget it gets: at 1024 it traced longer examples and was cut again (1,063 tokens).
+
+**The three changes** (`_stages.py` `specify`, the specify instruction in `tools/make_fast.py`):
+1. **The decision is split in two calls.**
+   - First `['<the lines that make it fail>', '<what they do now>']`. The lines must be in the place, whitespace aside; this is refused at most twice.
+   - Then the sentence, after an answer that repeats that finding.
+   - The finding stays in the conversation as the call's own text, and is shown again if the place is reopened.
+2. **The framing.** The window says that the requirements do not hold in the current code (that is why the issue exists) and asks for what breaks them. Before, the model spent its budget showing the code already worked ("That is already handled", 4 times in one session).
+3. **'no change' names the line that already does what the requirement says**, found in the place. Without it, it is refused at most twice. The NEXT line shows that form.
+
+New places and places whose edit is in the patch keep the old single call.
+
+| Case | Turns | Grade | vf6 (same budget) |
+|---|---|---|---|
+| fastapi_14419 | 6 | partial: the diagnosis of `cache_key` is the reference's ("always includes security_scopes … regardless of whether the dependency or its sub-dependencies use scopes"); the sentences key on empty scopes and lift scopes to the parent | empty (round 1) and empty (round 2, unfinished) |
+| rich_3180 | 5 | wrong: the diagnosis cites the reversed loop, but the sentence keeps "the reversed processing order" | empty / correct after the empty-patch warning |
+| fastapi_14361 (control) | 3 | correct | correct |
+| rich_3905 (control) | 3 | correct | correct |
+| fastapi_5624 (control) | 3 | **correct**: the diagnosis names the reference cause ("leak into others at the same level") | partial |
+| fastapi_11194 (control) | 3 | correct | correct |
+
+**Result:**
+- 0 empty plans (vf6: 3 of 4 runs of these two cases);
+- 0 system faults and 0 turns without a call;
+- the controls went from 3 correct and 1 partial to 4 correct.
+- **The cost is one more call per place.** Easy places do not reach the cap (329-835 tokens a call). Hard ones still are cut in every call (about 1,100 tokens), but the cut call now carries a finding or a sentence, not "no change".
+
+Decision tokens and time at Kaggle's speed (about 35 tokens/s):
+
+| Case | Decision turns | Tokens | Time |
+|---|---|---|---|
+| fastapi_14419 | 5 | 5,646 | about 161 s |
+| rich_3180 | 4 | 4,804 | about 137 s |
+| controls | 2 each | 1,008-2,416 | 29-69 s |
+
+The hard cases are too slow for the 5-minute budget with specify alone taking 2-3 minutes. That is the open problem.
+
+What still fails is understanding, not the process: in rich_3180 the model found the right lines and then kept the fault in its own sentence.
+
+### Checklist (`docs/llm_checklist.md`)
+
+| Item | Effect | Why |
+|---|---|---|
+| B9 deciding / exploring | closer | Each call asks for one concrete thing; "no change" is no longer free |
+| W7 thinking before the call | closer | The finding written in one call is read before the next; the thought no longer has to hold both steps |
+| P3 positive rule with its reason | closer | "R1 does not hold in the current code: that is why the issue exists" |
+| B11 trust in output | closer | A "no change" needs a line that is in the place (checked) |
+| B2 copying text | farther | The model copies the failing lines. Reason: they anchor the finding; any one matching line is accepted, whitespace aside |
+| B8 forms | farther, one form | The finding call. Reason: 15 of 16 decisions cut at the budget, 8 of them "no change" or no call |
+| B10 budget / time | farther | One more call per place: about 30 s at Kaggle's speed for an easy place |
+
+**Why it is generic:** every issue describes behaviour the current code does not have. The checks compare text with the place's own lines. Nothing depends on a repository or a task.
