@@ -23,6 +23,14 @@ FILE_TIMEOUT = 60      # seconds per test group (groups run at once share it; on
 BASE_TIMEOUT = 60      # the same groups on the original code
 MAP_TIMEOUT = 150      # the once-per-task run of the whole suite on the original code that maps functions to tests
 TEST_TIMEOUT = 15      # seconds per test, when pytest-timeout is installed (a hanging test then costs 15 s, not 60)
+# The latest moment any test run of this script call may end (time.time()), or None. vf7 on Kaggle (rich_3772): an
+# edit's checks ran the groups one after another, 60 s each, past the 5-minute stop; the harness cannot end a tool
+# call, so the task took 604 s of the competition's 12 h. The caller sets it from the task's remaining time.
+DEADLINE = None
+
+
+def _cap(t):
+    return min(t, DEADLINE) if DEADLINE else t
 MEM_LIMIT = 3 << 30    # address space of one pytest process (the sandbox has 4 GiB)
 MAX_FILES = 3
 MAX_IDS = 40           # tests of one file taken from the call map
@@ -397,8 +405,10 @@ def _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial):
     {id: o}, messages {id: (marked line, E lines)}, hits {id: (lines, calls)}, timed out, exit code, output."""
     before = _untracked(cwd)
     results, procs = [], []
-    deadline = time.time() + timeout
+    deadline = _cap(time.time() + timeout)
     for k, group in enumerate(targets):
+        if DEADLINE and time.time() >= DEADLINE:
+            break                       # no time left: the remaining groups are not started
         fd, outcomes = tempfile.mkstemp(prefix='swe_outcomes_', suffix='.jsonl')
         os.close(fd)
         out = tempfile.TemporaryFile('w+')
@@ -408,7 +418,7 @@ def _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial):
                              stderr=subprocess.STDOUT, text=True, preexec_fn=_limit_memory)
         procs.append((group, p, out, outcomes))
         if serial:
-            deadline = time.time() + timeout
+            deadline = _cap(time.time() + timeout)
             try:
                 p.wait(timeout=max(0.1, deadline - time.time()))
             except subprocess.TimeoutExpired:
@@ -657,6 +667,8 @@ def check(root, changed, renamed=(), cover=None, undo=None, use_map=True):
     the changed statements (cover: {rel: lines}; a false OK is worse than none: Reflexion's 16.3% false positives,
     Olausson). A new failure of a test that uses a name the statement renames does not count: the hidden tests
     replace such tests."""
+    if DEADLINE and time.time() > DEADLINE - 3:
+        return 'UNCHECKED', 'not checked: the time is nearly up', []
     broken_imports = import_check(root, list(changed))
     if broken_imports:
         detail = '\n'.join(f'  importing {m} fails: {err}' for m, err in broken_imports[:3])

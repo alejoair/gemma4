@@ -3095,6 +3095,8 @@ def main_fast(stage, worker, argv):
               'answered.')
         return
     st = _state.load('stages') or _new()
+    # the tests this call runs end before the task's time does (vf7 on Kaggle, rich_3772: 604 s)
+    _tests.DEADLINE = time.time() + max(5, _left(st) - 10)
     args = _args.split_single_quoted(list(argv))
     first = _args.clean(args[0]).lower() if args and args[0] else ''
     try:
