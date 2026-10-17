@@ -188,3 +188,16 @@ specify stage 117 s, edit 39 s. 8 of the 30 tasks never reached edit.
 
 The Haiku runs showed neither fault: Haiku stops when told to. Only the model run of the competition's model showed
 them.
+
+## vf3 on Kaggle (10-17): 7/30
+
+7/30 judged, against 5/30 for V25 on the same tasks. 7 tasks stopped at 5 minutes (V25: 18), the mean was 243 s, and 27
+of 30 reached edit. Calls after "reply done" fell from 161 to 80. 54 of those came from one fault, in the requirements
+stage:
+- Gemma called `req.py` with a shell command (`grep -r "netrc" src/requests`).
+- The single item was saved as requirement R1, because one item was read as a requirement without its quote.
+- Every later attempt to send the real requirements was answered "Your part is already finished".
+
+Fixed in vf4:
+- a single item, or an item that is a command, is not a requirement: the answer gives the pair form;
+- the requirements agent may replace its requirements while no requirement is located yet.
