@@ -92,9 +92,20 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     if sig_end is not None and sig_end - start + 1 > 8 and not (show and show[0] <= sig_end):
         # a long signature (FastAPI's Annotated[..., Doc(...)] parameters): its first line, then the body, so that
         # the window shows the code that runs (V10 audit #8: windows showed Doc texts and hid the body)
-        out = [_code.numbered(lines, start, start, collapse=collapse),
-               f'      ... (the parameters, lines {start + 1}-{sig_end}, not shown) ...']
-        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2, show=show)
+        # vf3 audit (fastapi_13713): the hidden parameters were what the change needed (a new parameter), and the
+        # editor guessed the lines; the signature's last lines (where a parameter is added) and the hidden lines that
+        # hold the requirement's terms are shown
+        terms = [t for t in (focus_terms or {}) if len(t) > 3]
+        keep = [i for i in range(start + 1, sig_end - 1)
+                if terms and any(t in lines[i - 1].lower() for t in terms)][:6] + list(range(max(start + 1, sig_end - 1),
+                                                                                         sig_end + 1))
+        out, prev = [_code.numbered(lines, start, start, collapse=collapse)], start
+        for i in keep:
+            if i > prev + 1:
+                out.append(f'      ... ({i - prev - 1} parameter lines not shown) ...')
+            out.append(_code.numbered(lines, i, i, collapse=collapse))
+            prev = i
+        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2 - len(keep), show=show)
         return '\n'.join(out + [body])
     width = limit - size(start, head)
     toks = focus_terms or {}

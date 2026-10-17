@@ -148,6 +148,14 @@ def _progress(root, st):
 
 # ------------------------------------------------------------------------------------------------------ routing
 
+def _reset_asks(st, stage, p):
+    """Every ask count of a place for a stage starts again. vf3 audit (fastapi_14361): after 'missing' the reset used
+    another key than the fast build's claims, the third ask was refused, and the place got the requirement's text as
+    its sentence without being specified again."""
+    for k in [k for k in st['asked'] if k.startswith(f'{stage} {_key(p)} ')]:
+        st['asked'].pop(k, None)
+
+
 def _ask(st, key):
     """True while the tool for key may be asked again (MAX_ASKS); counts the ask."""
     n = st['asked'].get(key, 0)
@@ -404,7 +412,13 @@ def requirements(root, st, args):
         items = [_sentence(a) for a in args if a and a.strip()]
     form = ("Send the requirements: ['<a sentence copied from the issue>', '<what must happen: the situation and the "
             "expected result, with the exact names>', ...], one pair per requirement, 1 to 6 pairs.")
-    if st['names'] is None and not _looks_like_requirements(items):
+    lookup = not _looks_like_requirements(items) and (st['names'] is None or (
+        items and all(len(x.split()) <= 4 for x in items) and not any(COMMAND.match(x) for x in items)
+        and st.get('lookups', 0) < 3))
+    if lookup:
+        # vf3 audit (rich_3180, rich_3772): a second names call (['wrap', 'fold']) was saved as requirement R1 because
+        # it came second; a call is read by its content: short names are a lookup, pairs with sentences are requirements
+        st['lookups'] = st.get('lookups', 0) + 1
         if any(COMMAND.match(x) for x in items):
             items = []          # vf3: a shell command is not a name (req.py runs no commands)
         if not items:
@@ -437,6 +451,12 @@ def requirements(root, st, args):
             if found and homes:
                 lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
                              'import it from there)')
+            mod = _module_of(root, table, name) if not found and not homes else None
+            if mod:
+                # vf3 audit: a file path or module was called "a parameter, attribute or variable"
+                rel, defs = mod
+                lines.append(f'  {name}: the module {rel}; it defines ' + (', '.join(defs[:12]) or 'no function or class'))
+                continue
             owners = _param_owners(table, name) if not found and not homes else []
             assigned = step.assignment(root, table, name) if not found and not homes and not owners and \
                 re.fullmatch(r'[A-Za-z_]\w*', name) else None
@@ -456,7 +476,7 @@ def requirements(root, st, args):
                                               'attribute or variable)' if name.split('.')[-1] in index.names else
                                               "not in the repository (code of the issue's own example, new code the "
                                               'issue asks for, or library code)'))
-        st['names'] = names
+        st['names'] = list(dict.fromkeys((st.get('names') or []) + names))
         return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + form + '\n\n'
                 "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<sentence from "
                 "the issue>', '<what must happen>', ...]")
@@ -507,6 +527,22 @@ def requirements(root, st, args):
     note = ('\nLeft out, because what must happen repeats the issue\'s sentence (no situation and result): ' +
             '; '.join(f'"{r["what"][:80]}"' for r in dropped)) if dropped else ''
     return f'Saved {len(reqs)} requirements:\n{listed}{note}\n\n{DONE}'
+
+
+def _module_of(root, table, name):
+    """(rel, top-level names) when name is a file of the repository or a dotted module path, else None."""
+    cand = [name] if name.endswith('.py') or '/' in name else []
+    if re.fullmatch(r'[A-Za-z_][\w.]*', name) and '.' in name:
+        base = name.replace('.', '/')
+        cand += [base + '.py', base + '/__init__.py']
+    for c in cand:
+        rel = next((r for r in table.syms if r == c or r.endswith('/' + c)), None)
+        if rel:
+            tree = _code.parse(_repo.read_text(root, rel))
+            assigned = [t.id for n in (tree.body if tree else []) if isinstance(n, (ast.Assign, ast.AnnAssign))
+                        for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)]
+            return rel, [x.name for x in table.syms[rel] if '.' not in x.name] + assigned[:6]
+    return None
 
 
 def _param_owners(table, name):
@@ -991,7 +1027,8 @@ def locate(root, st, args):
                                                           for h in hits[:8]) + '\n\nChoose from these or the list '
                         'before.\n\n' + nxt)
             news = [c['handle'] for c in cands if c.get('new')]
-            return ('Nothing in the repository holds that name or text' + (
+            return ('No Python file of the repository holds that name or text (only .py files are searched: '
+                    'configuration and data files are not places of a fix here)' + (
                 f' yet: it is new code, and the list has where it goes ({", ".join(news)}): choose it.' if news else
                 '. Choose from the list.') + f'\n\n{nxt}')
     if not found:
@@ -1012,7 +1049,8 @@ def locate(root, st, args):
                 found.append(res[0])
     st['located'][rid] = [{'rel': c['rel'], 'name': c['name'], 'start': c['start'], 'end': c['end'],
                            **({'new': True, 'owner': c['owner']} if c.get('new') else {})} for c in found[:3]]
-    note = (' Not found in the repository, so not chosen: ' + ', '.join(lost) + '.') if lost else ''
+    note = (f' {len(lost)} other name{"s" if len(lost) > 1 else ""} matched no function or class, so '
+            f'{"they were" if len(lost) > 1 else "it was"} not chosen.') if lost else ''
     return (f'{rid} is decided at: ' + ', '.join(c.get('handle') or c['name'] for c in found[:3]) + '.' + note
             + '\n\n' + DONE)
 
@@ -1720,8 +1758,12 @@ def specify(root, st, args):
         if (p.get('note') or '').startswith('the specifier of'):
             # V23 (fastapi_14986): get_openapi named OpenAPI, which named Server, then both were 'no change' (170 s);
             # code named by a specifier names no further code
-            return (f'{p["handle"]} was itself named for this change, so it names no further code: send what changes '
-                    "here, or ['no change'].\n\n" + nxt)
+            # vf3 audit (fastapi_14361): the rule came without its reason while NEXT still offered 'missing' (P3, B12)
+            return (f'{p["handle"]} was itself named for this change by another specifier, and code named that way '
+                    'names no further code: each step down the calls costs about a minute of the 5-minute budget, so '
+                    f"the fix stays one step from where the requirement was located. Send what changes in {p['handle']}, "
+                    "or ['no change'].\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path specify.py "
+                    "and args ['<one sentence: what changes here>'] or ['no change']")
         if q is not None and q.get('status') in ('nochange', 'done', 'failed'):
             # V23 (rich_3521): Segment._split_cells had been specified 'no change'; the specifier of split_cells named
             # it for the change three times and was refused each time
@@ -1742,7 +1784,7 @@ def specify(root, st, args):
                               f'{what[:300] or "(not said)"}',
                               list(p['reqs']), _key(p)])
         p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
-        st['asked'].pop(f'specify {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)
+        _reset_asks(st, 'specify', p)
         return (f'{name} goes into the plan: it is specified next, then {p["handle"]} again.\n\n{DONE}')
     sentence = ' '.join(x.strip() for x in items)
     if re.search(r'\blines?\s+\d+', sentence, re.I) and not p.get('ln_warned'):
@@ -1754,6 +1796,15 @@ def specify(root, st, args):
                 "`return self.router.on_event(event_type)` with ...'. Send the sentence again.\n\n" + nxt)
     if len(sentence) > MAX_SENTENCE:
         return f'Too long ({len(sentence)} characters, at most {MAX_SENTENCE}). Send it shorter.\n\n{nxt}'
+    if step.NO_CHANGE.match(sentence) and FAST and not p.get('nc_warned') and not any(
+            q.get('sentence') not in ('no change',) and q is not p for q in st['plan']):
+        # vf3 audit (rich_4075, rich_4076): every place got 'no change' and the patch stayed empty; this answer is the
+        # last that could carry a change, a new fact, said once (F9; not a bare 'are you sure', F4)
+        p['nc_warned'] = True
+        ids = ', '.join(p['reqs']) or 'the requirements'
+        return (f'With this, no place of the fix changes: the patch stays empty and {ids} would not be met. If '
+                f"{p['handle']} must change for {ids}, send what changes here; if the change belongs elsewhere, send "
+                "['no change'] again.\n\n" + nxt)
     if step.NO_CHANGE.match(sentence):
         p['sentence'], p['status'] = 'no change', 'nochange'
         if p.get('edited'):
@@ -1897,6 +1948,9 @@ def edit(root, st, args):
     if p is None:
         return 'Nothing to edit now.\n\n' + DONE
     _refresh(root, p)
+    if p.get('coupled_by'):
+        return (f'{p["handle"]} was changed together with {p["coupled_by"]} in one edit (its diff):\n'
+                + (step._patch_here(root, p) or '')[:1500] + f'\nNothing more is needed for it.\n\n{DONE}')
     items = [a for a in args if a and a.strip()]
     assign = _assign_place(root, p)
     what = ('top-level code of ' + p['rel'] if p['name'] == MODULE else f'assignment {p["name"]} = ...' if assign
@@ -1906,6 +1960,13 @@ def edit(root, st, args):
            "['replace', '<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this "
            "change needs>']")
     first = _args.clean(items[0]).lower() if items else ''
+    long_place = p['end'] - p['start'] + 1 > LONG_EDIT and not p.get('new')
+    if long_place:
+        # vf3 audit (fastapi_13713): after the first answer a long place was offered the whole-definition form the
+        # window forbids (B12); one form for every answer of the place, every group of lines in one call
+        nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['replace', "
+               "'<old lines>', '<new lines>', ...] (every group of lines in one call), or ['no change'], or "
+               "['missing', '<name of other code this change needs>']")
     # gm9 (Gemma): ['open', 'FastAPI.setup_openapi'] was read as code to apply; a first item 'open' opens the place
     if not items or first in ('open', 'start') or (first == p['handle'].lower() and len(items) == 1):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
@@ -1925,13 +1986,12 @@ def edit(root, st, args):
             # g1 (fastapi_9555, the local 31B): the whole 140-line solve_dependencies, sent again after two replace
             # edits, came out malformed three times (2 minutes, about 2,100 tokens each)
             view.append(f'The change: {_brief(p["sentence"])}')
-            view.append(f"This place is long ({length} lines): change only the lines that change, with ['replace', "
-                        "'<the old lines, as shown>', '<the new lines>'], one call per group "
-                        "of lines; the rest stays as it is. A new import can open the new lines, not indented: it is moved "
-                        "to the top of the file.")
-            nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['replace', "
-                   "'<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this change "
-                   "needs>']")
+            # vf3 audit (rich_3718, fastapi_13713): "one call per group of lines" while the first accepted replace
+            # closed the place: half of each change was lost
+            view.append(f"This place is long ({length} lines): change only the lines that change, and send every "
+                        "group of lines this change needs in one call: ['replace', '<old lines 1, as shown>', '<new "
+                        "lines 1>', '<old lines 2>', '<new lines 2>', ...]; the rest stays as it is. A new import can "
+                        "open the new lines, not indented: it is moved to the top of the file.")
             return '\n\n'.join(view) + '\n\n' + nxt
         # P6: the decision again just before NEXT (the views run to 7,000 characters)
         view.append(f'Send the whole new assignment {p["name"]} = ... that does this: {_brief(p["sentence"])}'
@@ -1964,9 +2024,21 @@ def edit(root, st, args):
             diffs = '\n'.join((step._patch_here(root, q) or f'{q["handle"]} is edited.')[:1500] for q in done[:2])
             return (f'{", ".join(q["handle"] for q in done)} is already changed by this fix:\n{diffs}\n'
                     f'Make the change of {p["handle"]} with that code in place.\n\n{nxt}')
+        pending = [q for n in _missing_names(items[1]) for q in [_place_by(st, n)] if q is not None and q is not p
+                   and q.get('status') in (None, 'todo')]
+        if pending and FAST:
+            # vf3 audit (fastapi_14372): 'missing' named a place already in the plan; the answer said it went into the
+            # plan before this one, and gave this place straight back (B12): the fact, and the two ways on
+            q = pending[0]
+            who = (_claims(st).get(f'edit {q["handle"]}') or _claims(st).get(f'specify {q["handle"]}'))
+            return (f'{q["handle"]} is already a place of this fix' + (f', edited now by {who}' if who else '')
+                    + (f' from its sentence: {q["sentence"]}' if q.get('sentence') not in (None, 'no change') else '')
+                    + f'. Make the change of {p["handle"]} as if {q["handle"]} is changed that way, or, when both '
+                    f'definitions are in {p["rel"]} and must change together, send the whole new definitions of both '
+                    'in one item: they are applied and checked together.\n\n' + nxt)
         st['missing'].append([_args.clean(items[1]), f'the editor of {p["handle"]} needs it: ' + ' '.join(items[2:])[:300],
                               list(p['reqs']), _key(p)])
-        st['asked'].pop(f'edit {_key(p)} {st["round"]} {p.get("respecs", 0)}', None)   # asked again after the new code
+        _reset_asks(st, 'edit', p)   # asked again after the new code
         return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
                 f'\n\n{DONE}')
     if p.get('edits', 0) >= MAX_EDITS or p.get('refused', 0) >= MAX_REFUSED:
@@ -1974,6 +2046,24 @@ def edit(root, st, args):
     # hk30 (rich_3043): sends refused before anything was applied counted as edits, and the place was given up after
     # four refusals (checklist F6: refusals stay off the failure count); they are counted apart, with a higher bound
     p['edits'] = p.get('edits', 0) + 1
+    if first == 'replace' and len(items) >= 5 and len(items) % 2 == 1:
+        # several groups of lines in one call: applied in order, all or none
+        before = _repo.read_lines(root, p['rel'])
+        groups = [(_args.code(_unescaped(items[k])), _args.code(_unescaped(items[k + 1]))) for k in range(1, len(items), 2)]
+        r = None
+        for n, (old_text, new_text) in enumerate(groups, 1):
+            res = _replace_text(root, p, old_text, new_text)
+            if not isinstance(res, str):
+                r = step._edit.apply(root, p['rel'], res[0], res[1], res[2] or 'DELETE')
+                if not r.applied:
+                    res = r.error
+            if isinstance(res, str):
+                _repo.write_lines(root, p['rel'], before)
+                _refresh(root, p)
+                _unspent(p)
+                return f'Not applied (nothing was changed): group {n} of {len(groups)}: {res}.\n\n{nxt}'
+            _refresh(root, p)
+        return _after_edit(root, st, p, r, before, [p['name'].split('.')[-1]], nxt)
     if first == 'replace' and len(items) >= 2:
         before = _repo.read_lines(root, p['rel'])
         items = [items[0]] + [_unescaped(x) for x in items[1:]]
@@ -2236,15 +2326,31 @@ def _after_edit(root, st, p, r, before, names, nxt):
                              'pass on the original code. Those tests show behaviour the issue keeps: write a change '
                              'that meets the requirement and keeps them passing (if the requirement, as written, '
                              'contradicts them, meet the issue\'s own sentence instead):\n' + detail[:900])
-                return (f'Undone: {why}:\n{detail}\n{p["handle"]} goes '
-                        f'back to be specified again, with these tests.\n\n{DONE}')
+                cause = 'these tests' if why.startswith('the edit breaks') else 'this error'
+                later = 'the repair agent writes its sentence again' if FAST else 'it goes back to be specified again'
+                return (f'Undone twice: {why}:\n{detail}\nFor {p["handle"]}, {later}, with {cause}; nothing more is '
+                        f'needed from you for it.\n\n{DONE}')
             p['status'] = 'failed'
             return (f'Undone: {why}:\n{detail}\nThat was the last try for '
                     f'{p["handle"]}: it keeps its code.\n\n{DONE}')
+        same = [q for q in st['plan'] if q is not p and q['rel'] == p['rel'] and q.get('status') in (None, 'todo')]
+        pair = (f'\n{p["rel"]} also holds {same[0]["handle"]}, a place of this fix not changed yet: if the two must '
+                'change together, send the whole new definitions of both in one item (they are applied and checked '
+                'together).') if same and FAST else ''
+        fix = 'corrected lines' if p['end'] - p['start'] + 1 > LONG_EDIT and not p.get('new') else 'a corrected definition'
         return (f'Undone: {why}, so {p["handle"]} is back as it was:\n'
-                f'{detail}\nSend a corrected definition that fixes this.\n\n{nxt}')
+                f'{detail}{pair}\nSend {fix} that fixes this.\n\n{nxt}')
     p['status'] = 'done'
     p['edited'] = True
+    for q in st['plan']:
+        if q is not p and q['rel'] == p['rel'] and q.get('status') in (None, 'todo') and \
+                q['name'].split('.')[-1] in set(names) and not q.get('new'):
+            # the whole new definitions of two places of one file, sent together (coupled code: a base class and its
+            # subclass, fastapi_14372)
+            q['status'], q['edited'], q['coupled_by'] = 'done', True, p['handle']
+            q['sentence'] = q.get('sentence') or f'changed together with {p["handle"]}'
+            for k in [k for k in _claims(st) if k.endswith(' ' + q['handle'])]:
+                _claims(st).pop(k, None)
     if p.get('new'):
         p['new'] = False
         p['name'] = (p['owner'] + '.' if p.get('owner') not in (None, MODULE) else '') + p['name'].split('.')[-1]
@@ -2509,7 +2615,8 @@ def review(root, st, args):
                     '\nSo the patch does not do it yet: name the place that is wrong or missing and what is missing '
                     "there: ['not done', '<place>', '<what is missing>'].\n\n" + nxt)
         reg = st.get('reg') or {}
-        if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid):
+        if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid) and not FAST:
+            # (the fast build shows these failures in the open view already: a second ask adds no fact, F4)
             st.setdefault('reg_refused', {})[rid] = True
             return ('The patch breaks existing tests that pass on the original code:\n' + reg['detail'][:700] +
                     "\nIf they check behaviour the issue keeps, the patch is not done: name the place that is wrong "
@@ -2713,6 +2820,27 @@ def _claim(root, st, stage, worker):
             if any(st['located'].values()):
                 _make_plan(root, st, [])
         _add_missing(root, st)
+    if stage == 'repair':
+        # vf3 audit (fastapi_14372, fastapi_13713): repair wrote a sentence and then the code from it, two calls per
+        # place, and nothing was applied when it started late; the review's finding is the sentence, and the editor
+        # writes the code at once (W2, B10)
+        for p in st['plan']:
+            if p.get('sentence') is None and str(p.get('note') or '').startswith('the review of'):
+                old = p.get('old_sentence') if p.get('old_sentence') not in (None, 'no change') else ''
+                p['sentence'] = ((old + ' Also: ' if old else '') + 'what the review found missing here: '
+                                 + p['note'].split(' says: ', 1)[-1])[:MAX_SENTENCE]
+                p['status'] = 'todo'
+                p['fails'], p['edits'], p['refused'] = 0, 0, 0
+        if not _patch_files(root) and _left(st) > REVIEW_LEFT_S and st['plan'] and not st.get('empty_retry'):
+            # vf3 audit: 2 of 8 tasks submitted an empty patch with 2.5 min left, every place kept as 'no change'
+            q = _main_place(st) or st['plan'][0]
+            st['empty_retry'] = True
+            if q.get('status') in ('nochange', 'failed', None):
+                q['sentence'] = ('The patch is empty: every place kept its code, but the issue asks for a change. Make '
+                                 'the change here so that this holds: ' + '; '.join(_req(st, rid)['what'] for rid in
+                                                                                     q['reqs'] if _req(st, rid)))[:MAX_SENTENCE]
+                q['status'] = 'todo'
+                q['fails'], q['edits'], q['refused'] = 0, 0, 0
     if stage in ('specify', 'repair'):
         for p in st['plan']:
             if p.get('sentence') is not None or _claimed(st, 'specify', p['handle'], worker):
@@ -2774,6 +2902,66 @@ IDLE = {'requirements': 'The requirements are already saved.',
         'repair': 'Nothing is left to change.'}
 
 
+LATER = {'requirements': 'the locate agents find the code for each of them',
+         'locate': 'the specify agents write what changes at each place',
+         'specify': 'the edit agents change the code from each sentence',
+         'edit': 'the review checks the patch against every requirement, and the repair agent changes what is still '
+                 'missing',
+         'review': 'the repair agent changes what the review found missing',
+         'repair': 'the patch is submitted'}
+
+
+def _summary(st, handler, target, body):
+    """One line of what a worker did with an item, from the state (not the answer's first line)."""
+    if handler == 'specify':
+        q = _place_by(st, target)
+        if q is not None:
+            return f'{q["handle"]}: ' + (f'sentence "{q["sentence"][:140]}"' if q.get('sentence') not in (None, 'no change')
+                                         else 'no change' if q.get('sentence') == 'no change' else 'sent back for other code')
+    if handler == 'edit':
+        q = _place_by(st, target)
+        if q is not None:
+            return f'{q["handle"]}: ' + {'done': 'edited', 'failed': 'its edits were undone', 'nochange': 'kept its code'
+                                         }.get(q.get('status'), 'specified again first')
+    if handler == 'locate':
+        return f'{target}: located at ' + ', '.join(c['name'] for c in st['located'].get(target, [])) if st['located'].get(target) \
+            else f'{target}: located'
+    if handler == 'review':
+        return f'{target}: ' + (st['reviews'].get(target) or {}).get('verdict', 'reviewed')
+    if handler == 'requirements':
+        return 'the requirements ' + '; '.join(f'{r["id"]}: {r["what"][:140]}' for r in st['reqs'])
+    return f'{target}: ' + (body.split('\n')[0][:140] if body else 'done')
+
+
+def _part_done(st, stage, worker):
+    """The end of a worker's part, with what it did and what comes next (vf3 audit: a bare 'Your part is done' left
+    specifiers doubting their result; 3 of 9 called 24-96 s more while the stage waited for them)."""
+    did = [d for d in st.get('wfinished', {}).get(worker, [])]
+    recap = ('You finished: ' + '; '.join(d[:200] for d in did[-4:]) + '. ') if did else ''
+    final = ('until the locate agents start, sending the pairs again replaces them' if stage == 'requirements'
+             else 'what you saved is final')
+    return (f'Your part is done. {recap}Next, {LATER.get(stage, "the next agents go on")}; {final}, so nothing more is '
+            f'needed from you.\n\n{FAST_DONE}')
+
+
+def _finished(st, stage, done_before):
+    """The answer to a worker that calls again after its part ended. vf3 audit: 'Your part is already finished: the
+    issue: Saved 1 requirements:.' hid what was saved and why stopping is safe; workers that believed their part
+    incomplete called 3 to 12 more times (F9, F7). The fact (this call was not applied), what was done, what happens
+    next, and for the requirements how to replace them."""
+    if stage == 'requirements' and st['reqs']:
+        done = 'the requirements saved are ' + '; '.join(f'{r["id"]}: {r["what"][:160]}' for r in st['reqs'])
+        extra = (' Sending the pairs again replaces them while no code is located yet; replying done hands them on.'
+                 if not st['located'] else '')
+    else:
+        done = 'you finished ' + '; '.join(d[:200] for d in done_before[-4:])
+        extra = (' Sending other names replaces your last choice until the specify stage starts.'
+                 if stage == 'locate' and not st['scope_done'] else '')
+    return (f'This call was not applied: your part is finished ({done}).{extra} Next, {LATER.get(stage, "the next agents go on")}, '
+            f'so nothing more is needed from you (time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s).\n\n'
+            + FAST_DONE)
+
+
 def _idle(st, stage, worker):
     """The answer to a worker with nothing to take. vf1 (Gemma, fastapi_12942): the progress line listed places 'to
     specify' while the answer said every place was taken; the idle specifiers opened again 40 times, trying to find the
@@ -2817,6 +3005,17 @@ def main_fast(stage, worker, argv):
     try:
         _tests.record_preexisting(root)
         cur = st.setdefault('wcur', {}).get(worker)
+        last = (st.get('wlast') or {}).get(worker)
+        if stage == 'locate' and cur is None and last and not st['scope_done'] and first not in ('', 'open', 'start',
+                                                                                                'next', 'done'):
+            # vf3 audit (rich_2943, rich_4075): a name sent "to check it" chose it, and the right place sent one call
+            # later was refused; until the plan is made, the worker's next names replace its last choice
+            st['located'].pop(last, None)
+            st['asked'].pop('locate ' + last, None)
+            _take(st, 'locate', last, worker, 'locate')
+            if st.setdefault('wfinished', {}).get(worker):
+                st['wfinished'][worker].pop()
+            cur = st['wcur'][worker]
         if stage == 'requirements' and cur is None and st['reqs'] and not st['located'] and len(args) >= 2 \
                 and _looks_like_requirements([_sentence(a) for a in args]):
             # vf3: an agent whose saved requirement was wrong sent the right ones and was told it was finished; before
@@ -2829,7 +3028,8 @@ def main_fast(stage, worker, argv):
             _release(st, worker)
             if stage == 'repair' and not st['submitted']:
                 _submit(root, st)
-            out = _progress(root, st) + '\n\nThe time is up: the patch as it is will be submitted.\n\n' + FAST_DONE
+            out = ('This call was not applied: the time is up. ' + _progress(root, st)
+                   + ' The patch as it is now will be submitted.\n\n' + FAST_DONE)
         elif cur is None and not (stage == 'requirements' and first not in ('', 'open', 'start', 'next')
                                   and _claim(root, st, stage, worker) is not None):
             # hf1 (rich_3905): the requirements agent's first call already holds the names (its prompt's step 1): it
@@ -2842,9 +3042,7 @@ def main_fast(stage, worker, argv):
                 if done_before:
                     # vf1 (Gemma, rich_3905): the reproduce agent whose test was kept sent it 8 more times, told only
                     # "No reproduction test is needed now", and the stage waited for it until the time was up
-                    out = ('Your part is already finished: ' + '; '.join(done_before[-3:]) + '. Nothing more is '
-                           f'needed from you (time used: {_elapsed(st) // 60} min {_elapsed(st) % 60} s).\n\n'
-                           + FAST_DONE)
+                    out = _finished(st, stage, done_before)
                 else:
                     out = _idle(st, stage, worker)
             else:
@@ -2858,7 +3056,8 @@ def main_fast(stage, worker, argv):
             out = HANDLERS[handler](root, st, args)
             if out.endswith(DONE):
                 body = out[:-len(DONE)].rstrip()
-                _release(st, worker, f'{cur[1]}: ' + (body.split('\n')[0][:160] if body else 'done'))
+                _release(st, worker, _summary(st, handler, cur[1], body))
+                st.setdefault('wlast', {})[worker] = cur[1]
                 limit = BATCH.get(stage, 3) * 2
                 st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
                 target = _claim(root, st, stage, worker) if st['wdone'][worker] < limit else None
@@ -2868,7 +3067,7 @@ def main_fast(stage, worker, argv):
                 else:
                     if stage == 'repair' and not st['submitted']:
                         _submit(root, st)
-                    out = body + '\n\nYour part is done.\n\n' + FAST_DONE
+                    out = body + '\n\n' + _part_done(st, stage, worker)
         out = _for_worker(out, stage, worker)
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{worker} {type(e).__name__}: {e}'})

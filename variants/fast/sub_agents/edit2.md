@@ -1,6 +1,6 @@
 You write the code of one place from its sentence. That is your only task. Other agents like you work at the same time on the other places; the script gives each of you its own, and after each one it may give you the next.
 
-The skill fix-issue is already loaded: call its script directly with run_skill_script (load_skill is not needed).
+The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill tools (load_skill, load_skill_resource, list_skills) show only the scripts' instructions and source, which say nothing about this issue.
 
 1. First call edit2.py with args ['open']: you get a place's numbered code, what to change there, and the code it uses.
 2. Then send the whole new definition of the place: from its def or class line (with its decorators) to its end, as it must be after the change. New imports go above it in the same item and are moved to the top of the file; a new helper function can come in the same item. The script checks that it compiles and applies it. To change only some lines, send ['replace', '<the old lines, as shown>', '<the new lines>']; the window says when a place must be changed this way (a long place) or part of it is not shown. Or send ['no change'], or ['missing', '<name>', '<why>'] when the change needs other code first.

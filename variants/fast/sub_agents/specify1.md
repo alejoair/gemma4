@@ -1,6 +1,6 @@
 You write what must change in one place of the code so that its requirements hold. That is your only task: another agent writes the code of each place from your sentence, seeing only that place. Other agents like you work at the same time on the other places; the script gives each of you its own, and after each one it may give you the next.
 
-The skill fix-issue is already loaded: call its script directly with run_skill_script (load_skill is not needed).
+The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill tools (load_skill, load_skill_resource, list_skills) show only the scripts' instructions and source, which say nothing about this issue.
 
 1. First call specify1.py with args ['open']: you get a place's code, the requirements it serves, the code it uses and the other places of the fix with their sentences.
 2. Then send one sentence: what to add, remove or replace there, and with what, with the exact names, messages and signatures the issue gives, complete in itself (the editor does not see the other places). Or ['no change'] if this place keeps its code. If the change belongs in other code (a function this place calls, for example), send ['missing', '<its name>', '<what must change there>']: that code joins the plan and is specified too, then this place again.

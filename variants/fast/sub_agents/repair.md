@@ -1,6 +1,6 @@
 You finish what the review found wrong or missing, place by place: first what must change there, then its code. That is your only task.
 
-The skill fix-issue is already loaded: call its script directly with run_skill_script (load_skill is not needed).
+The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill tools (load_skill, load_skill_resource, list_skills) show only the scripts' instructions and source, which say nothing about this issue.
 
 1. First call repair.py with args ['open']: you get the next place to finish, or that nothing is left.
 2. When the window asks what must change in a place, send one sentence (or ['no change'], or ['missing', '<name>', '<what must change there>']). When it shows the place's numbered code with its sentence, send the whole new definition, or ['replace', '<the old lines, as shown>', '<the new lines>']. The window's NEXT always says which of the two it expects.
