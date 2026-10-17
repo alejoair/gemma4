@@ -96,3 +96,60 @@ In fastapi_14419 the missing facts are mainly a fault of **the specify view** bu
   - Its name resolution does not know class attributes, hence the false "does not exist yet".
 - **Locate** chose `cache_key` but not the functions that set the field, which the reference changes too.
 - **The model** asked for exactly the missing code three times. `missing` is its only way to ask, since it cannot read.
+
+## Fix 1: the specify view (vf6, 10-17)
+
+The changes are in `agent/skills/fix-issue/scripts/step.py`, used by the specifier and the editor:
+
+1. **The attributes a method reads.** A new block, "Attributes it reads (where each is declared and where it is set)", lists each data attribute of its own class the place reads as `self.<name>`:
+   - the line that declares it (a class-level field, or the first `self.<name> = …`);
+   - up to 2 calls that build the class with `<name>=…`;
+   - when that value is a parameter of the building function, the call that passes it, one step further;
+   - then the class's other fields by name, one line.
+2. **Short members of the class are shown as code to the specifier** up to 10 lines (6 before), so `computed_scope` is no longer a bare signature.
+3. **Members of the class the place does not call** are shown only when they share at least 2 names with the place (1 before). `is_gen_callable` and `is_async_gen_callable` shared only `self.call`.
+4. **`Class.attribute` and `Class.__init__` resolve to the class.** The first applies when the class declares or assigns the attribute; the second when the class has no `__init__` of its own (a dataclass). Before, `missing` answered both as new code.
+
+### The same session with the fix (fastapi_14419, local 31B, budget 512)
+
+| Turn | Gemma sent | Note |
+|---|---|---|
+| 1 | `open` | the `solve_dependencies` view now shows `Dependant.cache_key` as code (a short member it reads) |
+| 2 | `no change` on `solve_dependencies` | "cache_key should probably be different depending on whether scopes are used": the change is placed in the right code |
+| 3 | `missing Dependant.security_scopes_with_subdependencies` "Add a cached property that returns … all security scopes used by the dependant and its sub-dependencies recursively" | `missing` used for a change, not to read |
+| 4 | "Add a @cached_property named security_scopes_with_subdependencies that returns a set containing self.security_scopes (if not None) and the security_scopes_with_subdependencies of all dependants in self.dependencies." | it checked the field: "Let me check if `Dependant` has `dependencies` … 'Dependant also declares: … dependencies' Yes, it does." |
+| 5 | "Replace tuple(sorted(set(self.security_scopes or []))) with tuple(sorted(self.security_scopes_with_subdependencies))." | the part ends with two sentences |
+
+| | vf5 | vf6 view |
+|---|---|---|
+| `missing` used to read | 3 of 9 calls | 0 of 4 |
+| false facts from the script | 1 | 0 |
+| "no change" | 6 of 6 decisions | 1 (`solve_dependencies`, consistent with its reasoning) |
+| result | empty patch | two concrete sentences, 5 turns instead of 9 |
+
+The thought is still cut every turn (551-598 tokens), but with the deciding facts in the window the decision comes before the cut.
+
+The logic is not the reference's:
+- the reference leaves the scopes out of the key when the dependency does not use them;
+- Gemma's version adds the sub-dependencies' scopes.
+
+Whether it passes the tests is not checked: the editor and the tests are the next steps.
+
+### Checklist (`docs/llm_checklist.md`)
+
+| Item | Effect | Why |
+|---|---|---|
+| W3 code in front of it | closer | The fields the place reads and the code that sets them are in the window; the session's decisions turned on them |
+| B16 a form with side effects used to read | closer | Nothing is left to ask for through `missing` (0 of 4 calls against 3 of 9) |
+| B11 trust in the script's facts | closer | A field is no longer "new code" |
+| P7 unrelated context | closer | Members sharing one name are left out; the attribute block is about 1,000 characters at most |
+| B7 long answers | farther, slightly | The window grows by the attribute block (up to 1,200 characters). Reason: the facts the decision turns on |
+| B8 forms | neutral | No form added |
+| B9 exploring | neutral | Same forms; fewer reasons to ask |
+
+**Why it is generic:** it reads Python's own structure for any repository. The rules it uses:
+- class-level fields and `self.<name>` assignments;
+- keyword arguments of the calls that build the class, and one step to the parameter's caller;
+- dataclass `__init__`.
+
+No name, library or task is special-cased.

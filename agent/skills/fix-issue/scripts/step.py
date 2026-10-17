@@ -501,6 +501,94 @@ PLAN_PLACE_LINES = 25    # a planned place up to this many lines is shown as cod
 SPEC_USES = 4            # the specifier: the definitions each place uses, and its callers
 SPEC_USES_CHARS = 1500
 SPEC_CALLERS = 3
+# vf4 lab (fastapi_14419): Dependant.computed_scope (7 lines) was shown as a signature and the specifier named it
+# with 'missing' to read it
+SPEC_SHORT_MEMBER = 10
+
+
+def class_attributes(node):
+    """{attribute: line} of the attributes a class declares: its class-level assignments (dataclass fields, class
+    attributes) and the self.<attribute> its methods assign (the first assignment of each)."""
+    out = {}
+    for st in node.body:
+        if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+            out.setdefault(st.target.id, st.lineno)
+        elif isinstance(st, ast.Assign):
+            for t in st.targets:
+                if isinstance(t, ast.Name):
+                    out.setdefault(t.id, st.lineno)
+    for n in ast.walk(node):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == 'self':
+                    out.setdefault(t.attr, n.lineno)
+    return out
+
+
+def _keyword_sites(root, table, callee, keyword, trees, limit=2):
+    """[(rel, caller, line number, line text, value node)] of calls of callee (a short name) that pass keyword=."""
+    out = []
+    for r, c, n in table.calls.get(callee, []):
+        if _repo.is_test_path(r) or _repo.is_doc_path(r):
+            continue
+        if r not in trees:
+            trees[r] = _code.parse(_repo.read_text(root, r))
+        tree = trees[r]
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and node.lineno == n:
+                f = node.func
+                if (f.attr if isinstance(f, ast.Attribute) else getattr(f, 'id', None)) != callee:
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == keyword:
+                        out.append((r, c, kw.value.lineno, _repo.read_lines(root, r)[kw.value.lineno - 1].strip(),
+                                    kw.value))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+ATTRS = 4               # attributes of the place's class shown with where they are declared and set
+ATTRS_CHARS = 1200
+
+
+def _attributes_view(root, table, p, cls, used, defined):
+    """The attributes of its own class the place reads that are data, not methods: the line that declares each and
+    the calls that set it (the class built with attribute=..., one step further when the value is a parameter of
+    the function that builds it). vf4 lab (fastapi_14419, the 31B): Dependant.cache_key reads
+    self.security_scopes; the window showed neither the field nor get_dependant, which sets it, and the
+    specifier asked for them three times through 'missing' (checklist W3, B16)."""
+    cls_sym = next((x for x in table.syms.get(p['rel'], []) if x.name == cls and x.kind == 'class'), None)
+    if cls_sym is None or getattr(cls_sym, 'node', None) is None:
+        return ''
+    decl = class_attributes(cls_sym.node)
+    lines = _repo.read_lines(root, p['rel'])
+    names = [n for n in dict.fromkeys(n for _, n, h in sorted(used) if h == 'self') if n in decl and n not in defined]
+    trees, rows, chars = {}, [], 0
+    short_cls = cls.split('.')[-1]
+    for name in names[:ATTRS]:
+        row = [f'  self.{name}: declared in {cls} ({p["rel"]}:{decl[name]}): {lines[decl[name] - 1].strip()[:100]}']
+        for r, c, n, text, value in _keyword_sites(root, table, short_cls, name, trees):
+            row.append(f'      set at {r}:{n} in {c}: {text[:90]}')
+            fn = next((x for x in table.syms.get(r, []) if x.name == c), None)
+            params = {a.arg for a in fn.node.args.args + fn.node.args.kwonlyargs} \
+                if fn is not None and isinstance(fn.node, (ast.FunctionDef, ast.AsyncFunctionDef)) else set()
+            if isinstance(value, ast.Name) and value.id in params:
+                for r2, c2, n2, text2, _ in _keyword_sites(root, table, c.split('.')[-1], value.id, trees, limit=1):
+                    row.append(f'        {c.split(".")[-1]} gets {value.id}= at {r2}:{n2} in {c2}: {text2[:80]}')
+        text = '\n'.join(row)
+        if chars + len(text) > ATTRS_CHARS:
+            break
+        rows.append(text)
+        chars += len(text)
+    rest = [n for n in decl if n not in names and n not in defined and not n.startswith('__')]
+    if rows and rest:
+        # the requirement may turn on a field the place does not read yet (fastapi_14419: 'sub-dependencies' is the
+        # field dependencies): its other fields by name, one line
+        rows.append(f'  {cls} also declares: ' + ', '.join(rest[:30]))
+    return ('Attributes it reads (where each is declared and where it is set):\n' + '\n'.join(rows)) if rows else ''
 
 
 def _context_view(root, p, focus=None):
@@ -617,7 +705,7 @@ def _context_view(root, p, focus=None):
             if (r, x.name) in seen:
                 continue
             seen.add((r, x.name))
-            if mine and x.end - x.start + 1 <= (SHORT_MEMBER if ROLE == 'editor' else 6):
+            if mine and x.end - x.start + 1 <= (SHORT_MEMBER if ROLE == 'editor' else SPEC_SHORT_MEMBER):
                 # a short member of the same class (a property, a helper): its code, since its name says little
                 text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
@@ -656,7 +744,9 @@ def _context_view(root, p, focus=None):
             node_names = {n.attr for n in ast.walk(x.node) if isinstance(n, ast.Attribute)} if getattr(x, 'node', None) \
                 else set(re.findall(r'\.(\w+)', body))
             shared = len(mine_used & node_names)
-            if shared >= 1 and shared + len(hit) >= 2:
+            # vf4 lab (fastapi_14419): is_gen_callable and is_async_gen_callable shared only self.call with
+            # cache_key and were shown in every window (P7); rich_3296's _get_base_style shares two names
+            if shared >= 2:
                 scored.append((-shared, -len(hit), x.end - x.start, x.start, x))
         for *_, x in sorted(scored, key=lambda t: t[:4])[:2]:
             if x.end - x.start + 1 <= 12:
@@ -690,6 +780,11 @@ def _context_view(root, p, focus=None):
     out = []
     if uses:
         out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
+    if cls and own != cls:
+        defined = {x.name.split('.')[-1] for x in table.syms.get(p['rel'], []) if x.name.startswith(cls + '.')}
+        attrs = _attributes_view(root, table, p, cls, used, defined)
+        if attrs:
+            out.append(attrs)
     if siblings:
         out.append(f'Other members of its class that use the same code ({short} does not call them):\n'
                    + '\n'.join(siblings))
@@ -1246,6 +1341,10 @@ def _resolve(root, names):
         found = table.find(name) if name else []
         if not found and name and not rel:
             found = _dotted_or_case(table, name)
+        if not found and name and '.' in name:
+            # vf4 lab (fastapi_14419): 'Dependant.security_scopes' (a dataclass field) and 'Dependant.__init__' (made
+            # by @dataclass) were answered as new code; they are the class's own code (checklist B11)
+            found = _attribute_owner(table, name)
         if not found and name and re.fullmatch(r'[A-Za-z_]\w*', name):
             found = _import_alias(root, table, name)
         if rel:
@@ -3112,6 +3211,20 @@ def _new_names_note(root, state):
     named = ', '.join(f"'{f}'" for f in forms) if forms else "'<Class>.<new name>' or '<path>.py::<new name>'"
     return (f'The issue asks for new code ({", ".join(f"`{n}`" for n in new[:4])}). A new method or function is a place '
             f'too: send its name ({named}) with its sentence, and it is added at the end of that class or file.\n')
+
+
+def _attribute_owner(table, name):
+    """[(rel, class Sym)] for 'Class.attribute' when the class declares or assigns that attribute, or for
+    'Class.__init__' when the class has no __init__ of its own; else []."""
+    cls, _, attr = name.rpartition('.')
+    for r, s in table.find(cls):
+        if s.kind != 'class' or getattr(s, 'node', None) is None:
+            continue
+        own_init = any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == '__init__'
+                       for n in s.node.body)
+        if (attr == '__init__' and not own_init) or attr in class_attributes(s.node):
+            return [(r, s)]
+    return []
 
 
 def _new_definition_owner(root, name):
