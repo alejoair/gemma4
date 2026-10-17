@@ -580,3 +580,832 @@ Checklist:
 | B7 middle of long context | neutral | neutral | neutral | neutral | closer: shorter answers | closer: fewer coordinator turns in its history |
 | B11 doubting tool output | closer: no false "same change is needed" | closer: the answer says what was saved | closer: no false promise | neutral | neutral | neutral |
 | B12 contradictions | neutral | neutral | closer | neutral | closer: the correction form matches the edit form | neutral |
+
+## Passing the coordinator's line on (2026-10-15)
+
+From gk2 to gk11, Haiku's locate agent refused six times to return the chained line. Its reasons were "that isn't part
+of my locate task", "my task covers only R1" and "choosing the next step is outside my task". Each refusal cost the
+coordinator one route.py call. Locate's prompt says "one requirement… that is your only task", and the line often
+names the same agent for another requirement ("call the tool locate with request 'R2'"). Every sub-agent's step 3 now
+says that the line is the coordinator's next call, passed on word for word even when it names another requirement or
+another agent, and that the agent does not make that call.
+
+| Checklist item | Effect |
+|---|---|
+| W4 a concrete NEXT | closer: the step names what to do with the line |
+| B12 contradictions | closer: "only task" and "pass this line on" are reconciled in the same sentence |
+| P3 positive rules with their reason | closer: it says why (the coordinator's next call) |
+| B8 many rules | neutral: no new form, one clause in an existing step |
+
+## The open weak points of the gated runs, fixed (2026-10-15)
+
+The list of system problems that were still open after gk2-gk12. All were checked by dry runs on the task snapshots;
+the next gated runs test them against the models.
+
+1. **Regressions (gk9).** Review runs the existing tests of the changed code once per patch state, on the patch and on
+   the original code (`_tests.check` with `use_map=False`: the changed names and the changed lines choose the tests,
+   with no whole-suite call map).
+   - The view lists the tests that pass on the original code and fail with the patch, and says that a requirement
+     contradicting them was read against the issue.
+   - A first "done" is refused while they fail.
+   - Dry run on fastapi_14986 with gk9's patch: in 6 s, three tests that expect `servers: [{'url': '/api/v1'}]` fail,
+     and "done" is refused.
+2. **A requirement or test that contradicts existing tests (gm8, gk9).** It is caught by the same check, once the
+   patch follows it.
+3. **Locate on a title-only statement (fastapi_14583).** After the candidates, the view adds the code that calls the
+   first three usable candidates (`[calls X]`). Dunders, nested functions and names called in more than 8 places are
+   left out. Dry run: `analyze_param`, `get_body_field` and `create_model_field` now appear, one step from
+   `get_dependant`.
+4. **Scope looked only upward (fastapi_14851, fastapi_14583).** The related code now includes:
+   - the repository functions a chosen place calls (`self.<method>()` of its class, and plain names defined once);
+   - the code that imports a module whose top-level code was chosen.
+
+   Each comes with its linking line.
+5. **Requirements without substance (gk11, gm8).** When there is more than one requirement, one whose "what must
+   happen" repeats the issue's sentence (similarity over 0.9) is left out, and the answer says so.
+6. **Line numbers in specify sentences (Gemma).** The first such sentence is refused, with the reason and an example of
+   naming code by its text.
+7. **Noise.**
+   - "[it uses ...]" is not shown on classes or docs examples.
+   - A dotted name in the requirements lookup matches its exact qualified name first.
+   - A word-chosen test template needs two shared words.
+8. **Cost (an accepted edit had no line for the coordinator).**
+   - The accepted edit also returns the coordinator's next call. It is computed on a copy of the state.
+   - It becomes real when the next agent opens; a correction from the editor is still accepted.
+   - Dry run: "edit is done: analyze_param is changed. Next: call the tool review with request 'R1'."
+
+| Checklist item | 1-2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| W1 choosing from named options | neutral | closer: the callers are options with their names | closer: callees are options with their lines | neutral | neutral | closer | neutral |
+| W3 code in front of it | closer: the failing assertion is shown | closer | closer | neutral | neutral | neutral | neutral |
+| W5 familiar formats | closer: pytest's own output | neutral | neutral | neutral | neutral | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | closer | neutral | neutral |
+| B11 doubting tool output | closer: "done" is checked against real tests | neutral | neutral | closer: no empty requirement to approve | neutral | closer | neutral |
+| B7 long context | slightly farther: the review view grows by the failing tests (about 700 characters); reason: the evidence is what decides | slightly farther (up to 4 lines) | slightly farther (up to 5 + 4 lines) | neutral | neutral | closer | closer: fewer coordinator turns |
+
+## Gated runs gk13-gk13c (fastapi_15800, Haiku): new members (2026-10-15)
+
+fastapi_15800 asks for two new methods ("Add support for `app.frontend("/", directory="dist")` and
+`router.frontend(...)`"); the statement is the title only. Three runs, each stopped at its first system fault:
+
+1. **gk13 (build 7795e45): locate had no place for new code.** The candidates were swagger and docs code; the class
+   FastAPI, where the new method goes, was not on the list although the reproduction test failed with
+   `'FastAPI' object has no attribute 'frontend'`; the searches for `frontend` found nothing and locate gave up. The
+   base procedure had this (`_rank_candidates` puts the owner class of a new `var.name` first) but the stages build
+   passed no requirement types to it. **Fix:** `_new_members` puts the new member at the top of locate's list, in the
+   class it goes in: from the requirement's new names (`app.frontend` → the class `app` is made from, by
+   `_rank.owner_class`) and from the reproduction test's AttributeError. A search for it says it is new code and points
+   there. Locate stores it as a new place, and scope adds it once.
+2. **gk13b (build d8e7d91 without the edit-after-edit fix).**
+   - Locate chose both new places at once.
+   - Specify, for APIRouter.frontend, wrote only "registers a static frontend". The view of a new member said nothing
+     but "new code at the end of class APIRouter".
+   - The second editor was shown the first place. The tentative call after an accepted edit became real only when an
+     agent of another stage opened, never edit after edit.
+
+   **Fixes:**
+   - `_members_note`: the view of a new member lists its class's public methods and those it inherits from a library
+     class, resolved through the file's imports (APIRouter inherits `mount` from Starlette's `Router`).
+   - The tentative call becomes real whenever a new agent opens (`open` or no args), in any stage.
+3. **gk13c (build d8e7d91).**
+   - Both specify sentences named the means: `self.mount(path, StaticFiles(directory=directory, html=True))`.
+   - Edit after edit worked.
+   - The regression check ran at review (64 pass, 3 failing before).
+   - The rerun reproduction test forced "not done" while it failed. The test's own fault was that it used a `dist` that
+     does not exist, so the edit went to `check_dir=False`. The second review passed.
+   - One new fault: locate for R2 replied to the coordinator with its NEXT line instead of choosing. Step 3 of the
+     prompts said "reply with the line the script gives" without saying when. **Fix (all six sub-agent prompts, not run
+     live yet):** reply only when the script's NEXT says "no call". A NEXT that names a script is the agent's own call.
+     "Only if you cannot go on, reply with one sentence that says why."
+
+   Result: not resolved (0 of 60 FAIL_TO_PASS, nothing broken). The reference is a whole feature (fallback modes,
+   low-priority routes, `check_dir`, include prefixes) that the title does not describe.
+
+Open weak points from these runs:
+- A reproduction test can fail for its own reason after a correct fix (a missing directory). Review treats it as the
+  requirement's verdict.
+- Review does not compare twin places already edited (APIRouter.frontend kept checking the directory after
+  FastAPI.frontend stopped).
+- Scope has no related code for a new member (its callers do not exist yet).
+
+| Checklist item | New members in locate | The class's methods for new code | Edit after edit | Prompt step 3 |
+|---|---|---|---|---|
+| W1 choosing from named options | closer: the place for new code is an option, by name | closer: methods to build on are options, by name | neutral | neutral |
+| W3 code in front of it | neutral | closer: what the class can already do is shown | closer: the editor sees its own place | neutral |
+| W4 following a concrete next call | closer: a search that finds nothing points to the option | neutral | closer: the call and the state agree | closer: a NEXT that names a script is the agent's own call |
+| W6 names of code and statement | closer: `app.frontend` becomes `FastAPI.frontend` | closer | neutral | neutral |
+| B11 doubting tool output | neutral | neutral | closer: the view no longer contradicts the request | neutral |
+| B12 resolving contradictions | neutral | neutral | closer: request and window name the same place | closer: "reply with the line" no longer competes with the NEXT |
+| B7 long context | slightly farther: one or two lines more | slightly farther: up to 2,500 characters for a new member only; reason: without it the sentence said nothing of how | neutral | slightly farther: two sentences more in each prompt |
+
+## Gated runs gk14-gk14b (fastapi_12942, Haiku): the audit's build, live (2026-10-15)
+
+The first live run after the checklist audit (`docs/prompt_audit_stages.md`, commit 4944d3d). fastapi_12942 asks for a
+tagged discriminated union (`Annotated[Annotated[A, Tag] | Annotated[B, Tag], Discriminator(...)]`) to be read as a
+body field, not a query parameter. The reference changes `field_annotation_is_complex` in `_compat.py`.
+
+**The audit's changes, live:**
+- The coordinator read "Time used: 0 min 0 s of 45 min" and the NEXT without double quotes, and followed every line.
+  It also followed a line that came after an editor's extra sentence.
+- Specify's line-number refusal turned "before the scalar check at line 465" into a sentence naming the line by its
+  text.
+- The new callers in locate brought `analyze_param` (`[calls Path]`), which decides body or query.
+
+**Three changes from these runs:**
+1. **gk14, scope: the deciding callee left out.** `_callees` took the first five calls in `ast.walk` order (breadth
+   first, not by line). The condition `elif not field_annotation_is_scalar(...)`, where body or query is decided, was
+   cut. Callees are now ordered: those the reproduction test runs, then those a condition calls, then by line.
+   Checked live in gk14b: it is listed with its `elif` line.
+2. **gk14b, edit: a regression of the audit.** The sentence restated before NEXT (P6) was cut at 400 characters with
+   "...". Haiku read it as the script's output cut off ("I worked from the visible part"). It is now restated whole
+   (a sentence is at most 1,500 characters).
+3. **gk14b, specify: the context view missed the deciding call.** "Code that analyze_param uses" showed Body,
+   ParamTypes and FieldInfo, chosen by words, but not `field_annotation_is_scalar`. The specify and edit views now add
+   up to 3 functions the place calls in a condition or that the test runs, with their call line, when the context view
+   left them out. Dry run on fastapi_12942: `field_annotation_is_scalar` first.
+
+Result: **resolved** (judged: the FAIL_TO_PASS test passes, nothing broken, official_feasible). 40 model calls, 394 s.
+The fix is in `analyze_param`, not the reference's place: it unwraps the Annotated members of the union before the
+scalar check.
+
+| Checklist item | Callee order | Sentence restated whole | Deciding calls in the views |
+|---|---|---|---|
+| W1 choosing from named options | closer: the deciding callee is an option | neutral | neutral |
+| W3 code in front of it | closer | neutral | closer: the call where the branch is decided, with its line |
+| B11 doubting tool output | neutral | closer: no "..." that reads as a cut output | neutral |
+| B12 contradictions | neutral | closer: the two copies of the sentence agree | neutral |
+| B13 order in lists | closer: the relevant callee first | neutral | closer |
+| P6 the decision at both ends | neutral | closer: the whole decision before NEXT | neutral |
+| B7 / P7 long context | neutral (the same five) | slightly farther: up to 1,100 characters more in a long sentence; reason: a cut copy misled | slightly farther: up to 3 lines of 2; reason: the deciding function was missing |
+
+## Gated run gk15 (rich_3894, Haiku): no system fault (2026-10-15)
+
+rich_3894 ("Handle unusual `__qualname__` in inspect"; the author's sentence gives the fix). Resolved, with no stop:
+- locate listed the reference's place, `Inspect._get_signature`, first;
+- the line-number refusal turned "line 103" into the line's text;
+- the sibling-members heading and the whole restated sentence appeared as designed.
+
+The reproduction test was not kept: the failing case needs a class with `__qualname__` in its `__slots__` behind a
+decorator. Haiku's two tries were refused with their reasons (a TypeError at class creation; a test that passes on
+the code). One fix: the reproduce view named `benchmarks` (asv's folder) as a package of the repository next to
+`rich`. `_example._packages` now leaves out benchmarks, examples, tools and similar folders.
+
+Checklist: P7 closer (one unneeded, misleading name less in the view), W6 closer (the package named is the one the
+issue's users import); every other item neutral.
+
+## The open problems of the table, fixed in the design (2026-10-15)
+
+After the reading of `docs/runs_by_stage.md` and the root causes (proxies instead of checks, information that does
+not travel between stages, contradictions between what is shown and what is asked):
+
+1. **Localization without names (14583, 15800).**
+   - The test plugin records each failure's traceback (`_tests._frames`, `path:line`).
+   - Locate puts first the up to 3 repository functions the reproduction test's failure went through, innermost first:
+     "[the reproduction test fails here: <line>]", then "[the failure passes through here: <line>]".
+   - Dry run on rich_3894 with the reference test: `Text.append` (raises), `Text.assemble`, `Inspect._get_signature`
+     (the reference's place).
+2. **A requirement against the issue's intent (14986).** `requirements.md`:
+   - a requirement says what changes;
+   - the behaviour the issue does not mention stays as it is, so a change of how something is done does not become the
+     removal of what it produces (the hidden tests also run the existing tests).
+3. **A reproduction test that fails for its own reason (gk13c).** When the test still fails with the patch but with
+   another error kind than on the original code, and not on an assertion:
+   - review says so as a fact: either a part of the change is missing, or the test fails for a reason of its own;
+   - it no longer forces "not done".
+4. **Twins not compared (gk13c).** The review view shows the plan's places that share the reviewed places' short
+   name, with their diff.
+5. **Line numbers in specify (Gemma, gk14b, gk15).** The specify view shows the code without line numbers: it was the
+   anchor that the sentences used and that the script then refused.
+6. **Cost.**
+   - A requirement whose own reproduction test passes on the patch, with the regression check clean, is marked done
+     by the test, with no review agent (2-3 model calls less).
+   - The regression check's cache used `hash()`, which changes with every process, so it never hit. It is now keyed
+     by a SHA-1 of the patch, on disk (shared with the tentative route's copy), as is the test's rerun.
+
+| Checklist item | 1 failing frames | 2 requirements | 3 changed failure | 4 twins | 5 no numbers | 6 cost |
+|---|---|---|---|---|---|---|
+| W1 named options | closer: the failure's functions are options | neutral | neutral | neutral | neutral | neutral |
+| W3 code in front | closer | neutral | neutral | closer: the twin's diff | neutral | neutral |
+| W5 familiar formats | closer: a traceback's frames | neutral | closer: the two errors | closer: a diff | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | closer: no number to anchor on | neutral |
+| B11 doubting tool output | neutral | neutral | closer: the test's own failure is not a verdict | closer | neutral | neutral: the test decides only when it passes and nothing breaks |
+| B12 contradictions | neutral | neutral | closer: no forced "not done" against the evidence | neutral | closer: nothing shown that is then refused | neutral |
+| F4 challenges without facts | neutral | neutral | closer | neutral | neutral | neutral |
+| P3 positive rules with reason | neutral | closer: what to keep, with the reason | neutral | neutral | neutral | neutral |
+| B7 / P7 long context | slightly farther: up to 3 lines; reason: the only signal when the statement names nothing | slightly farther: one sentence | slightly farther: one line when it applies | slightly farther: up to 1,200 characters when there is a twin; reason: gk13c | closer: shorter lines | closer: fewer turns |
+
+## Gated run gm11 (fastapi_12942, the 31B on Colab vLLM): stopped in round 2, seven fixes (2026-10-15)
+
+The 31B located `analyze_param` (through the callers) and the regression check refused its first patch (a `while`
+over the outer `Annotated` broke `test_multiple_annotations`). It did not reach a fix. The faults, in the order they
+appeared, and their fixes:
+
+1. **Library names.** The name lookup showed only `fastapi.openapi.models.Tag`, so the reproduction test defined its
+   own `class Tag` and failed twice for that reason. The lookup now adds "also in the library: pydantic.Tag", taking
+   the libraries from the modules the repository imports most. The reproduce view lists the issue's names that a
+   library defines. The example's own classes (`Pie`) read "code of the issue's own example, new code ... or library
+   code".
+2. **A finished editor reopening its place advanced the route.** The editor opened its own place again after an
+   accepted edit, and the tentative next call became real under it ("Nothing to edit now"). Every agent now opens
+   with `['open', '<the request you received>']`, and an open of the place just finished does not advance.
+3. **The specifier did not see the deciding code.** It wrote "field_annotation_is_scalar, though I don't have it, I
+   can infer" and answered `no change`. Two changes:
+   - specify shows the place up to 150 lines (the `Annotated` block had been hidden in "lines 371-454 not shown");
+   - the deciding calls of 6 lines or fewer are shown whole.
+
+   The answer cap rose from 9,000 to 12,000 characters.
+4. **`no change` on a place the review sent back kept the breaking edit.** The view now says that its edit is in the
+   patch and that `no change` undoes it. `no change` restores the file when no other edited place shares it.
+5. **A repeated `replace` after an accepted edit read "not found".** It now reads "Already applied", with the
+   coordinator's line.
+6. **Line numbers leaked into specify** through the header ("lines 356-519") and the elision marker. Both are gone.
+7. **An unused call's line lacked "<stage> is done"**, so the coordinator asked route.py first (3 calls more). The
+   line is now the whole chained line.
+
+| Checklist item | 1 library | 2 open with request | 3 deciding code | 4 no change undoes | 5 already applied | 6 numbers | 7 line |
+|---|---|---|---|---|---|---|---|
+| W3 code in front | neutral | neutral | closer | neutral | closer | neutral | neutral |
+| W6 names | closer | closer | neutral | neutral | neutral | neutral | neutral |
+| B1 line numbers | neutral | neutral | neutral | neutral | neutral | closer | neutral |
+| B11 doubting tool output | closer: the lookup no longer hides the library class | neutral | neutral | closer | closer: "not found" was false | neutral | neutral |
+| B12 contradictions | neutral | closer: the request and the state agree | neutral | closer: what `no change` means is said | closer | closer | closer |
+| B9 exploring | neutral | neutral | closer: nothing to infer | neutral | neutral | neutral | neutral |
+| B7 long context | slightly farther: one line per library name | neutral | farther: up to 12,000 characters; reason: the decision needs the code | neutral | neutral | neutral | neutral |
+| W4 next call | neutral | neutral | neutral | neutral | closer | neutral | closer: one call less |
+
+### gm11b (the 31B, fastapi_12942, stopped at specify): the specifier could not route a change
+
+After the gm11 fixes the library names worked: the 31B imported pydantic's `Tag` and `Discriminator` and the
+reproduction test was kept at the first try (422). Specify then wrote a `while` loop that unwraps the outer
+`Annotated` in `analyze_param`; its thinking said "field_annotation_is_scalar is in _compat.py, not in analyze_param.
+The request says to change analyze_param". It saw where the fault is and had no way to say so: editors and the review
+had the `missing` form, the specifier did not. A design gap, not the model's.
+
+**Change:** specify accepts `['missing', '<name of other code>', '<what must change there>']`. The named code joins the
+plan before the place (with "Why it is in the plan: the specifier of X says: ..."), is specified by its own
+specifier, and then the place is specified again, seeing the other place's sentence ("Why it is specified again"),
+where `no change` is the usual answer. The script refuses the place's own name, a name it cannot find, and code
+already in the plan (giving that place's sentence), so the form cannot loop. Checked directly on the snapshot
+(`analyze_param` → `field_annotation_is_scalar` → `analyze_param` `no change`).
+
+| Checklist item | Status | Why |
+|---|---|---|
+| W1 choosing from named options | closer | the specifier names code it sees in its view (the deciding calls) instead of being held to one place |
+| W3 code in front | closer | the code where the change belongs gets its own view and specifier |
+| B12 contradictions | closer | "change this place" against "the fault is in a callee" had no answer; now it has one |
+| B9 exploring | neutral | the name must be code the script resolves; no reading form |
+| B8 many forms | farther: 3 forms instead of 2. Reason: without it the 31B writes a workaround in the wrong place (gm11b); the form is the editors' own `missing`, same shape |
+| W4 next call | neutral | the answer chains as every finished specify |
+| F7 leaving a loop | closer | a repeated `missing` for code already in the plan is refused with its sentence |
+
+### gm11c (the 31B, fastapi_12942, stopped at reproduce): a refusal without its cause; the open target
+
+1. **The reproduction test defined its own `Tag`** although the view listed `pydantic.Tag` among the issue's library
+   names. Pydantic rejected the union, and the refusal said only "it fails for a reason of its own" with fastapi's
+   "Invalid args for response field"; the 31B changed the return annotation and sent the same fault again (two tries
+   are all reproduce has). The script now checks, before running the test and without counting a try, whether the
+   test defines a class or function with the short name of a library name of the issue, and says so: "The test
+   defines its own Tag, but the issue's Tag is the library's pydantic.Tag: delete that definition and import it".
+2. **The agents' `open` copied the whole issue** (reproduce sent the statement as the target; 8.7 s of output). The
+   prompts' placeholder `<the request you received>` is now what each agent receives: `<the requirement id you
+   received, such as R1>` (reproduce, locate, review), `the plan` (scope), `<the place name you received>` (specify,
+   edit).
+
+| Checklist item | 1 shadowed library name | 2 open target |
+|---|---|---|
+| F1 where the error is | closer: the refusal names the definition and the import | neutral |
+| F4 challenges without new facts | closer: the second try now has a new fact | neutral |
+| B11 doubting tool output | closer | neutral |
+| W6 names | closer | closer: the placeholder says what the value is |
+| B2 copying long text | neutral | closer: an id instead of the statement |
+| B8 many forms | neutral | neutral |
+
+### gm11d (the 31B, fastapi_12942, stopped after requirements): no reproduction for a concrete issue
+
+The two requirements quoted prose ("FastAPI fails to identify it correctly as **body** payload.") and so were not
+"concrete", and the route skipped reproduce, although the issue holds a whole example and both requirements named its
+`Dessert`. The scripts do not see the statement, but they have the names the requirements agent sent first; a name
+there that neither the repository nor a library defines comes from the issue's own example. A requirement that names
+one is now concrete as well.
+
+| Checklist item | Status | Why |
+|---|---|---|
+| B11 doubting tool output | closer | the review gets a failing test to rerun instead of judging prose |
+| F2 failing test with expected vs actual | closer | there is a test to show |
+| W3 code in front | closer | the issue's example becomes the test the later agents see |
+| B9 exploring | neutral | no new form |
+
+Generic (the user's rule of 10-15, checked for the four changes above): the specifier's `missing` takes any code the
+script resolves; the shadow check applies to every library name the issue uses; the open targets describe what each
+agent receives; "concrete" uses any name of the issue's own example. None names a task, a library or a class.
+
+### gm11e (the 31B, fastapi_12942, stopped at the second specify): the `missing` form worked; the callee was hidden
+
+The fixes of gm11c-gm11d worked: the reproduction test imported `pydantic.Tag` at the first try and was kept (422),
+the agents opened with `R1` and the place name, and the specifier of `analyze_param`, seeing the call
+`field_annotation_is_scalar`, sent `['missing', 'field_annotation_is_scalar', 'It needs to handle Annotated types,
+possibly by unwrapping them ...']`. The script added it to the plan and the route specified it next. That specifier
+saw the one-line wrapper but only the signature of `field_annotation_is_complex` (11 lines; the cap for a whole body
+was 6), reasoned "if field_annotation_is_complex handles Union, it returns True", and answered `no change`. The
+reference patch is three lines in `field_annotation_is_complex`.
+
+**Change (generic):** the deciding callees' bodies are shown whole within a line budget instead of a fixed 6-line cap:
+60 lines when the place is 20 lines or shorter (a wrapper delegates its decision), 24 otherwise; each body at most 30
+lines; the smallest are chosen first so that more of them are whole, and they keep the call order. On the snapshot:
+`field_annotation_is_scalar`'s view now holds `field_annotation_is_complex` whole; `analyze_param`'s holds
+`is_uploadfile_or_nonable_uploadfile_annotation` and `field_annotation_is_scalar` whole (the 13-line
+`is_uploadfile_sequence_annotation` keeps its signature).
+
+| Checklist item | Status | Why |
+|---|---|---|
+| W3 code in front | closer | the code the place delegates its decision to is in the view |
+| B9 exploring | closer | nothing to guess; the specifier has no reading form |
+| B11 doubting tool output | neutral | |
+| B7 long context | slightly farther: up to 60 lines more for a short place (whose own view is short); 24 for a long one. Reason: the decision needs that code |
+| P7 unneeded context | neutral: only callees in a condition or run by the reproduction test |
+
+Generic: it applies to every place and callee by size alone.
+
+### gm11f (the 31B, fastapi_12942): resolved
+
+The second task the competition's model resolves with this system (judged: 1/1 FAIL_TO_PASS, nothing broken,
+official_feasible); the patch is the reference's three lines. 50 model calls, 25 tool calls, about 19 minutes of
+wall time with the gate's pauses. What the fixes of gm11-gm11e did in this run:
+- reproduce: the precheck caught a test that defined its own `Tag` and the 31B imported `pydantic.Tag` without losing
+  a try; the test was kept (422);
+- scope added `field_annotation_is_scalar`; its specifier saw `field_annotation_is_complex` whole (the line budget)
+  and sent `['missing', 'field_annotation_is_complex', 'add a check for origin is Annotated and return
+  field_annotation_is_complex(get_args(annotation)[0])']`;
+- that place was specified with the reference's change; the two other places were re-specified as `no change`;
+- review R2 `done`, R1 closed by the script (its reproduction passes, regressions clean), submit.
+
+Faults left, fixed after the run (generic):
+1. The first test imported `Tag` and `Discriminator` from `fastapi.openapi.models` (the repository's classes of the
+   same names) and the refusal gave only "BaseModel.__init__() takes 1 positional argument". A refusal for "a reason
+   of its own" now adds, for every name the issue uses from a library that the test imports from another module,
+   "It imports Tag from fastapi.openapi.models; the issue's Tag is the library's pydantic.Tag".
+2. One call had `skill_name` `「fix-issue」` ("Skill not found"); the 31B recovered by itself. Every prompt now says
+   what that error means, next to the ADK's "Argument ... is required".
+3. The judge cached reference runs that did not finish (a snapshot missing once), which left the task unscorable in
+   every later run; such runs are no longer cached, and a cached one is recomputed.
+
+| Checklist item | 1 import hint | 2 skill not found |
+|---|---|---|
+| F1 where the error is | closer | closer |
+| F4 challenges without new facts | closer: the retry gets a fact | neutral |
+| F8 harness errors | neutral | closer |
+| B8 many rules | neutral | slightly farther: one sentence more per prompt; reason: V10 lost 44% of calls to this error |
+
+Generic: the hint uses any library name of the issue; the prompt line covers any mangled skill name.
+
+### gm12 (the 31B, rich_3052, stopped at step 37: the Colab tunnel died, HTTP 530)
+
+Up to the tunnel's end the run was clean:
+- four requirements quoted from the issue;
+- a reproduction test kept at the first try (`TypeError: ... unexpected keyword argument 'case_sensitive'`);
+- locate chose `PromptBase.ask`, plus `PromptBase.process_response` for the matching;
+- scope added `PromptBase.check_choice`;
+- the specifier of `ask` sent `['missing', 'PromptBase.__init__', 'Add case_sensitive: bool = True ... and set
+  self.case_sensitive = case_sensitive.']`, the reference's change there.
+
+The specifier of `PromptBase.__init__` then read its note, "the specifier of PromptBase.ask says: Add ...", as a
+change meant for `ask` ("This is confusing. PromptBase.ask is likely a class method, so self.case_sensitive ... doesn't
+make sense there"). It ended its turn with no call and no text; the coordinator's step 3 sends that back to route.py,
+which asks again.
+
+**Change (generic):** the note now says whom the change is for: "Why it is in the plan: the specifier of X named
+PromptBase.__init__ for the change; what it says must change here: ...".
+
+| Checklist item | Status | Why |
+|---|---|---|
+| B12 contradictions | closer | the note no longer reads as an instruction about another place |
+| W6 names | closer | it names the place the change is for |
+| B8 many rules | neutral | |
+
+Generic: the wording holds for every place a specifier names.
+
+### V22: the stages build on Kaggle with 5 minutes per task (10-15): 1/10
+
+The first Kaggle eval of the stages build, after the time limit went back to 5 minutes (S6, with 60, got no score).
+Only requests_7328 was resolved; the other nine stopped at 5 minutes with an empty patch.
+
+| Task | Last agent at the stop | Model calls | Seconds per agent |
+|---|---|---|---|
+| fastapi_14448 | specify | 25 | requirements 47, locate 83, scope 5, specify 60 |
+| fastapi_14583 | specify | 25 | requirements 15, reproduce 63, locate 57, scope 5, specify 68 |
+| fastapi_14851 | reproduce | 9 | requirements 31, reproduce 225 (the environment fault below) |
+| fastapi_14986 | specify | 27 | requirements 20, reproduce 57, locate 37, scope 14, specify 70 |
+| fastapi_15800 | specify | 23 | requirements 37, reproduce 84, locate 39, scope 8 |
+| httpx_3672 | specify | 35 | requirements 46, reproduce 30, locate 101, scope 4 |
+| requests_7328 | review (resolved) | 30 | requirements 17, locate 11, scope 3, specify 125, edit 26, review 53 |
+| rich_3006 | specify | 22 | requirements 26, reproduce 176, locate 22, scope 15, specify 12 |
+| rich_3469 | specify | 19 | requirements 35, locate 33, scope 10, specify 117 |
+| rich_3521 | review, no edit kept | 23 | requirements 13, locate 12, scope 4, specify 179 |
+
+What it shows:
+- **The budget is tokens, not steps.** vLLM on Kaggle's 4×L4 generated 28-38 tokens/s; every task used about 9,000
+  output tokens (thinking included) in its 5 minutes. On Colab's RTX PRO 6000 the resolved runs needed 3 min 49 s
+  (rich_3894) and 7 min (fastapi_12942) of model time at about twice that speed.
+- **Specify and reproduce are the long agents** (specify up to 179 s, reproduce up to 225 s): both have the largest
+  thinking budgets (specify 4096) and the largest views.
+- **An environment fault of our own Kaggle eval** cost the five fastapi tasks: swegemma's `_host_env.pth` lists only
+  paths with "site-packages", Kaggle's Python keeps its packages in `dist-packages`, which the sandbox venv adds after
+  its own .pth files, so `workspace_paths.pth` put `fastapi/` before them and langsmith's pytest plugin imported
+  `fastapi/requests.py` as `requests`. Every reproduction test failed to collect and the judge's reference runs did not
+  finish (unscorable). `tools/eval_env.py` now lists the host package directories first; the official order (the
+  workspace after the installed packages) is kept. Not a fault of the submission.
+
+Not decided yet (the user's): how the procedure meets 5 minutes. A time-aware route (skip the optional reproduce and
+review when little time is left, one locate for all requirements) and smaller thinking budgets for the agents are the
+two levers this run measures.
+
+#### Where V22's time went (all 238 model calls of the 10 tasks)
+
+Method: each trace step's `elapsed_s` and token counts (`results_v22/traces`), and vLLM's own log. A call's wall time is
+the time since the previous event: the previous tool's run, the prompt's prefill and the generation. Generation is
+estimated at vLLM's measured 36.6 tokens/s (median while one request runs; p10 27.8, p90 37.9).
+
+- **Generation is 91% of the time** (2,533 of 2,777 s). Prefill is negligible (2-4k prompt tokens per call, a prefix
+  cache hit rate of 79%). The scripts' own work (tests, the reproduction runs, the index) is inside the other 9%.
+- **About 80% of the generated tokens are thinking** (about 74k of 93k; estimated from the length of the thought text).
+- **vLLM ran one request at a time with 2% of its KV cache in use**: decoding is memory-bound, so concurrent requests
+  would cost almost nothing in speed. The procedure is strictly sequential.
+
+By kind of call:
+
+| Kind | Calls | Output tokens | Wall time | Tokens per call |
+|---|---|---|---|---|
+| An agent's decision (the useful work) | 60 | 47,124 | 1,412 s (51%) | 785 |
+| An agent's final reply, passing the coordinator's line on | 52 | 17,040 | 533 s (19%) | 328 |
+| Refused, an ADK error, or a call after the part was done | 9 | 11,258 | 319 s (11%) | 1,251 |
+| An agent's `open` | 42 | 10,140 | 293 s (11%) | 241 |
+| The coordinator | 75 | 7,162 | 221 s (8%) | 95 |
+
+By agent: specify 708 s (30 calls), reproduce 670 s (22), locate 425 s (53), requirements 393 s (31), scope 269 s (20),
+the coordinator 221 s (75), review 61 s, edit 31 s.
+
+Findings:
+1. **The ceremony of an agent call costs about 21 s**: its `open` (241 tokens), its final reply (328 tokens, almost all
+   thinking about copying one line) and two coordinator calls (95 each). It is 38% of all the time (1,047 s): about
+   100 s per task, a third of the 5 minutes. Locate is called once per requirement (53 calls).
+2. **Thinking fills the budget on every hard decision**: each specify decision produced 2,084-2,181 tokens (the
+   2,048 budget plus the call) and took 57-60 s. The time of a decision is set by its agent's thinking budget, not by
+   the decision.
+3. **A thinking budget that ends mid-thought can run away**: in fastapi_14851 reproduce's thinking was cut by the
+   budget, the model went on reasoning in the visible text, wrote the call as text in the middle of it and kept going
+   to `max_output_tokens` (8,192 tokens, 225 s, no call parsed). The visible output has no cap of its own below 8,192.
+4. **Reproduce is the most expensive optional stage**: 670 s over the 7 tasks that ran it (up to 225 s in one task).
+5. The fastest path that resolved (requests_7328: no reproduction, locate 11 s, scope 3 s, specify 125 s, edit 26 s,
+   review 53 s) still took more than 4 minutes.
+
+Levers, each generic, with what V22 says it would save (to be measured with the model, not assumed):
+
+| Lever | Saving in V22's terms | Risk for the 31B |
+|---|---|---|
+| Fewer agent calls per task: one locate call for all requirements; stages merged where one view serves both (requirements with locate, specify with edit for a single place) | about 21 s per agent call removed | a larger view per decision (checklist B7, B8) |
+| Smaller thinking budgets where the decision is bounded (specify 2048, the agents' 1024-2048) | about 28 s per specify decision for a halved budget | a worse sentence; measure resolve rate |
+| `max_output_tokens` of each agent near its largest legitimate answer (a whole definition or a test: about 2,000 tokens) instead of 8,192 | up to 160 s in a runaway call | a long whole-definition edit cut |
+| A time-aware route: no reproduction, and review only when time is left | up to 225 s per task | the review's check and the reproduction evidence are lost under pressure |
+| Concurrent calls (ParallelAgent for independent places or requirements) | the duration of the longest branch instead of the sum | ParallelAgent branches share /workspace; whether the scorer runs tasks concurrently is unknown |
+
+### The time fixes after V22 (10-16, the user's: "haz todos esos arreglos y prueba")
+
+1. **One agent call per stage, not per target.** When the route's next call is the same stage again, the agent goes
+   on in the same call ("Your part goes on with R2, in the same way:" and that view). This applies to locate and
+   review (up to 6 targets) and to specify (up to 2 places, so that two views of up to 12,000 characters stay under
+   the harness's compaction). Each target saved removes an open, a final reply and two coordinator calls (about 21 s
+   in V22). The prompts of the three agents say the script may show the next target. Edit stays one place per call
+   (its tentative-route logic and the editor's fresh context).
+2. **A time-aware route.** Reproduce runs only when at least 6 minutes are left (V22: 30-225 s, and the rest needs the
+   remainder); review agent calls only when at least 75 s are left (otherwise the script's own checks stand). Under
+   the 5-minute limit reproduce is therefore off; with a larger budget it comes back by itself.
+3. **No scope call when there is nothing to choose.** If the located places have no related code, the plan is made
+   without the agent.
+4. **Thinking budgets and output caps per agent.** V22's hard decisions always filled the budget: the time of a
+   decision is the budget. Specify, reproduce and requirements now have thinking 1024 and at most 3,072 output tokens
+   (they had 2048 and 8,192); edit 1024 and 4,096 (a whole definition needs the room); locate, scope and review 512 and
+   2,048 (they had 1024 and 4,096). The cap bounds a runaway like V22's 8,192-token call (225 s).
+5. **The final reply says there is nothing to decide** ("There is nothing to decide: copy it."): V22's final replies
+   thought 328 tokens on average to copy one line.
+
+Not done: concurrent agent calls. The scripts take a lock on the task's state, so two calls at once are refused by
+design (one decision at a time on one state), and the coordinator's calls are sequential.
+
+Dry run on fastapi_12942: the route skipped reproduce under 4 min 30 s, locate went from R1 to R2 in one agent call,
+and specify went from `analyze_param` (`missing`) to `field_annotation_is_scalar` in the same call, then returned to the
+coordinator after two places.
+
+| Checklist item | 1 one call per stage | 2 time-aware route | 3 no empty scope | 4 budgets and caps | 5 nothing to decide |
+|---|---|---|---|---|---|
+| W4 next call | neutral: the view ends with the agent's own NEXT as before | neutral | closer: a call less | neutral | closer |
+| W7 room to think | neutral | neutral | neutral | farther: half the thinking for every agent. Reason: V22 showed the budget, not the decision, sets the time, and nothing was submitted in 9 of 10 tasks | neutral |
+| B7 long context | slightly farther: two specify views in one context. Reason: 21 s per place; bounded at 2 | neutral | neutral | neutral | neutral |
+| B10 knowing the budget | neutral | closer: the route spends time where it is left | neutral | neutral | neutral |
+| B12 contradictions | closer: the prompts say the next target may come | neutral | neutral | neutral | neutral |
+| F2 failing test | neutral | farther: no reproduction test under 5 minutes. Reason: it cost up to 225 s of the 300 | neutral | neutral | neutral |
+| F7 leaving a loop | neutral | neutral | neutral | closer: a runaway stops at 2,048-4,096 tokens | neutral |
+
+Generic: every rule is a count of targets, a time left or a token budget; none names a task or a repository.
+
+### V23 (10-16): the time fixes on Kaggle, 3/10
+
+requests_7328, fastapi_14851 and rich_3006 resolved (judged); 6 of 10 tasks had a patch (V22: 1). The fastapi tasks
+were scorable again after the eval_env fix (fastapi_14583 still unscorable).
+
+| Kind of call | V22 wall time | V23 wall time | V22 tokens/call | V23 tokens/call |
+|---|---|---|---|---|
+| Decisions | 1,412 s (51%) | 1,822 s (69%) | 785 | 663 |
+| Final replies | 533 s (19%) | 235 s (9%) | 328 | 114 |
+| Opens | 293 s (11%) | 227 s (9%) | 241 | 185 |
+| Coordinator | 221 s (8%) | 276 s (10%) | 95 | 118 |
+| Refused, errors, unused | 319 s (11%) | 74 s (3%) | 1,251 | 642 |
+
+By agent, specify took 47% of the time (77 calls). Three causes, each fixed generically after the run:
+1. **Copies of the same code** (httpx_3672: the same methods in `src/httpx/` and `src/ahttpx/`, six places specified
+   and edited one by one). A place whose original code is the same as another place of the plan with the same
+   qualified name takes that place's sentence without a specify call, and that place's accepted edit is made in it
+   too (with the imports the edit added), when it still has the shared original code and the file still parses.
+2. **A refused `missing`** (rich_3521): the specifier of `split_cells` named `_split_cells`, which another specifier
+   had left `no change`; the script refused it as "already a place of the fix" three times (about 90 s). A place that
+   is finished (no change, edited or failed) named by `missing` is now specified again with the note.
+3. **A chain of `missing`** (fastapi_14986): `get_openapi` named `OpenAPI`, which named `Server`; both ended `no
+   change`, and the sentence for `get_openapi` came at 298 s. Code that was itself named by a specifier names no
+   further code.
+Also: specify handles up to 3 places in one agent call (the ceremony is now about 12 s a call).
+
+Dry run on httpx_3672: the `ahttpx` copy of `HTTPParser.__repr__` took the sentence of the `httpx` one and got its
+edit, with no agent call for either.
+
+| Checklist item | 1 copies | 2 re-open by missing | 3 no chain | specify 3 |
+|---|---|---|---|---|
+| B9 exploring | neutral | neutral | closer: no browsing through `missing` | neutral |
+| B12 contradictions | neutral | closer: a finished place can be named, as the prompt says | closer: the refusal says why | neutral |
+| W4 next call | closer: fewer calls | closer: no refused calls | closer | closer |
+| B7 long context | neutral | neutral | neutral | slightly farther: up to 3 views; reason: 12 s a call, and V23's views were shorter |
+| B11 doubting tool output | slightly farther: a copied edit is checked only by parsing and the later review. Reason: the copy is the same code with the same sentence | neutral | neutral | neutral |
+
+Generic: a copy is decided by identical original code and qualified name; the other two rules hold for any place.
+
+### Can the per-task limit be longer? (10-16, the user's question)
+
+**The rule (the competition's Evaluation page, read 10-16):** "Your agent has a limit of 12 hours to submit patches for
+all tasks, inclusive of sandbox setup time, but excluding time for patch validation." The test set has "about 120
+tasks" (Data page). The harness runs one task at a time by default (`swegemma` `EvalConfig.concurrency = 1`; the
+official `inference.py` is not public, so sequential is the assumption). S6, with 60 minutes per task, finished
+without a score.
+
+**Measured on Kaggle's 4×L4 (V23):**
+- fixed cost of the run: vLLM ready after 442 s, wheels 66 s, about 8.5 minutes;
+- per task: the agent stops at the limit plus up to 16 s (the running model call finishes: durations 302-316 s for a
+  300-s limit); our subprocess sandbox's own setup and teardown are 3-20 s (the official Docker container's setup is
+  not known, and counts);
+- 8 of 10 tasks used the whole limit (mean 289 s of 300).
+
+**The limit that fits** (12 h, every task using the whole limit, 15 s of overrun):
+
+| Tasks | Setup per task | No margin | 5% margin |
+|---|---|---|---|
+| 120 | 9 s (ours) | 5.5 min | 5.2 min |
+| 120 | 30 s | 5.2 min | 4.9 min |
+| 120 | 60 s | 4.7 min | 4.4 min |
+| 125 | 9 s | 5.3 min | 5.0 min |
+| 125 | 30 s | 4.9 min | 4.7 min |
+| 130 | 30 s | 4.7 min | 4.5 min |
+
+**Conclusion:** 5 minutes is already at the edge. The most it could grow is about 5.25 minutes, and only if the
+official setup is as short as ours and there are no more than 120 tasks; with 30 s of setup or 125 tasks, 5 minutes is
+already over a 5% margin. Lengthening it risks the whole score (S6) for at most 5% more time per task. The time must
+come from the procedure (V22 → V23: decisions from 51% to 69% of the time), not from the limit.
+
+### V25: the recommended block of the six agents' proposals (10-16, the user's: "me voy con tus recomendaciones")
+
+From `docs/time_proposals/` (where six independent agents agreed):
+1. **The coordinator thinks less**: thinking 256 and at most 1,024 output tokens (it had 512 and 4,096). V23's
+   coordinator calls had a median of 89 tokens; the long ones (300-430) were doubts about a line.
+2. **A literal sentence is applied by the script**: a sentence that is one replacement ("replace `A` with `B`", 6 of
+   V23's 15 sentences) is made by the script through the editor's own checks (whole new definition, syntax, tests,
+   undo), when A occurs once in the place; the editor agent is called only when that fails. The specify answer says
+   so ("the script makes this replacement").
+3. **`missing` naming the place itself is its sentence** (rich_3521 in V23 named its own place with the change).
+4. **No scope agent.** The plan is the located places and their identical copies (other "same pattern" or twin places
+   are no longer added: in V22-V23 they were never edited); each specifier's view lists the related code (callers,
+   overrides, copies, with the linking line, without line numbers) and the specifier names what must change too with
+   `missing`. The agent is gone from `agent.yaml`, the coordinator's prompt and SKILL.md.
+5. **The main place first**: the place chosen first for the first requirement is specified and edited (or applied
+   literally) before the other places are specified, so that a patch exists early (V22-V23: the first diff came at
+   about 240 s).
+6. `tools/kaggle_eval.py --bench-concurrency` measures vLLM with 1, 2 and 4 requests at once before the tasks (the
+   check the parallel-specify proposal needs).
+
+Dry run on fastapi_12942: locate went straight to specify (no scope), the specify view listed the six related functions
+without line numbers, and a literal sentence for `analyze_param` was applied by the script and routed to review with no
+editor call.
+
+| Checklist item | 1 coordinator 256 | 2 literal by script | 3 missing on self | 4 no scope | 5 main first |
+|---|---|---|---|---|---|
+| W4 next call | neutral | closer: a call less | closer: no refusal | closer: an agent less | neutral |
+| W7 room to think | slightly farther: reason: routing needs no deliberation; the long calls were doubts | neutral | neutral | neutral | neutral |
+| W3 code in front | neutral | neutral | neutral | closer: the related code is in the specifier's view, next to the place's code | neutral |
+| B8 many forms | neutral | neutral | neutral | neutral: missing already existed | neutral |
+| B11 doubting tool output | neutral | neutral: the same checks as an editor's edit | neutral | neutral | neutral |
+| B12 contradictions | closer: the answer says who makes the change | neutral | closer | neutral | neutral |
+| F5 what is done | neutral | neutral | neutral | neutral | closer: a patch exists earlier |
+
+Generic: every rule depends on the plan's structure, the form of a sentence or the time; none names a task.
+
+### V24 (10-16): 2/10
+
+fastapi_14851 and rich_3006 resolved; 7 of 10 tasks had a patch (V23: 6), 6 stopped at 5 minutes (V23: 7). requests_7328,
+resolved in V22 and V23, was stopped with a wrong patch. Specify fell from 77 calls (47%) to 64 (42%); refused or unused
+calls from 4 to 2. Decisions stayed at 69% of the time; the coordinator rose to 12% (79 calls, 137 tokens each). With
+10 tasks at temperature 1.0 a difference of one task is noise: V23 and V24 are not distinguishable by resolve count.
+
+### V25 (10-16): 4/10, submitted as S7
+
+requests_7328, fastapi_14851, httpx_3672 and rich_3006 resolved; 9 of 10 tasks had a patch and only 2 stopped at 5
+minutes (V24: 7 with a patch, 6 stopped). Decisions 67% of the time; specify 44%; the coordinator 12% (90 calls).
+
+**vLLM concurrency on Kaggle's 4×L4** (`--bench-concurrency`, 300 tokens per request, no thinking):
+
+| Requests at once | Total tokens/s | Per request |
+|---|---|---|
+| 1 | 39.8 | 39.8 |
+| 2 | 76.4 | 38.2 |
+| 4 | 143.3 | 35.8 |
+
+Four requests at once cost each only 10% of its speed: the parallel-specify proposal of `docs/time_proposals` (B1, D5,
+E1) would cut the specify stage of a plan with several places by up to about 3.5 times. It needs one state file per
+slot (the scripts lock one state) and ParallelAgent as an agent_tool; not built yet.
+
+### Screening tasks that can be scored (10-16, the user's: "Lanza otras 30 diferentes, pero asegúrate de que puedan ser puntuadas")
+
+V25-30 lost 8 of its 30 tasks to the environment (fastapi test files importing inline_snapshot and dirty_equals,
+absent from the Kaggle image). Whether a task can be scored depends on the environment, so it is checked where the run
+happens, before the agent runs: `judge.screen` judges the empty patch of each candidate (the reference twice, the
+original code twice, cached for the later judgement) and keeps a task only when the reference ran, it passes the
+harness's own whole-file check (`official_feasible`) and at least one test fails without it (FAIL_TO_PASS). Candidates
+come in a deterministic order that keeps each repository's share at every prefix (`judge.screen_order`, seed 1), so
+the first 30 that pass are a stratified sample and Kaggle and the local run screen the same order.
+`kaggle_eval.py --screen 30 --exclude <ids>` and `local_eval.py --screen 30 --exclude <ids> --fetch-snapshots
+--screen-only` (the snapshot of a task not chosen is deleted again: the local disk holds about 7 GB).
+
+A fault found while writing it: with several tasks at once (`--concurrency 4`, V25-30) the judge took the last JUnit
+report captured after its mark, which could be another task's run. Captures now carry a tag set per context
+(`contextvars`: each asyncio task and each `to_thread` call keeps its own), and a mark is `(index, tag)`. V25-30's
+judgements may have used a wrong report for some tasks; its numbers stand as recorded, with that caveat.
+
+This changes only the evaluation tools, nothing the model reads: no checklist table.
+
+### hk30: the V25 build with Haiku on 30 screened tasks (10-16), why the unresolved ones failed
+
+Haiku through tools/anthropic_proxy.py, the V25 build (= S7), 30 tasks chosen by `judge.screen` (all scorable here,
+none of V25-30's). Batches 1-2: 9/20 resolved, every task under 5 min (52-256 s). Not Kaggle evidence. The 11
+unresolved tasks of batches 1-2 were analysed by four independent agents from per-task dossiers (statement, reference,
+agent patch, failing tests, every call and answer); their reports are in `docs/analysis_hk30/`.
+
+| Task | First wrong stage | Info in the statement | The system contributed |
+|---|---|---|---|
+| rich_4076 | locate | no (title only) | no |
+| fastapi_15661 | — | no (title only; tests pin a new script's names) | no |
+| fastapi_15280 | — | no (the reference is a joke exception) | no |
+| rich_4075 | requirements, then specify "no change" | partly | yes: an empty requirement accepted; a parameter not tied to its function |
+| fastapi_9753 | locate/plan | yes | yes: siblings reading the same helper shown as "does not call them"; review shows only callers |
+| fastapi_13713 | edit | partly | yes: the signature hidden ("parameters, lines 65-822, not shown"), "Import them" for what must be a parameter, `missing` accepted for a non-name (loop) |
+| rich_3934 | requirements (title only), then locate | no | yes: reproduce off with 187 s unused; review's "not done" sends a "no change" place back to specify, not to locate |
+| fastapi_14953 | locate | partly | yes: library producers not candidates; review cut the evidence ('bina...') and framed it as "behaviour the issue keeps" |
+| rich_3043 | locate (the script) | partly | yes: a module-level constant is never a place; refused edits count toward MAX_EDITS (`p['edits'] += 1` before the apply) |
+| fastapi_14372 | locate | yes | yes: R1 names two classes, one planned; the subclass not related code; review "cannot tell" goes to submit |
+| fastapi_14361 | locate (the script) | yes | yes: a text fragment resolves silently to the first function holding it; review cannot send back to locate; its message says "goes back" and the route submits |
+
+Patterns (generic, by count):
+- Locate is the first wrong stage in 7 of 11; in 3 of them the script decided (module-level code not placeable, text
+  fragment resolved to the first hit, library producer not a candidate).
+- No route back from review to locate: a "not done" on a place specify keeps as "no change" loops or submits (3 tasks).
+- Weak checks after the edit: "Kept, not checked" and review's "cannot tell" go straight to submit (4 tasks).
+- Title-only statements: an empty requirement is accepted and reproduce is off at 5 min (`REPRO_LEFT_S = 360`), although
+  Haiku used 52-256 s (3 tasks); 3 tasks are not solvable from the statement at all.
+- Script faults to fix: module-level assignments as places; refused sends not counted as edits; a text search lists every
+  function holding the text; edit windows never hide a signature's parameters; "declare it as a parameter" instead of
+  "import it" when the undefined name is the def's own; `missing` only for code names; review evidence not cut
+  mid-value; test selection by bare name (`main`) counted as evidence.
+
+#### The hk30 proposals through the checklist (10-16, the user's: "pasa esa propuesta por el checklist")
+
+Closer (+), farther (−), neutral (=) per item of `docs/llm_checklist.md`; only the items each change moves are listed.
+
+| # | Change | Items | Why generic | Verdict |
+|---|---|---|---|---|
+| 1a | Module-level assignments (constants, templates) are places: chosen by name, shown whole, edited as a whole `NAME = ...` | W1 + (a found name can be chosen), W2 + (whole unit), W3 + (the text that must change is shown), B1 + (no line range for module code), B8 = (same forms) | every repository has module-level constants and templates | do |
+| 1b | A refused send does not count toward MAX_EDITS | F6 + ("refusals stay off the failure count"), F7 + | about the counter, not about the code | do |
+| 1c | A text fragment gives the list of every function and class holding it, with the matching line, ranked by the requirement's words, instead of the first hit silently | W1 +, B11 + (no hidden decision), B13 + (best first), B9 = (the list is the answer, not a new read form), B8 = | any text in any repository | do |
+| 1d | Edit windows never hide parameters: long default/doc text inside a signature is folded to `...`, every parameter line stays | W3 +, B16 + (no guessing the hidden part), B1 + (no line guessing), B7 − (a longer window; bounded by folding the docs text) | long signatures exist in any library | do |
+| 1e | The undefined-name check states the fact (not defined in the def, not imported in the file) and gives both ways: a parameter of the def or an import | F9 + (fact first), F1 + (where), B12 + ("import it" contradicted a parameter the sentence asks for) | any undefined name | do |
+| 1f | `missing` takes only a code name (or a new file path); anything else gets the place's code again with the forms | B6 + (a misused form answered with the right call), F7 + (the loop ends), B5 = (described, not quoted) | about the form | do |
+| 1g | Review evidence keeps whole values (expected vs actual never cut mid-value) and is labelled as a fact: "passed before, fails now", without "behaviour the issue keeps" | B11 +, F2 + (expected vs actual), F4 + (no framing that pushes a reconsideration), B12 + | any test output | do |
+| 1h | Tests count as evidence for a place only when the call map shows they call it, not by a shared bare name | B11 +, F3 + (no false OK) | about test selection | do |
+| 2a | Review's "not done" on a place that specify kept as "no change" sends the requirement back to locate, without the places already tried, once per requirement and only with time left | W4 + (route agrees with the message: today it says "goes back" and submits), B12 +, B10 = (gated by time left), B9 − (one more search; bounded to once, time-aware) | about the route | do |
+| 2b | Review's "cannot tell" with time left runs a check (the reproduction test if one exists) before submit | F3 +, B11 +, B10 − (time: Gemma on Kaggle has little to spare) | about the route | measure on Gemma first |
+| 3a | When a requirement names several definitions of the repository and only some are planned, locate's answer lists the ones left out to choose from | W1 +, W6 + (the statement's own names), B11 +, B8 = (same choice form), P7 − (more names shown; limited to those the requirement names) | names taken from the requirement | do |
+| 3b | Subclasses that re-declare the class (decorators, overrides) and siblings that read the same helper are related code; the label says what they share ("reads the same _helper") instead of "does not call them" | W3 +, B12 + (the old label invited a local fix), P7 − (more related code; only same-helper readers and direct subclasses) | structure of any code base | do |
+| 4a | The requirements step refuses a requirement with no situation or no expected result (described, not quoted) and ties every name to its owner ("end: a parameter of Console.print") | W6 +, W3 +, F9 + (fact), B5 = (described), B8 = | any statement | do |
+| 4b | Reproduce runs when time is left at the point it would start, not only with 6 min left (today never at 5 min) | F2 +, F3 +, B11 +, W5 + (pytest output), B10 − (time: V22 reproduce took 30-225 s with Gemma), B9 − | any task | measure on Gemma first |
+| 4c | A requirement about something that is not code (packaging, Python versions) can be marked "not code" in locate | B8 − (one more form; reason: two wasted steps in rich_4075), W1 + | any statement | defer: one task, and a new form |
+| 4d | Library code the repository re-exports becomes a candidate | W1 +, P7 − (distractors from large libraries), B13 − (longer list) | any library | defer: the distractor risk is not measured |
+
+Moving farther on an item needs a reason: 1d (B7), 2a (B9), 3a/3b (P7) are bounded as written; 2b and 4b move farther on
+B10, the item that cost the most with Gemma on Kaggle (V22), so they wait for a Gemma measurement; 4c and 4d are
+deferred.
+
+#### V26: the "free" hk30 changes (10-16, the user's: "implementa lo que salga gratis")
+
+"Free" = no checklist item farther (the table above): 1a, 1b, 1c, 1e, 1f, 1g, 1h and the owner half of 4a. Not built:
+1d (B7 −), 2a (B9 −), 3a/3b (P7 −), 2b/4b (B10 −: measure on Gemma first), 4c/4d (deferred); the refusal half of 4a
+(an empty requirement refused) is not free either: no deterministic test tells an empty requirement from a short
+one, and a wrong refusal costs a call (F4).
+
+- 1a `step.assignment`/`assignment_span`: `_resolve` finds a top-level assignment (`NAME = ...`, `NAME: T = ...`)
+  when no function or class has the name, in the file named first; `_refresh` follows it; the place view shows its
+  string whole (not collapsed); the edit takes the whole new assignment (one statement assigning that name) or the
+  replace form.
+- 1b refused sends (nothing applied) are counted apart (`refused`, at most 6), not as edits (at most 4).
+- 1c locate: a text fragment (not a name) is searched and every function holding it listed; `class Depends` / `def f`
+  is the name.
+- 1e the undefined-name check gives both ways: a parameter of the place, or an import.
+- 1f edit's `missing` must name code (a definition, a new member of an existing owner, or a .py path); otherwise the
+  form is described and the replace / whole forms offered.
+- 1g review: failing existing tests are facts; "a test that checks a value the issue changes fails as expected; a test
+  of behaviour the issue keeps must keep passing"; a second `done` is accepted as before.
+- 1h the review's regression check measures whether the passing tests run the changed lines ("but none of them runs
+  the changed lines").
+- 4a requirements: a name that is a parameter is shown with the functions that take it, the most called first.
+
+Checked: replays of rich_3043, rich_4075 and fastapi_14361 (hk30 traces) on the V26 build: no traceback or internal
+error; in rich_3043 locate now chooses CONSOLE_HTML_FORMAT (`rich/_export_format.py`, lines 1-18) at the first call
+that named it. Model run: the 30 hk30 tasks with Haiku on V26 (row hk26 in VERSIONS.md).
+
+### Which tasks are slow, and the 15-minute time trial (10-16, the user's question)
+
+The 12 h are for all tasks together; `max_time_minutes` is a cap per task that we set, so a task that ends early leaves
+time for others only if the cap is raised. Data: the Gemma Kaggle runs of the stages build (V23, V24, V25, V25-30,
+V25-30s: 90 task runs; `scratchpad/slow.py`).
+
+- 60 of 90 ended at the cap (≥ 295 s), 30 under it. Resolved: 14 of the 30 under the cap, 8 of the 60 at the cap
+  (the harness takes the diff at the stop). The 22 resolved took 154-335 s (median about 265 s); 8 of them at the cap.
+- **Not the vague statements.** Title-only statements (fewer than 25 words after the title, PR-template text removed)
+  reach the cap less often: 54% (39 runs) against 76% (51 runs). Longer bodies give more requirements.
+- **The number of requirements.** 1 requirement: 56% at the cap, 18/62 resolved; 2: 90% at the cap, 3/20; 3 or more:
+  6 of 7 at the cap, 1/7 resolved. Each requirement adds a locate and a review, and its places a specify and an edit.
+- **The size of the fix.** Reference patches of up to 20 changed lines: about half at the cap, 18/46 resolved; over 20
+  lines: 82% at the cap, 4/44 resolved.
+- Per agent, the capped runs spent more in every stage, most in specify (120 s against 81 s on average).
+- Haiku on the same 30 tasks (V25-30s): median 94 s where Gemma was capped, 82 s where it was not; Haiku resolved 8 of
+  the 20 Gemma capped.
+
+**The trial (V25-T15):** the V25 build unchanged except `max_time_minutes: 15`, `BUDGET_S` 14 min 30 s and
+reproduce kept off (`REPRO_LEFT_S` out of reach, so the procedure is the one of the 5-minute runs), on the 30 tasks of
+V25-30s (5/30 at 5 min), 4 at once on Kaggle. It measures each task's natural duration and what more time resolves;
+from it, for a cap C, the 12 h total Σ min(C, tᵢ) + setup over about 120 tasks and the tasks resolved by time C.
+
+**How the 90 runs ended, and what the cut ones resolved** (10-16, the user's question "de las tareas que cortamos
+cuántas se resolvieron?"; the submit_patch call's time in each trace):
+
+| Ending | Runs | Resolved | Empty patch |
+|---|---|---|---|
+| The harness cut at 5 min (no submit_patch) | 44 | 1 | 34 |
+| Our route submitted at its 4:30 stop | 16 | 5 | 0 |
+| Submitted before 4:30 | 30 | 16 | 1 |
+
+In the 44 harness cuts a sub-agent was working at 4:30 (specify 24, edit 12, other 8): the 4:30 stop is checked only
+when the coordinator calls `route.py`, so a batched sub-agent call runs past it. 36 of the 44 had no edit kept: the
+time went to requirements, locate and specify, and nothing was left to submit.
+
+**V26 with Haiku (hk26):** 15/30, as V25 (hk30), with three tasks exchanged. The three gained are the three the
+changes were for, and each used its change: rich_3043 chose CONSOLE_HTML_FORMAT and edited it as a whole assignment
+(62 s), fastapi_14361 chose from the text-search list, rich_4075 saw `end` as a parameter of `print` / `Console.print`.
+The three lost (fastapi_14419, rich_3718, rich_3180) went another way before any new text was shown (other places
+located or specified; rich_3718 saw none of the new texts): sampling at temperature 1.0, not the changes. In
+fastapi_14419 and rich_3180 the review then saw the new 1g wording with failing tests and answered done / cannot tell;
+the judge finds no existing test broken by the final patch in either, so the failing hidden tests are the wrong fix
+itself.
+
+#### The time trial's result (V25-T15, 10-16)
+
+10/30 resolved with 15 minutes, against 5/30 with 5 (V25-30s, the same tasks and build). Natural durations: mean
+519 s, median 488 s, 154-907 s; 4 tasks hit 15 minutes; empty patches 5 (V25-30s: 18). The resolved tasks finished
+at 154-516 s; none after 8 min 36 s.
+
+| Cap | Resolved by then | Mean time per task | 120 tasks, 9 s setup | 120 tasks, 30 s setup |
+|---|---|---|---|---|
+| 5 min | 5 | 298 s | 10.4 h | 11.1 h |
+| 6 min | 7 | 341 s | 11.8 h | 12.5 h |
+| 7 min | 8 | 380 s | 13.1 h | 13.8 h |
+| 8 min | 9 | 414 s | 14.3 h | 15.0 h |
+| 10 min | 10 | 461 s | 15.8 h | 16.5 h |
+
+("Resolved by then": resolved in the trial and finished by the cap plus 15 s; a run with that cap would stop the route
+earlier, so this is an estimate. Totals add the fixed 8.5 min. Durations were measured 4 at once, about 10% slower
+per request than one at a time.)
+
+Reading: more time resolves more (the extra 5 come at 5.1-8.6 min), but the 12 h hold only up to about 6 minutes,
+and only with a short official setup per task. The rest of the gain has to come from making the tasks faster: the
+same resolved tasks in less time.

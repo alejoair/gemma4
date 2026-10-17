@@ -62,7 +62,7 @@ def _is_test_file(rel):
     return rel.endswith('.py') and (name.startswith('test_') or name.endswith('_test.py'))
 
 
-def select(root, changed):
+def select(root, changed, use_map=True):
     """pytest targets for the changed code. changed: {rel: [changed line texts and symbol names]}. First the tests that
     call a changed function on the original code (the call map), grouped by file, the files with most such tests
     first. Without the map, test files score by being the changed module's own test file (test_<module>.py), then by
@@ -72,7 +72,7 @@ def select(root, changed):
     for items in changed.values():
         for item in items:
             names.update(w for w in IDENT.findall(item) if w not in COMMON)
-    m = callmap(root)
+    m = callmap(root) if use_map else None   # the stages build's review check: lexical selection only (no suite run)
     if m:
         by_file = {}
         for key, tids in m.items():
@@ -254,6 +254,19 @@ def _short(report):
         errs = [l.strip() for l in lines[-4:] if l.strip()]
     return marked[:300], "\n".join(e[:300] for e in errs[:8])
 
+def _frames(report):
+    """The failure's traceback entries as 'path:line', outermost first (gk13-gk15: locate needs where the failure
+    happened in the repository's code, not only the test's own marked line)."""
+    out = []
+    try:
+        for e in report.longrepr.reprtraceback.reprentries:
+            loc = getattr(e, "reprfileloc", None)
+            if loc is not None:
+                out.append(f"{loc.path}:{loc.lineno}")
+    except Exception:
+        pass
+    return out[-12:]
+
 def pytest_collectreport(report):
     if report.failed:
         marked, msg = _short(report)
@@ -274,6 +287,7 @@ def pytest_runtest_logreport(report):
         rec = {"id": report.nodeid, "o": o}
         if o in ("failed", "error"):
             rec["marked"], rec["msg"] = _short(report)
+            rec["frames"] = _frames(report)
         _w(rec)
     if report.when == "teardown":
         if _lines or _calls:
@@ -410,7 +424,7 @@ def _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial):
         out.seek(0)
         text = out.read()
         out.close()
-        res = {'group': list(group), 'outcomes': {}, 'msgs': {}, 'hits': {}, 'timeout': timed_out,
+        res = {'group': list(group), 'outcomes': {}, 'msgs': {}, 'frames': {}, 'hits': {}, 'timeout': timed_out,
                'exit': p.returncode, 'output': text}
         try:
             with open(outcomes) as fh:
@@ -425,6 +439,7 @@ def _run_groups(cwd, targets, timeout, extra, flags, env_extra, serial):
                             res['outcomes'][rec['id']] = rec['o']
                         if rec['o'] in ('failed', 'error'):
                             res['msgs'].setdefault(rec['id'], (rec.get('marked', ''), rec.get('msg', '')))
+                            res['frames'].setdefault(rec['id'], rec.get('frames') or [])
                     else:
                         res['hits'][rec['id']] = (rec.get('lines', []), rec.get('calls', []))
         except OSError:
@@ -466,8 +481,8 @@ def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None, callmap=Fal
         # rest of the task
         _state.save('serial_tests', True)
         res = _run_groups(cwd, targets, timeout, extra, flags, env_extra, True)
-    out = {'ran': False, 'outcomes': {}, 'msgs': {}, 'covered': None, 'calls': {}, 'timeouts': [], 'missing': set(),
-           'output': '', 'broken_run': []}
+    out = {'ran': False, 'outcomes': {}, 'msgs': {}, 'frames': {}, 'covered': None, 'calls': {}, 'timeouts': [],
+           'missing': set(), 'output': '', 'broken_run': []}
     base = os.path.realpath(cwd)
     for g in res:
         if 'No module named pytest' in g['output'] or 'pytest is disabled' in g['output']:
@@ -477,6 +492,7 @@ def run(root, targets, timeout=None, cwd=None, stubs=(), cover=None, callmap=Fal
         out['missing'] |= _missing_modules(cwd, g['output'])
         out['outcomes'].update(g['outcomes'])
         out['msgs'].update(g['msgs'])
+        out['frames'].update(g.get('frames', {}))
         if g['timeout']:
             out['timeouts'].append(g['group'])
         elif not g['outcomes'] and g['exit'] not in (0, 5):
@@ -634,7 +650,7 @@ def _rerun(root, ids, stubs):
     return {i for i in ids if r['outcomes'].get(i) in ('failed', 'error')}
 
 
-def check(root, changed, renamed=(), cover=None, undo=None):
+def check(root, changed, renamed=(), cover=None, undo=None, use_map=True):
     """The verdict on the current code: ('OK' | 'UNCHECKED' | 'BROKEN', detail, new failures). A failure counts against
     the edit only when the same test, in the same groups, passes on the original code, fails again when run alone,
     and (undo = (rel, lines before the edit)) passes on the code just before this edit. OK needs passing tests that run
@@ -645,7 +661,7 @@ def check(root, changed, renamed=(), cover=None, undo=None):
     if broken_imports:
         detail = '\n'.join(f'  importing {m} fails: {err}' for m, err in broken_imports[:3])
         return 'BROKEN', 'the changed code cannot be imported any more:\n' + detail, [m for m, _ in broken_imports]
-    targets = select(root, changed)
+    targets = select(root, changed, use_map)
     if not targets:
         return 'UNCHECKED', 'no existing test uses the changed code (it imports without errors)', []
     stubs = tuple(_state.load('stubs', []))

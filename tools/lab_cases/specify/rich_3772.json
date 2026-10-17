@@ -1,0 +1,40 @@
+{
+ "task": "rich_3772",
+ "note": "empty in vf4; the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "Fix traceback recursion",
+      "Building a Traceback (Traceback.extract) ends instead of recursing without end."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "Traceback.extract"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

@@ -1,0 +1,40 @@
+{
+ "task": "rich_3905",
+ "note": "resolved in vf4 (control); the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "When creating a `Progress` with `disabled=True`, it still outputs a blank line on non interactive consoles.",
+      "Progress(disabled=True).stop() does not output a blank line on non interactive consoles"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "Progress.stop"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

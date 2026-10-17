@@ -70,9 +70,54 @@ def _sse(answer):
     return ''.join(f'data: {json.dumps(c)}\n\n' for c in chunks) + 'data: [DONE]\n\n'
 
 
+def _assemble(lines):
+    """A non-streamed chat completion from the SSE lines of a streamed one (content, reasoning, tool calls, usage)."""
+    msg = {'role': 'assistant', 'content': '', 'reasoning_content': ''}
+    calls, finish, usage, meta = {}, None, None, {}
+    error = None
+    for raw in lines:
+        line = raw.decode('utf-8', 'replace').strip()
+        if not line.startswith('data:') or line[5:].strip() == '[DONE]':
+            continue
+        try:
+            chunk = json.loads(line[5:].strip())
+        except ValueError:
+            continue
+        if chunk.get('error'):
+            # gm10: vLLM answered 200 and sent its 400 inside the stream (thinking_token_budget without
+            # --reasoning-config); it was assembled into an empty answer, and the agent was nudged twice
+            error = chunk['error']
+            continue
+        meta = meta or {k: chunk.get(k) for k in ('id', 'model', 'created')}
+        usage = chunk.get('usage') or usage
+        for ch in chunk.get('choices') or []:
+            d = ch.get('delta') or {}
+            msg['content'] += d.get('content') or ''
+            msg['reasoning_content'] += d.get('reasoning_content') or d.get('reasoning') or ''
+            for tc in d.get('tool_calls') or []:
+                c = calls.setdefault(tc.get('index', 0), {'id': '', 'type': 'function',
+                                                          'function': {'name': '', 'arguments': ''}})
+                c['id'] = tc.get('id') or c['id']
+                f = tc.get('function') or {}
+                c['function']['name'] += f.get('name') or ''
+                c['function']['arguments'] += f.get('arguments') or ''
+            finish = ch.get('finish_reason') or finish
+    if error and not (msg['content'] or calls):
+        return {'error': error}
+    if calls:
+        msg['tool_calls'] = [calls[k] for k in sorted(calls)]
+    if not msg['reasoning_content']:
+        msg.pop('reasoning_content')
+    return {**meta, 'object': 'chat.completion', 'usage': usage,
+            'choices': [{'index': 0, 'message': msg, 'finish_reason': finish or 'stop'}]}
+
+
 class Gate(BaseHTTPRequestHandler):
     upstream = ''
     dir = Path('.')
+    api_key = ''              # the upstream's key, sent instead of the client's (a Colab vLLM behind a tunnel)
+    stream_upstream = False   # ask the upstream for a stream and assemble it: a Cloudflare quick tunnel ends a
+                              # response whose first byte takes over 100 s (a long non-streamed generation)
 
     def log_message(self, *a):
         pass
@@ -86,14 +131,23 @@ class Gate(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _forward(self, method, path, data=None):
+        auth = f'Bearer {self.api_key}' if self.api_key else self.headers.get('authorization', 'Bearer EMPTY')
         req = urllib.request.Request(self.upstream.rstrip('/') + path, data=data, method=method, headers={
-            'content-type': 'application/json', 'authorization': self.headers.get('authorization', 'Bearer EMPTY'),
-            'user-agent': 'swe-monitor'})
+            'content-type': 'application/json', 'authorization': auth, 'user-agent': 'swe-monitor'})
         try:
             with urllib.request.urlopen(req, timeout=3600) as r:
+                if self.stream_upstream and method == 'POST':
+                    ans = _assemble(r)
+                    if 'error' in ans:
+                        return int(ans['error'].get('code') or 502), json.dumps(ans).encode()
+                    return r.status, json.dumps(ans).encode()
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
+        except (urllib.error.URLError, OSError) as e:
+            # gm3: a connection reset by the gateway crashed the handler and lost the step; the client gets a 502 and
+            # retries, and the step is recorded
+            return 502, json.dumps({'error': {'message': f'gate: upstream unreachable: {e}', 'code': 502}}).encode()
 
     def do_GET(self):
         code, body = self._forward('GET', self.path.replace('/v1', '', 1) if self.path.startswith('/v1') else self.path)
@@ -102,8 +156,10 @@ class Gate(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or b'{}')
         stream = bool(req.get('stream'))
-        req['stream'] = False
+        req['stream'] = bool(self.stream_upstream)
         req.pop('stream_options', None)
+        if self.stream_upstream:
+            req['stream_options'] = {'include_usage': True}
         with LOCK:
             n = _read_int(self.dir / 'count') + 1
             (self.dir / 'count').write_text(str(n))
@@ -201,10 +257,15 @@ def main():
     ap.add_argument('--dir', type=Path, required=True)
     ap.add_argument('--upstream', default='http://127.0.0.1:8790/v1')
     ap.add_argument('--port', type=int, default=8791)
+    ap.add_argument('--api-key-file', default='', help="a file holding the upstream's key (never the repository)")
+    ap.add_argument('--stream-upstream', action='store_true', help='stream from the upstream and assemble (tunnels)')
     a = ap.parse_args()
     a.dir.mkdir(parents=True, exist_ok=True)
     if a.cmd == 'serve':
         Gate.upstream, Gate.dir = a.upstream, a.dir
+        Gate.stream_upstream = a.stream_upstream
+        if a.api_key_file:
+            Gate.api_key = Path(a.api_key_file).read_text().strip()
         for f in ('count', 'allow'):
             (a.dir / f).write_text('0')
         (a.dir / 'paused_s').write_text('0')

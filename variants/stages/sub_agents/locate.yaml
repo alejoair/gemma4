@@ -3,4 +3,4 @@ description: Chooses where in the code the behaviour of one requirement is decid
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include locate.md
 skills: [skills/fix-issue]
-generate_content_config: !include sampling_1k.yaml
+generate_content_config: !include sampling_512.yaml

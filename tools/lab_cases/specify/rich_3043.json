@@ -1,0 +1,40 @@
+{
+ "task": "rich_3043",
+ "note": "empty in vf4; the reference places are located (the step is tested alone)",
+ "feasible_from_statement": false,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "This PR fixes the HTML export template, addressing the issue raised in #3021",
+      "The HTML that Console.export_html writes from the export template is fixed (the issue raised in #3021)."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "CONSOLE_HTML_FORMAT"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

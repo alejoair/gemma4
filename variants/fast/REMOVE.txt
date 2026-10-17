@@ -1,0 +1,13 @@
+prompts/coordinator.md
+configs/sampling.yaml
+sub_agents/locate.yaml
+sub_agents/locate.md
+sub_agents/specify.yaml
+sub_agents/specify.md
+sub_agents/edit.yaml
+sub_agents/edit.md
+skills/fix-issue/scripts/route.py
+skills/fix-issue/scripts/scope.py
+skills/fix-issue/scripts/locate.py
+skills/fix-issue/scripts/specify.py
+skills/fix-issue/scripts/edit.py

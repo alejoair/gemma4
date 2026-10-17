@@ -1,4 +1,4 @@
-"""build.py <out dir> [validator] [--variant <name>]: the submission from agent/, without Python caches (a .pyc file
+"""build.py <out dir> [validator] [--variant <name>[,<name>...]]: the submission from agent/, without Python caches (a .pyc file
 makes the harness reject it), as <out dir>/submission/ and <out dir>/submission.zip; then runs the competition's
 validate_submission.py on the directory when its path is given. A variant (variants/<name>/) is copied over agent/:
 its files replace or add to the base ones, and the paths listed in its REMOVE.txt (one per line) are deleted from
@@ -17,7 +17,10 @@ def build(out, variant=None):
     dst = os.path.join(out, 'submission')
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(ROOT, dst, ignore=IGNORE)
-    if variant:
+    # variants stack in order ('stages,fast': the fast build is the stages build with its own agents on top)
+    for variant in (variant or '').split(','):
+        if not variant:
+            continue
         src = os.path.join(ROOT, '..', 'variants', variant)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache', 'REMOVE.txt'),
                         dirs_exist_ok=True)

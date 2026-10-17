@@ -1,0 +1,8 @@
+# the coordinator only passes the next call on (docs/time_proposals): V23's calls had a median of 89 tokens, and the long
+# ones (300-430 tokens) were doubts about a line; 256 bounds them
+temperature: 0.2
+top_p: 0.95
+max_output_tokens: 1024
+thinking_config:
+  thinking_budget: 256
+  include_thoughts: true

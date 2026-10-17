@@ -40,9 +40,20 @@ def fast_path_dirs(work: Path) -> list[str]:
     return paths
 
 
+def _host_package_dirs() -> list[str]:
+    """The host's package directories, 'dist-packages' included. swegemma's _host_env.pth lists only paths that contain
+    'site-packages'; on Kaggle's image (Debian's python) the host packages are in /usr/local/lib/python3.12/dist-packages
+    and reach the sandbox only as system site packages, which Python adds after every .pth of the venv. The workspace
+    directories of workspace_paths.pth then came first: V22 (10-15) imported fastapi/requests.py as `requests` (from
+    langsmith's pytest plugin), so every reproduction test and every reference run of the fastapi tasks failed. Listing
+    the host directories first keeps the official order: the workspace directories after the installed packages."""
+    import sys
+    return [p for p in sys.path if p and ('site-packages' in p or 'dist-packages' in p) and Path(p).is_dir()]
+
+
 def _write_pth(work: Path) -> None:
     """workspace_paths.pth in the venv of the subprocess sandbox that owns this workspace (<root>/venv)."""
-    text = '\n'.join(fast_path_dirs(work)) + '\n'
+    text = '\n'.join(dict.fromkeys(_host_package_dirs() + fast_path_dirs(work))) + '\n'
     for sp_dir in (work.parent / 'venv').glob('lib/python*/site-packages'):
         pth = sp_dir / 'workspace_paths.pth'
         try:
