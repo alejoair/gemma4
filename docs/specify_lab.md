@@ -73,3 +73,26 @@ The reference rewrites `chop_cells` (`rich/cells.py`) to walk the characters for
    - or it keeps reasoning in its visible text until `max_output_tokens` and ends without a call (session 2, turn 5).
 2. **Gemma spends much of the budget copying code it was just shown into its thought.** In session 2 about half of each thought is a verbatim copy of a function from the window.
 3. **When the window shows the code that decides the behaviour, the decision is right even with a cut thought.** In session 2, turn 3, the `chop_cells` sentence is the reference's change. In session 1 the deciding code (the class fields and who sets them) was never shown, and Gemma asked for it three times through `missing`.
+
+## Variant B: an instruction to think briefly (10-17)
+
+The variant is `tools/lab_cases/specify/instr_short_think.md`, the specify1 instruction plus one paragraph:
+- point at code by name and line instead of copying it;
+- think in three short steps (which lines decide, what they do now, what they must do), then make the call;
+- 'no change' only when the place already does what the requirement says; otherwise send the best sentence, since review and repair check afterwards.
+
+The result is that it does not help:
+- **fastapi_14419, turns 1-3:** less code copied, but the thought was still cut (551 and 580 tokens) and it re-read the issue from the start ("Wait … let's re-read carefully"). Turn 2 was "no change" on `solve_dependencies` (reasonable: the logic is in `cache_key`); turn 3 used `missing Dependant.computed_scope` to read.
+- **rich_3180, turns 1-2:** the same as without it: `divide_line` copied into the thought, cut at 589 tokens, `missing chop_cells`.
+
+The model's way of thinking does not change with an instruction; the budget is still exceeded every decision turn.
+
+## Where the missing information comes from (the user's question)
+
+In fastapi_14419 the missing facts are mainly a fault of **the specify view** built by `_stages.py`, and partly of locate:
+- **The specify view:**
+  - For a method that reads `self.<attribute>`, it shows the functions the method calls, but not the class's fields or where those attributes are assigned (here `Dependant(..., security_scopes=...)` in `get_dependant`).
+  - It shows unrelated members instead.
+  - Its name resolution does not know class attributes, hence the false "does not exist yet".
+- **Locate** chose `cache_key` but not the functions that set the field, which the reference changes too.
+- **The model** asked for exactly the missing code three times. `missing` is its only way to ask, since it cannot read.
