@@ -201,3 +201,24 @@ stage:
 Fixed in vf4:
 - a single item, or an item that is a command, is not a requirement: the answer gives the pair form;
 - the requirements agent may replace its requirements while no requirement is located yet.
+
+## vf5 (10-17): the prompt and answer audit
+
+Every text the model reads was audited against the checklist and the vf3 traces. The findings and fixes, agent by
+agent, are in `docs/prompt_audit_fast.md`. The fixes add no stage and no agent.
+
+| Item | Effect | Why |
+|---|---|---|
+| B12 contradictions | closer | "Your part is finished" now says the call was not applied and why stopping is safe. The final undone answer no longer reads as a contradiction. A long place's NEXT is the same in every answer. |
+| P8 progress | closer | Every "done" answer recaps what this agent finished and names the next stage. |
+| B11 trust in output | closer | `missing` for a planned place states that fact. "Nothing holds that" is limited to the files searched. The empty patch is warned about and retried. |
+| W3 code in front of it | closer | A long signature keeps the hidden lines with the sentence's terms. A module answer lists its constants. |
+| B5 quoting failed input | closer | The locate answer counts unmatched names instead of quoting them. |
+| B2 / W4 | closer | Several groups of a long place go in one call, so a place is not closed half changed. |
+| B8 forms | farther, one form | `replace` takes several pairs. Reason: one call per group closed the place after the first group (2 traces lost half the change); the form is the same one, repeated. |
+| B9 exploring | farther, slightly | A locate worker may replace its last choice, and the requirements agent its requirements, before the next stage starts. Reason: a first wrong choice was final (4 of 8 traces); the window closes when the next stage starts. |
+| B1, B3, W1 | neutral | No numbers, ids or lists changed. |
+
+**Why it is generic:** every fix changes what an answer says or which form it accepts. Each one keys on the state of
+the procedure (a finished part, a planned place, an empty diff, the files searched), never on a repository, a
+library or a task.
