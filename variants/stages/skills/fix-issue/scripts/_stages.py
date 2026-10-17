@@ -1677,8 +1677,8 @@ def _assign_place(root, p):
 
 NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
 NXT_DIAG = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<the lines that make "
-            "it fail>', '<what they do now>'] or ['no change', '<the line that already does it>'] or ['missing', "
-            "'<name of other code>', '<what must change there>']")
+            "it fail>', '<what they do now>', '<what they must do instead>'] or ['no change', '<the line that already "
+            "does it>'] or ['missing', '<name of other code>', '<what must change there>']")
 
 
 # vf6 lab (the 31B, step by step): 15 of 16 specify decisions were cut at the thinking budget, and 8 of those were
@@ -1687,7 +1687,7 @@ NXT_DIAG = ("NEXT: call run_skill_script with skill_name fix-issue, file_path sp
 # in the conversation as the call's own text), then what they must do; 'no change' names the line that already does
 # what the requirement says.
 DIAGNOSE = True
-NC_REFUSALS = 2          # 'no change' without a line of the place is refused at most this many times
+NC_REFUSALS = 1          # 'no change' without a line of the place is refused at most this many times (g10: 2 cost calls)
 
 
 def _collapse(s):
@@ -1797,8 +1797,9 @@ def specify(root, st, args):
         if _diagnosing(p):
             return (text + f'\n\n{ids} {"do" if plural else "does"} not hold in the current code: that is why the issue '
                     f'exists, and {p["handle"]} was located as where {"they are" if plural else "it is"} decided. First '
-                    f'find what breaks {ids} here: send the lines of {p["handle"]} that make {ids} fail, copied as '
-                    'written above, and what they do now. Your next call then says what they must do instead. If this '
+                    f'find what breaks {ids} here, then what must change, in one call: the lines of {p["handle"]} that '
+                    f'make {ids} fail (copied as written above), what they do now, and what they must do instead (one '
+                    'sentence, complete in itself, with the exact names: the editor sees only this place). If this '
                     f"place already does what {ids} {'say' if plural else 'says'}, send ['no change', '<the line that "
                     "already does it>']; if the change belongs in other code (a function this place calls, for "
                     "example), send ['missing', '<its name>', '<what must change there>'].\n\n" + NXT_DIAG)
@@ -1864,6 +1865,11 @@ def specify(root, st, args):
                     f'it, {ids} fails here: send the lines that make it fail and what they do now.\n\n'
                     + (NXT_DIAG if _diagnosing(p) else nxt))
         items = ['no change']
+    elif _diagnosing(p) and len(items) >= 3 and _in_place(root, p, items[0]):
+        # g10: the finding and the sentence in one call (each decision call fills the thinking budget; two calls per
+        # place doubled specify's time); the finding is written first, the sentence last
+        p['diag'] = {'lines': items[0].strip()[:800], 'now': items[1].strip()[:400]}
+        items = [' '.join(x.strip() for x in items[2:])]
     elif _diagnosing(p) and len(items) >= 2:
         lines, now = items[0], ' '.join(items[1:]).strip()
         if not _in_place(root, p, lines) and p.get('diag_refused', 0) < NC_REFUSALS:

@@ -293,3 +293,27 @@ The fast build has 3 specify workers in parallel. Its places are split between t
 - rich_3934, sample 1: a two-word statement.
 
 **Verdict:** the step meets the agreed criterion except the whole-step time when one specifier holds two or three places. The next check is the Kaggle eval of the whole build.
+
+## Where specify's time goes (g10: vf7 with the local 31B on 10 tasks, 10-17)
+
+All 112 specify calls of the run were counted from the gate's records (`step_gate.py --serial`).
+
+| Kind of call | Count | Output tokens |
+|---|---|---|
+| open | 30 (3 per task, one per worker; 2 of the 3 usually find nothing left) | 42-290 |
+| finding | 12 | about 1,100 each |
+| sentence | 11 | about 1,100 each |
+| no change | 9 (5 of them in fastapi_15661, 3 after a refusal) | about 1,070 each |
+| missing | 3 | about 1,100 each |
+| text with no call | 27 (most are the final "done"; 4 are reasoning spilled into the text, 467-1,026 tokens) | |
+
+- **Decision calls:** 62, median 1,002 output tokens; 29 were cut at the 1,024 budget.
+- **A place costs two full-budget calls** (the finding, then the sentence), about 2,200 tokens: about 63 s at Kaggle's speed (35 tokens/s), against one call in vf5.
+- **The refusals of 'no change' added calls in one task** (fastapi_15661: 5 'no change' calls).
+- **Total specify output per task:** 935-7,762 tokens, upstream time 100-558 s.
+- **Locally the 3 workers run one after another**, so that time is their sum. On Kaggle they run together.
+- **For comparison, vf5 on Kaggle** (one decision call per place): specify span median 66 s, maximum 204 s.
+
+**What it costs:** every decision call fills the thinking budget, easy or hard. The split doubled the number of decision calls per place.
+
+**The fix to test:** keep the finding before the decision, but in **one call**: `['<the lines that make it fail>', '<what they do now>', '<what they must do instead>']`. The written finding still comes first, and is still kept in the conversation. A 'no change' without a body line is refused once, not twice.
