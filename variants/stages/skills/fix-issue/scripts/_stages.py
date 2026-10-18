@@ -393,8 +393,8 @@ def _library(root, name):
     head = name.split('.')[0]
     if head.startswith('__') and head.endswith('__'):
         return True
-    if '.' not in name:
-        return False
+    if '.' not in name or head in _repo.own_names(root):
+        return False                # the repository's own package, also when a copy is installed (audit 10-18 #8)
     try:
         import importlib.util
         spec = importlib.util.find_spec(head)
@@ -411,8 +411,7 @@ def _library_modules(root, top=8):
     if cached is not None:
         return cached
     import collections
-    import _example
-    own = set(_example._packages(root))
+    own = _repo.own_names(root)
     count = collections.Counter()
     for rel in _repo.iter_py(root, docs=False):
         tree = _code.parse(_repo.read_text(root, rel))
@@ -428,23 +427,46 @@ def _library_modules(root, top=8):
     return out
 
 
+LIBRARY_PROBE = ('import importlib, json, sys\nout = {}\n'
+                 'for m in sys.argv[1:]:\n'
+                 '    try:\n        mod = importlib.import_module(m)\n'
+                 '    except BaseException:\n        continue\n'
+                 '    out[m] = sorted(set(dir(mod)) | set(getattr(mod, "__all__", None) or ()))\n'
+                 'print("SWELIB" + json.dumps(out))\n')
+
+
+def _library_names(root):
+    """{module: its public names} of the libraries the repository imports most, read once per task in a separate
+    process with a time limit (audit 10-18 #16: they were imported in the script's own process, without one: a heavy
+    or network-touching import slowed or hung the call)."""
+    cached = _state.load('library_names')
+    if cached is not None:
+        return cached
+    mods = _library_modules(root)
+    out = {}
+    if mods:
+        env = {k: v for k, v in os.environ.items() if k.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
+        try:
+            text = subprocess.run([sys.executable, '-c', LIBRARY_PROBE] + mods, cwd=_state.directory(), env=env,
+                                  capture_output=True, text=True, timeout=_tests._budget(20),
+                                  stdin=subprocess.DEVNULL).stdout
+            m = re.search(r'SWELIB(\{.*\})', text)
+            out = json.loads(m.group(1)) if m else {}
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            out = {}
+    _state.save('library_names', out)
+    return out
+
+
 def _library_homes(root, name):
     """'pydantic.Tag' for a name a library the repository uses defines. gm11 (fastapi_12942, the 31B): the lookup
     showed only fastapi.openapi.models.Tag, and the reproduction test defined its own class Tag instead of importing
     pydantic's; both tries failed for that reason."""
     short = name.split('.')[-1]
-    if not re.fullmatch(r'[A-Za-z_]\w*', short):
+    if not re.fullmatch(r'[A-Za-z_]\w*', short) or short.startswith('_'):
         return []
-    out = []
-    import importlib
-    for mod in _library_modules(root):
-        try:
-            m = importlib.import_module(mod)
-        except Exception:
-            continue
-        if getattr(m, short, None) is not None and not short.startswith('_'):
-            out.append(f'{mod}.{short}')
-    return out[:2]
+    names = _library_names(root)
+    return [f'{mod}.{short}' for mod in _library_modules(root) if short in names.get(mod, ())][:2]
 
 
 def requirements(root, st, args):
@@ -1591,19 +1613,48 @@ def _lib_base(root, rel, base):
             for al in node.names:
                 if (al.asname or al.name) == head and rest:
                     target = (al.name, rest)
-    if target is None:
-        return None
-    try:
-        import importlib
-        mod = importlib.import_module(target[0])
-        if os.path.realpath(getattr(mod, '__file__', '') or '').startswith(os.path.realpath(root) + os.sep):
-            return None                                   # the repository's own code, listed by the table
+    if target is None or target[0].split('.')[0] in _repo.own_names(root):
+        return None                                       # the repository's own code, listed by the table
+    key = '|'.join(target)
+    cache = _state.load('lib_bases', {}) or {}
+    if key not in cache:
+        # in a separate process with a time limit (audit 10-18 #16), once per task
+        try:
+            text = subprocess.run([sys.executable, '-c', BASE_PROBE, target[0], target[1], root],
+                                  cwd=_state.directory(), capture_output=True, text=True,
+                                  timeout=_tests._budget(20), stdin=subprocess.DEVNULL).stdout
+            m = re.search(r'SWEBASE(.*)', text)
+            cache[key] = json.loads(m.group(1)) if m else None
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            cache[key] = None
+        _state.save('lib_bases', cache)
+    return cache[key]
+
+
+BASE_PROBE = r'''import importlib, inspect, json, os, sys
+mod_name, attr, root = sys.argv[1:4]
+res = None
+try:
+    mod = importlib.import_module(mod_name)
+    if not os.path.realpath(getattr(mod, "__file__", "") or "").startswith(os.path.realpath(root) + os.sep):
         obj = mod
-        for part in target[1].split('.'):
+        for part in attr.split("."):
             obj = getattr(obj, part)
-        return obj if isinstance(obj, type) else None
-    except Exception:
-        return None
+        if isinstance(obj, type):
+            meths = []
+            for n, f in inspect.getmembers(obj, inspect.isfunction):
+                if n.startswith("_"):
+                    continue
+                try:
+                    sig = f"{n}{inspect.signature(f)}".replace("(self, ", "(").replace("(self)", "()").replace("'", "")
+                except (TypeError, ValueError):
+                    sig = f"{n}(...)"
+                meths.append([n, sig])
+            res = {"qual": f"{obj.__module__}.{obj.__qualname__}", "meths": meths}
+except BaseException:
+    pass
+print("SWEBASE" + json.dumps(res))
+'''
 
 
 def _members_note(root, p):
@@ -1624,22 +1675,13 @@ def _members_note(root, p):
             f'{x.name.split(".")[-1]}({_params(x.node)})' for x in own[:30]))
     cls = table.get(p['rel'], owner)
     names = {x.name.split('.')[-1] for x in own}
-    import inspect
     for base in [ast.unparse(b) for b in getattr(getattr(cls, 'node', None), 'bases', [])]:
         lib = _lib_base(root, p['rel'], base)
-        if lib is None:
+        if not lib:
             continue
-        meths = []
-        for n, f in inspect.getmembers(lib, inspect.isfunction):
-            if n.startswith('_') or n in names:
-                continue
-            try:
-                meths.append(f'{n}{inspect.signature(f)}'.replace('(self, ', '(').replace('(self)', '()').replace("'", ''))
-            except (TypeError, ValueError):
-                meths.append(f'{n}(...)')
+        meths = [sig for n, sig in lib['meths'] if n not in names]
         if meths:
-            out.append(f'Inherited from {lib.__module__}.{lib.__qualname__} (library code): '
-                       + '; '.join(m[:90] for m in meths[:15]))
+            out.append(f'Inherited from {lib["qual"]} (library code): ' + '; '.join(m[:90] for m in meths[:15]))
     return '\n'.join(out)[:2500]
 
 
@@ -2312,7 +2354,7 @@ IMPORT_PROBE = ('import importlib, json, sys, traceback\nres = {}\n'
 def _probe_imports(root, mods):
     try:
         out = subprocess.run([sys.executable, '-c', IMPORT_PROBE] + mods, cwd=root, env=_tests._env(root),
-                             capture_output=True, text=True, timeout=60).stdout
+                             capture_output=True, text=True, timeout=_tests._budget(60)).stdout
     except (subprocess.TimeoutExpired, OSError):
         return None
     m = re.search(r'SWEIMPORT(\{.*\})', out)
@@ -2849,6 +2891,8 @@ def main(stage, argv):
               'answered.')
         return
     st = _state.load('stages') or _new()
+    # the tests this call runs end before the task's time does (audit 10-18 #10, as in main_fast)
+    _tests.DEADLINE = time.time() + max(5, _left(st) - 10)
     args = _args.split_single_quoted(list(argv))
     pending = st.get('chained')
     if st.get('tentative'):

@@ -31,7 +31,14 @@ class Table:
     """Every function and class of the repository's code (tests left out), the calls made inside each one, the
     base classes of each class and the names each __init__.py exports."""
 
-    def __init__(self, root, docs=False):
+    def __new__(cls, root, docs=False):
+        # made once per process and kept until the scripts write to the repository (_repo.memo; audit 10-18 #1)
+        return _repo.memo(root, ('table', bool(docs)), lambda: _repo.iter_py(root, docs=docs),
+                          lambda files: cls._build(root, files))
+
+    @classmethod
+    def _build(cls, root, files):
+        self = object.__new__(cls)
         self.root = root
         self.syms = {}       # rel -> [Sym]
         self.calls = {}      # called name -> [(rel, caller qualname or None, line)]
@@ -39,36 +46,44 @@ class Table:
         self.exports = {}    # name -> [rel of __init__.py]
         self.reads = {}      # attribute name read as self.<name> -> [(rel, reader qualname, line)]
         self.uses = {}       # attribute name read as <other expression>.<name> -> [(rel, reader qualname, line)]
-        for rel in _repo.iter_py(root, docs=docs):
-            tree = _code.parse(_repo.read_text(root, rel))
-            if tree is None:
-                continue
-            syms = _code.symbols(tree)
-            self.syms[rel] = syms
-            n = max([s.end for s in syms] + [getattr(tree.body[-1], 'end_lineno', 1) if tree.body else 1])
-            owner = _code.owner_map(syms, n)
-            for s in syms:
-                if s.kind == 'class':
-                    self.bases[(rel, s.name)] = [ast.unparse(b).split('.')[-1].split('[')[0] for b in s.node.bases]
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call):
-                    f = node.func
-                    name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
-                    if name:
-                        o = owner[node.lineno] if node.lineno < len(owner) else None
-                        self.calls.setdefault(name, []).append((rel, o.name if o else None, node.lineno))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+        for rel in files:
+            try:
+                self._add(rel)
+            except (RecursionError, MemoryError):
+                self.syms.pop(rel, None)    # a generated file too deep for the AST helpers: left out (audit 10-18 #7)
+        return self
+
+    def _add(self, rel):
+        text = _repo.read_code(self.root, rel)
+        tree = _code.parse(text) if text is not None else None
+        if tree is None:
+            return
+        syms = _code.symbols(tree)
+        self.syms[rel] = syms
+        n = max([s.end for s in syms] + [getattr(tree.body[-1], 'end_lineno', 1) if tree.body else 1])
+        owner = _code.owner_map(syms, n)
+        for s in syms:
+            if s.kind == 'class':
+                self.bases[(rel, s.name)] = [ast.unparse(b).split('.')[-1].split('[')[0] for b in s.node.bases]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                f = node.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                if name:
                     o = owner[node.lineno] if node.lineno < len(owner) else None
-                    if o is None:
-                        continue
-                    own = isinstance(node.value, ast.Name) and node.value.id == 'self'
-                    (self.reads if own else self.uses).setdefault(node.attr, []).append((rel, o.name, node.lineno))
-            if rel.endswith('__init__.py'):
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ImportFrom):
-                        for a in node.names:
-                            self.exports.setdefault(a.asname or a.name, []).append(rel)
+                    self.calls.setdefault(name, []).append((rel, o.name if o else None, node.lineno))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                o = owner[node.lineno] if node.lineno < len(owner) else None
+                if o is None:
+                    continue
+                own = isinstance(node.value, ast.Name) and node.value.id == 'self'
+                (self.reads if own else self.uses).setdefault(node.attr, []).append((rel, o.name, node.lineno))
+        if rel.endswith('__init__.py'):
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for a in node.names:
+                        self.exports.setdefault(a.asname or a.name, []).append(rel)
 
     def get(self, rel, name):
         for s in self.syms.get(rel, []):
@@ -87,7 +102,10 @@ class Table:
 
 
 def _body_tokens(sym):
-    text = ast.unparse(sym.node)
+    try:
+        text = ast.unparse(sym.node)
+    except (RecursionError, MemoryError):
+        return []
     return re.findall(r'\w+|\S', text.split('\n', 1)[1] if '\n' in text else text)
 
 

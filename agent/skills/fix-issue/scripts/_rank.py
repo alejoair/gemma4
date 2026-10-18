@@ -107,8 +107,11 @@ def _docstring_lines(tree):
 
 
 def index_file(root, rel, names=None):
-    """The documents of one file. names, when given, receives every identifier of the file."""
-    text = _repo.read_text(root, rel)
+    """The documents of one file. names, when given, receives every identifier of the file. None of a file too big to
+    be hand-written code (_repo.read_code)."""
+    text = _repo.read_code(root, rel)
+    if text is None:
+        return []
     if names is not None:
         names.update(IDENT.findall(text))
     lines = text.splitlines()
@@ -141,17 +144,31 @@ def index_file(root, rel, names=None):
 
 
 class Index:
-    def __init__(self, root):
+    """Made once per process and kept until the scripts write to the repository (_repo.memo; audit 10-18 #1: one
+    locate opening built it again in every helper)."""
+
+    def __new__(cls, root):
+        return _repo.memo(root, ('index',), lambda: _repo.iter_py(root), lambda files: cls._build(root, files))
+
+    @classmethod
+    def _build(cls, root, files):
+        self = object.__new__(cls)
         self.root = root
         self.names = set()      # every identifier in the code: what 'defined' means for a new entity
-        self.files = _repo.iter_py(root)
-        self.docs = [d for rel in self.files for d in index_file(root, rel, self.names)]
+        self.files = files
+        self.docs = []
+        for rel in self.files:
+            try:
+                self.docs.extend(index_file(root, rel, self.names))
+            except (RecursionError, MemoryError):
+                continue        # a generated file too deep for the AST helpers: left out (audit 10-18 #7)
         self.df = Counter()
         for d in self.docs:
             self.df.update(set().union(*(d.tf[f].keys() for f in FIELDS)))
         n = max(1, len(self.docs))
         self.avg = {f: max(1.0, sum(d.length[f] for d in self.docs) / n) for f in FIELDS}
         self.n = n
+        return self
 
     def idf(self, tok):
         df = self.df.get(tok, 0)

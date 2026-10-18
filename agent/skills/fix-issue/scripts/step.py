@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import textwrap
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -50,6 +51,9 @@ EDIT_LINES = 32         # the edit window: a place up to EDIT_LINES + 30 lines i
                         # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
+# The task's time (eval_config.yaml, 5 min since 10-15), counted from the journal's start: the tests a call runs end
+# before it (audit 10-18 #10)
+TASK_S = int(os.environ.get('SWE_TASK_BUDGET', '300'))
 MAX_CHARS = 7000        # a cap on one answer (about 2,000 tokens) against context growth; the end with NEXT is kept
 
 
@@ -2146,20 +2150,60 @@ def _import_bindings(root, first, prefer=None):
     return list(dict.fromkeys(out))
 
 
+def _module_source(module):
+    """(source file, whether it is a package) of a module, found without importing anything (audit 10-18 #16:
+    find_spec of a submodule imports its parent packages, in the script's own process and without a time limit): the
+    top-level module through the import system's finders, its submodules in the package's directories."""
+    import importlib.util
+    loaded = sys.modules.get(module)
+    if loaded is not None:
+        spec = getattr(loaded, '__spec__', None)
+        origin = getattr(spec, 'origin', None) or getattr(loaded, '__file__', None)
+        return (origin, bool(getattr(spec, 'submodule_search_locations', None))) if origin else None
+    head, *rest = module.split('.')
+    try:
+        spec = importlib.util.find_spec(head)
+    except (ImportError, ValueError, AttributeError):
+        return None
+    if spec is None:
+        return None
+    origin, dirs = spec.origin, list(spec.submodule_search_locations or [])
+    for part in rest:
+        if not dirs:
+            return None
+        found = None
+        for d in dirs:
+            if os.path.isfile(os.path.join(d, part, '__init__.py')):
+                found = (os.path.join(d, part, '__init__.py'), [os.path.join(d, part)])
+            elif os.path.isfile(os.path.join(d, part + '.py')):
+                found = (os.path.join(d, part + '.py'), [])
+            elif os.path.isdir(os.path.join(d, part)):
+                found = (None, [os.path.join(d, part)])        # a namespace package
+            if found is not None:
+                break
+        if found is None:
+            return None
+        origin, dirs = found
+    return (origin, bool(dirs)) if origin else None
+
+
 def _library_def(root, dotted, depth=0):
     """(file, start, end, qualified name) of a library definition from its dotted path, following re-exports; None
-    when it is not found or lives in the repository."""
-    import importlib.util
+    when it is not found or lives in the repository. A name of the repository's own packages is never library code,
+    even when a copy of the package is installed (audit 10-18 #8: the installed copy was shown as 'library, read
+    only')."""
     parts = dotted.split('.')
+    if parts[0] in _repo.own_names(root):
+        return None
     for k in range(len(parts) - 1, 0, -1):
         module, attrs = '.'.join(parts[:k]), parts[k:]
         try:
-            spec = importlib.util.find_spec(module)
-        except (ImportError, ValueError, AttributeError):
-            spec = None
-        if spec is None or not spec.origin or not spec.origin.endswith('.py'):
+            found = _module_source(module)
+        except (OSError, ValueError):
+            found = None
+        if found is None or not found[0] or not found[0].endswith('.py'):
             continue
-        path = os.path.realpath(spec.origin)
+        path = os.path.realpath(found[0])
         if path.startswith(os.path.realpath(root) + os.sep):
             return None                 # the repository's own code: it is reached by name, not as a library
         tree = _code.parse(_repo.read_text('/', path))
@@ -2176,7 +2220,7 @@ def _library_def(root, dotted, depth=0):
                         if isinstance(n, ast.ImportFrom):
                             for al in n.names:
                                 if (al.asname or al.name) == name:
-                                    base = module if spec.submodule_search_locations else module.rsplit('.', 1)[0]
+                                    base = module if found[1] else module.rsplit('.', 1)[0]
                                     src = n.module or ''
                                     if n.level:
                                         up = base.split('.')
@@ -3861,6 +3905,8 @@ def main(argv, role=None, opening=False):
               'other has answered.')
         return
     state = _state.load('journal') or _journal.new()
+    # the tests and probes this call runs end before the task's time does (audit 10-18 #10; eval_config.yaml)
+    _tests.DEADLINE = max(time.time() + 5, state.get('t0', time.time()) + TASK_S - 10)
     if state['step'] == 'D2':
         _journal.back(state)        # (D2 is only left by a crash between choosing and planning: choose again)
     _SEEN['state'] = state

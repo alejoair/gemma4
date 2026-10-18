@@ -6,6 +6,7 @@ import builtins
 import re
 from collections import namedtuple
 
+import _code
 import _repo
 
 if __name__ == '__main__':
@@ -50,8 +51,12 @@ def _unescape(new):
 
 def _compiles(lines):
     try:
-        ast.parse(''.join(lines))
+        # the bytes as they will be written, so that the parser honours the file's coding cookie: a str holding the
+        # surrogates of undecodable bytes never parsed, and every edit of a latin-1 file was refused (audit 10-18 #6)
+        ast.parse(_repo.encode_source(''.join(lines)))
         return None
+    except (RecursionError, MemoryError):
+        return 'the file is nested too deeply for Python to parse it'
     except SyntaxError as e:
         # the text of the offending line, not its number: the model finds an error once told where it is in its own
         # words (Tyen et al.: +18 to +44 points), and a file line number means nothing to it
@@ -86,9 +91,8 @@ def _bound_names(tree):
 
 def unknown_names(lines, start, end):
     """Names read on lines start..end that nothing in the file defines or imports (a missing import or a typo)."""
-    try:
-        tree = ast.parse(''.join(lines))
-    except (SyntaxError, ValueError):
+    tree = _code.parse(''.join(lines))
+    if tree is None:
         return []
     bound = _bound_names(tree)
     out = []
