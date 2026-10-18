@@ -1777,7 +1777,9 @@ def specify(root, st, args):
         return 'Nothing to specify now.\n\n' + DONE
     _refresh(root, p)
     items = [a for a in args if a and a.strip()]
-    may_name = not (p.get('note') or '').startswith('the specifier of')
+    # g11 (fastapi_13537): after 'missing' named a planned place, the next refusal offered 'missing' again and the same
+    # call was sent a second time; that place's change is kept, so this place is asked only about itself
+    may_name = not (p.get('note') or '').startswith('the specifier of') and not p.get('named_planned')
     nxt = next_call('specify.py', *_specify_forms(p, may_name))
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
@@ -1887,8 +1889,9 @@ def specify(root, st, args):
                     q['hints'].append(f'the specifier of {p["handle"]}: {what[:300]}')
             kept = (' What you said must change there is kept and shown when it is specified.' if what and
                     not q.get('sentence') else '')
+            p['named_planned'] = True
             return (f'{q["handle"]} is already a place of the fix{said}.{kept} Now say what changes in {p["handle"]} '
-                    'itself, or that it keeps its code.\n\n' + nxt)
+                    'itself, or that it keeps its code.\n\n' + next_call('specify.py', *_specify_forms(p, may_name=False)))
         n0 = (_missing_names(name) or [name])[0]
         if not any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n0])) \
                 and not ('.' in n0 and step._new_definition_owner(root, n0)):
