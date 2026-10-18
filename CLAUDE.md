@@ -133,7 +133,7 @@ All rows are in `VERSIONS.md`. Kaggle evals (the 31B on the same 10 dev tasks): 
 V8 harness error, V10 1/10 (rich_3006 in almost every run). Local 12B batches with step.py: 1/10 and 1/10.
 Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, **S4 (= V3) 0.13** (scored 10-10), S5 (step
 procedure v1, commit bea4f0f, 5-min budget) **0.03** (checked 10-13). S6 (microtasks, 60 min) finished without a
-score. **S7 (= V25, the stages build, 5 min) 0.06** (checked 10-16; V25 judged 4/10 on the Kaggle eval).
+score. **S7 (= V25, the stages build, 5 min) 0.06** (checked 10-16; V25 judged 4/10 on the Kaggle eval). **S8 (= vf5, the fast build, 5 min) 0.06** (checked 10-18; vf5 judged 12/30 on the Kaggle eval).
 
 Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
 (vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
