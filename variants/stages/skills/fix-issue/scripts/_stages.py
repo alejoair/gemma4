@@ -533,6 +533,12 @@ def requirements(root, st, args):
     if any(COMMAND.match(x) for x in items) or (len(items) == 1 and len(items[0].split()) < 6):
         # vf3 (Gemma, requests_7205 and 3 more): req.py was called with 'grep -r "netrc" src/requests', the command was
         # saved as R1, and every later try to send the requirements was told the part was finished
+        if not any(COMMAND.match(x) for x in items) and st.get('lookups', 0) >= 3:
+            # g11 (rich_3480, whose whole issue is "fix infinite loop in append"): after its 3 lookups, single names
+            # were sent 8 more times and each got "runs no commands", which was not the reason (B5)
+            return ('Not saved: the 3 name lookups are used, so a single name is not looked up. A requirement may '
+                    'name code that was not looked up: the locate agents find it. ' + form + '\n\n'
+                    + next_call('req.py', 'pairs'))
         return ('Not saved: req.py runs no commands and does not search the code (the other agents find the code); '
                 'it saves the requirements, as pairs. ' + form + '\n\n' + next_call('req.py', 'pairs'))
     if len(items) == 1:
