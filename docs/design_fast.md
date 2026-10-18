@@ -292,3 +292,34 @@ exercise the new cases, so only a task from a repository of another layout can s
 
 Why it is generic: the layout is read from each repository's own files (`__init__.py` chains); the remaining names
 are conventions of Python projects (`tests`, `docs`, `examples`, `scripts`), none from one repository.
+
+### Audit of the remaining assumptions (10-18)
+
+A read-only audit of the scripts (findings marked "verified" were reproduced on made-up repositories). Ranked by the
+harm on a private repository. Not fixed yet.
+
+| # | Severity | Assumption | Failure on another repository |
+|---|---|---|---|
+| 1 | high | `_rank.Index` and `_impact.Table` are rebuilt on every call (17 builds in `_stages.py`, 10 in `step.py`), with no cache or size cap | fastapi: 1.2 s + 0.2 s per build; 273k lines: 7.9 s + 4.5 s. On 0.5-1M lines one locate opening costs 40-150 s, under `_state.lock`, so the workers wait in turn |
+| 2 | high | `SKIP_DIRS` (`build`, `dist`, `env`, `venv`) applies at any depth (verified) | a real subpackage `pkg/build/` or `pkg/env/` is not indexed, cannot be found or edited |
+| 3 | high | `is_test_path`: any `test/`, `tests/`, `testing/` directory or `test_*.py` file at any depth is a test (verified) | `pkg/testing/fixtures.py` or `pkg/test_utils.py` is left out of the index and its edit is refused ("test files are not edited"): empty patch when the fix is there |
+| 4 | high/medium | namespace packages (no `__init__.py` in `src/acme/`) (verified) | wrong module names (`billing.api` for `acme.billing.api`), a false "import billing" shown to the model, and `src/acme` put on PYTHONPATH where its `http/` or `logging/` would shadow the stdlib |
+| 5 | medium | the base worktree holds tracked files only | generated `_version.py` or compiled extensions are missing there: the base cannot import, every new failure is "unknown" |
+| 6 | medium | a file with non-UTF-8 bytes (verified) | every edit of it is refused as not compiling (`ast.parse` of a str with surrogates) |
+| 7 | medium | recursive AST walk (verified) | one generated file with a deep expression raises `RecursionError` in every index build: every call fails |
+| 8 | medium | the repository's own package installed as a wheel is taken for a library | own code shown as "library, read only" (the installed copy), new names classed as library |
+| 9 | medium | stop words drop parts of backticked names (verified) | `` `Cache.update` `` keeps only `Cache`: a target method named `update`, `add`, `get` ranks badly |
+| 10 | medium | fixed timeouts that ignore `DEADLINE` (60 s import probes, 120 s worktree); `DEADLINE` set only in the fast build | a hanging import or slow worktree runs past the budget |
+| 11 | medium | `RLIMIT_AS` 3 GiB on test runs | numpy/torch/OpenBLAS reserve address space: every run fails, everything is UNCHECKED |
+| 12 | medium | vendored and generated code not filtered (`vendor/`, `third_party/`, `_vendor/`, `migrations/`, `*_pb2.py`) | pollutes the candidates and the "copies", and goes on PYTHONPATH |
+| 13 | medium/low | `is_aux_name` by the first word (verified) | a real package `sample_app/` or `doc_builder/` in a flat layout is treated as documentation |
+| 14 | medium/low | the call map runs the whole suite once, aborting on one collection error (`--maxfail=60`) | base build only; the map is empty and 150 s are lost |
+| 15 | low/medium | `unittest.TestCase` classes not named `Test*` are not test classes | no example or template test in unittest-style repositories |
+| 16 | low/medium | `_library_homes` imports up to 8 third-party libraries in the script's process, no timeout | a heavy or network-touching import slows or hangs the call |
+| 17 | low | stand-in modules for missing test dependencies match everything; `inline_snapshot` named in the logic | a test passes vacuously |
+| 18 | low | tests that rewrite tracked files leave the changes in the patch | golden files or snapshots end up in the patch |
+| 19 | low | `_example._packages` sees only directories with `__init__.py` | a single-module project never matches the statement's example |
+
+Checked and fine: no repository name in the logic or in the text shown to the model; the pytest plugin and
+`_is_test_file` match the harness's `python_files`; exceptions are caught in the entry points (but faults 1 and 7 make
+every call fail).
