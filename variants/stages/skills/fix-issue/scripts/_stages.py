@@ -65,6 +65,47 @@ EDIT_TESTS = os.environ.get('SWE_EDIT_TESTS', '0') == '1'
 VERIFY = os.environ.get('SWE_VERIFY', '0') == '1'
 
 DONE = 'NEXT: no call: reply with one sentence for the coordinator.'
+
+# ---------------------------------------------------------------------------- the call forms (one source)
+# Every NEXT line that calls a script is built here, from these forms: an answer cannot offer a form its script
+# refuses, or leave out one it takes. vf7/vf8 lab: two hand-written copies disagreed with the rules (a bare
+# ['no change'] offered where it needs its line; a refusal without the three-part form, sent again three times) (B12).
+FORM = {
+    'names': "['<name>', '<name>', ...]",
+    'pairs': "['<sentence from the issue>', '<what must happen>', ...]",
+    'test': "['<the test>']",
+    'locate': "['<name>'] (1 to 3 names from the list)",
+    'find': "['<a name or text to find>']",
+    'scope': "['<name>', ...] (the related code that must change too)",
+    'none': "['none']",
+    'finding': "['<the lines that make it fail>', '<what they do now>', '<what they must do instead>']",
+    'sentence': "['<one sentence: what changes here>']",
+    'no change': "['no change']",
+    'no change + line': "['no change', '<the line that already does it>']",
+    'missing': "['missing', '<name of other code>', '<what must change there>']",
+    'replace': "['replace', '<old lines>', '<new lines>']",
+    'replace groups': "['replace', '<old lines>', '<new lines>', ...] (every group of lines in one call)",
+    'missing edit': "['missing', '<name of other code this change needs>']",
+    'done': "['done']",
+    'not done': "['not done', '<the place that is wrong or missing>', '<what is missing there>']",
+    'cannot tell': "['cannot tell']",
+    'next': "['next']",
+}
+
+
+def next_call(script, *forms, sep=' or '):
+    """The NEXT line that calls a script with one of the forms (names in FORM, or a form written out)."""
+    return (f'NEXT: call run_skill_script with skill_name fix-issue, file_path {script} and args '
+            + sep.join(FORM.get(f, f) for f in forms))
+
+
+def _specify_forms(p, may_name=True):
+    """The forms the specify script takes for this place now: the three-part finding for a place it has not judged
+    yet, a sentence once its finding is saved (or for new code, or an edited place), 'no change' with its line where
+    that line is checked, and 'missing' unless the place was itself named by another specifier."""
+    checked = DIAGNOSE and not p.get('new') and not p.get('edited')
+    forms = ['finding' if _diagnosing(p) else 'sentence', 'no change + line' if checked else 'no change']
+    return forms + (['missing'] if may_name else [])
 FAST = False            # the fast build (docs/design_fast.md): stage agents in a pipeline, workers in parallel
 
 
@@ -424,8 +465,7 @@ def requirements(root, st, args):
         if not items:
             return ('Send the names the issue mentions (functions, classes, parameters, files), one per item. req.py '
                     'runs no commands: it shows what the repository defines for those names.\n\n'
-                    "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<name>', "
-                    "'<name>', ...]")
+                    + next_call('req.py', 'names'))
         table = _impact.Table(root, docs=False)
         lines, names, index = [], [], None
         for raw in items[:20]:
@@ -478,20 +518,17 @@ def requirements(root, st, args):
                                               'issue asks for, or library code)'))
         st['names'] = list(dict.fromkeys((st.get('names') or []) + names))
         return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + form + '\n\n'
-                "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<sentence from "
-                "the issue>', '<what must happen>', ...]")
+                + next_call('req.py', 'pairs'))
     if any(COMMAND.match(x) for x in items) or (len(items) == 1 and len(items[0].split()) < 6):
         # vf3 (Gemma, requests_7205 and 3 more): req.py was called with 'grep -r "netrc" src/requests', the command was
         # saved as R1, and every later try to send the requirements was told the part was finished
         return ('Not saved: req.py runs no commands and does not search the code (the other agents find the code); '
-                'it saves the requirements, as pairs. ' + form + "\n\nNEXT: call run_skill_script with skill_name "
-                "fix-issue, file_path req.py and args ['<sentence from the issue>', '<what must happen>', ...]")
+                'it saves the requirements, as pairs. ' + form + '\n\n' + next_call('req.py', 'pairs'))
     if len(items) == 1:
         items = ['', items[0]]
     if len(items) % 2:
-        return f'An odd number of items was sent ({len(items)}): every requirement is a pair. {form}\n\n' \
-               "NEXT: call run_skill_script with skill_name fix-issue, file_path req.py and args ['<sentence from " \
-               "the issue>', '<what must happen>', ...]"
+        return (f'An odd number of items was sent ({len(items)}): every requirement is a pair. {form}\n\n'
+                + next_call('req.py', 'pairs'))
     index = _rank.Index(root)
     reqs = []
     for i in range(0, min(len(items), 2 * MAX_REQS), 2):
@@ -742,7 +779,7 @@ def reproduce(root, st, args):
     first = _args.clean(items[0]).lower() if items else ''
     form = ("Send the test: ['<a whole pytest test function, with the imports it needs above it>'], or ['skip'] if "
             "this behaviour cannot be shown by a test.")
-    nxt = "NEXT: call run_skill_script with skill_name fix-issue, file_path repro.py and args ['<the test>']"
+    nxt = next_call('repro.py', 'test')
     if not items or first in ('open', 'start', 'the issue', rid.lower() if rid else 'r1'):
         tpl = _template(root, r)
         sig = _signatures(root, r['names'])
@@ -986,8 +1023,7 @@ def locate(root, st, args):
     if r is None:
         return 'Nothing to locate now.\n\n' + DONE
     items = [a for a in args if a and a.strip()]
-    nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path locate.py and args ['<name>'] (1 to 3 "
-           "names from the list), or ['<a name or text to find>']")
+    nxt = next_call('locate.py', 'locate', 'find', sep=', or ')
     cands = st['cands'].get(rid)
     if cands is None:
         cands = _candidates(root, st, r)
@@ -1349,8 +1385,7 @@ def scope(root, st, args):
     st['scope_options'] = options[:12]
     newp = _new_places(root, st)
     items = [a for a in args if a and a.strip()]
-    nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path scope.py and args ['<name>', ...] (the "
-           "related code that must change too), or ['none']")
+    nxt = next_call('scope.py', 'scope', 'none', sep=', or ')
     if not items or _args.clean(items[0]).lower() in ('open', 'start', 'the plan', 'plan'):
         view = ['The places chosen for the requirements:\n' + '\n'.join(
             f'  {p["name"]} ({p["rel"]}) for {", ".join(p["reqs"])}' for p in located)]
@@ -1676,9 +1711,6 @@ def _assign_place(root, p):
 
 
 NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
-NXT_DIAG = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<the lines that make "
-            "it fail>', '<what they do now>', '<what they must do instead>'] or ['no change', '<the line that already "
-            "does it>'] or ['missing', '<name of other code>', '<what must change there>']")
 
 
 # vf6 lab (the 31B, step by step): 15 of 16 specify decisions were cut at the thinking budget, and 8 of those were
@@ -1734,11 +1766,8 @@ def specify(root, st, args):
         return 'Nothing to specify now.\n\n' + DONE
     _refresh(root, p)
     items = [a for a in args if a and a.strip()]
-    nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path specify.py and args ['<one sentence: what "
-           "changes here>'] or ['no change'] or ['missing', '<name of other code>', '<what must change there>']")
-    if DIAGNOSE and not p.get('new') and not p.get('edited'):
-        # the NEXT agrees with the rule that 'no change' names the line that already does it (B12)
-        nxt = nxt.replace("['no change']", "['no change', '<the line that already does it>']")
+    may_name = not (p.get('note') or '').startswith('the specifier of')
+    nxt = next_call('specify.py', *_specify_forms(p, may_name))
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
         view = [_place_view(root, st, p, limit=150),
@@ -1768,6 +1797,8 @@ def specify(root, st, args):
             ran = _key(p) in set(st['repro'].get('calls') or [])
             view.append('The reproduction test fails on the original code' + (' and runs this place' if ran else '')
                         + ':\n' + st['repro']['before'][:500])
+        if p.get('hints'):
+            view.append('What other specifiers said must change here:\n' + '\n'.join('  ' + h for h in p['hints']))
         if p.get('note'):
             label = ('Why it is in the plan: ' if p['note'].startswith('the specifier of') else
                      'Why it is specified again: ' if p['note'].startswith('you named') else 'Found after the edits: ')
@@ -1802,7 +1833,7 @@ def specify(root, st, args):
                     'sentence, complete in itself, with the exact names: the editor sees only this place). If this '
                     f"place already does what {ids} {'say' if plural else 'says'}, send ['no change', '<the line that "
                     "already does it>']; if the change belongs in other code (a function this place calls, for "
-                    "example), send ['missing', '<its name>', '<what must change there>'].\n\n" + NXT_DIAG)
+                    "example), send ['missing', '<its name>', '<what must change there>'].\n\n" + nxt)
         return (text + f'\n\nWrite what must change in {p["handle"]} so that {ids} ' + ('hold' if plural else 'holds') + ': one '
                 'sentence, complete in itself (its editor sees only this place), with the exact names. Or no change. '
                 'If the change belongs in other code (a function this place calls, for example), name that code with '
@@ -1829,16 +1860,24 @@ def specify(root, st, args):
             return (f'{p["handle"]} was itself named for this change by another specifier, and code named that way '
                     'names no further code: each step down the calls costs about a minute of the 5-minute budget, so '
                     f"the fix stays one step from where the requirement was located. Send what changes in {p['handle']}, "
-                    "or ['no change'].\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path specify.py "
-                    "and args ['<one sentence: what changes here>'] or ['no change']")
+                    "or that it keeps its code.\n\n" + next_call('specify.py', *_specify_forms(p, may_name=False)))
         if q is not None and q.get('status') in ('nochange', 'done', 'failed'):
             # V23 (rich_3521): Segment._split_cells had been specified 'no change'; the specifier of split_cells named
             # it for the change three times and was refused each time
             pass
         elif q is not None:
+            # vf8 lab (fastapi_14419, rich_3180, rich_3934): 'missing' naming a planned place was answered "its own
+            # specifier writes its change" (false when the same specifier gets it next) with a NEXT that left out the
+            # form this place needed; the call was sent again 3 times. What it says is kept for that place (B5, B11)
             said = f' (its sentence: {q["sentence"]})' if q.get('sentence') else ''
-            return (f'{q["handle"]} is already a place of the fix{said}; its own specifier writes its change. Send what '
-                    f"changes in {p['handle']}, or ['no change'].\n\n" + nxt)
+            if what:
+                q.setdefault('hints', [])
+                if what not in q['hints']:
+                    q['hints'].append(f'the specifier of {p["handle"]}: {what[:300]}')
+            kept = (' What you said must change there is kept and shown when it is specified.' if what and
+                    not q.get('sentence') else '')
+            return (f'{q["handle"]} is already a place of the fix{said}.{kept} Now say what changes in {p["handle"]} '
+                    'itself, or that it keeps its code.\n\n' + nxt)
         n0 = (_missing_names(name) or [name])[0]
         if not any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n0])) \
                 and not ('.' in n0 and step._new_definition_owner(root, n0)):
@@ -1863,7 +1902,7 @@ def specify(root, st, args):
             return (f"This 'no change' {what}. 'no change' means a line of {p['handle']} already does what {ids} "
                     f"says: send it with that line copied as written, ['no change', '<that line>']. If no line does "
                     f'it, {ids} fails here: send the lines that make it fail and what they do now.\n\n'
-                    + (NXT_DIAG if _diagnosing(p) else nxt))
+                    + nxt)
         items = ['no change']
     elif _diagnosing(p) and len(items) >= 3 and _in_place(root, p, items[0]):
         # g10: the finding and the sentence in one call (each decision call fills the thinking budget; two calls per
@@ -1875,7 +1914,7 @@ def specify(root, st, args):
         if not _in_place(root, p, lines) and p.get('diag_refused', 0) < NC_REFUSALS:
             p['diag_refused'] = p.get('diag_refused', 0) + 1
             return (f'None of these lines is in {p["handle"]} as written: copy one or more lines from its code above, '
-                    'then say what they do now.\n\n' + NXT_DIAG)
+                    'then say what they do now.\n\n' + nxt)
         p['diag'] = {'lines': lines.strip()[:800], 'now': now[:400]}
         return (f'Saved: these lines of {p["handle"]} make {ids} fail:\n{p["diag"]["lines"]}\nWhat they do now: '
                 f'{p["diag"]["now"]}\n\nNow write what {p["handle"]} must do instead so that {ids} '
@@ -2050,18 +2089,14 @@ def edit(root, st, args):
     assign = _assign_place(root, p)
     what = ('top-level code of ' + p['rel'] if p['name'] == MODULE else f'assignment {p["name"]} = ...' if assign
             else 'definition of ' + p['handle'].split('::')[-1].split('.')[-1])
-    nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['<the whole new "
-           + what + ", with any new imports above it>'], or "
-           "['replace', '<old lines>', '<new lines>'], or ['no change'], or ['missing', '<name of other code this "
-           "change needs>']")
+    nxt = next_call('edit.py', f"['<the whole new {what}, with any new imports above it>']", 'replace', 'no change',
+                    'missing edit', sep=', or ')
     first = _args.clean(items[0]).lower() if items else ''
     long_place = p['end'] - p['start'] + 1 > LONG_EDIT and not p.get('new')
     if long_place:
         # vf3 audit (fastapi_13713): after the first answer a long place was offered the whole-definition form the
         # window forbids (B12); one form for every answer of the place, every group of lines in one call
-        nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['replace', "
-               "'<old lines>', '<new lines>', ...] (every group of lines in one call), or ['no change'], or "
-               "['missing', '<name of other code this change needs>']")
+        nxt = next_call('edit.py', 'replace groups', 'no change', 'missing edit', sep=', or ')
     # gm9 (Gemma): ['open', 'FastAPI.setup_openapi'] was read as code to apply; a first item 'open' opens the place
     if not items or first in ('open', 'start') or (first == p['handle'].lower() and len(items) == 1):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
@@ -2460,14 +2495,14 @@ def _after_edit(root, st, p, r, before, names, nxt):
                     'code keeps the old behaviour:\n' + '\n'.join(lines) + '\nIf the requirement must hold there too, '
                     f"the change belongs in that code itself: send ['missing', '{first}', '<what must change in it>'] (it "
                     "goes into the plan and is changed after). If not, send ['no change'] to go on."
-                    f"\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args "
-                    f"['missing', '{first}', '<what must change in it>'], or ['no change'].")
+                    '\n\n' + next_call('edit.py', f"['missing', '{first}', '<what must change in it>']", 'no change',
+                                         sep=', or ') + '.')
         return (f'{word}: {detail}.\n{shown}\n\nThis edit stops using code that other code still uses, and that '
                 'code keeps the old behaviour:\n' + '\n'.join(lines) + '\nIf the requirement must hold there too, '
                 f"the change belongs in that code itself: send ['missing', '{first}', '<what must change in it>'] (it "
                 'goes into the plan and is changed next). If not, reply with one sentence for the coordinator.'
-                f"\n\nNEXT: call run_skill_script with skill_name fix-issue, file_path edit.py and args ['missing', "
-                f"'{first}', '<what must change in it>'], or no call: reply with one sentence for the coordinator.")
+                '\n\n' + next_call('edit.py', f"['missing', '{first}', '<what must change in it>']")
+                + ', or no call: reply with one sentence for the coordinator.')
     fix = ("another ['replace', '<old lines>', '<new lines>']" if p['end'] - p['start'] + 1 > LONG_EDIT
            else 'the corrected whole definition')
     if FAST:
@@ -2652,8 +2687,7 @@ def review(root, st, args):
     if r is None:
         return 'Nothing to review now.\n\n' + DONE
     items = [a for a in args if a and a.strip()]
-    nxt = ("NEXT: call run_skill_script with skill_name fix-issue, file_path review.py and args ['done'], or "
-           "['not done', '<the place that is wrong or missing>', '<what is missing there>'], or ['cannot tell']")
+    nxt = next_call('review.py', 'done', 'not done', 'cannot tell', sep=', or ')
     places = [p for p in st['plan'] if rid in p['reqs']] or st['plan']
     first = _args.clean(items[0]).lower() if items else ''
     if not items or first in ('open', 'start', rid.lower()):
@@ -2838,8 +2872,7 @@ def main(stage, argv):
         import traceback
         _state.record({'trace': traceback.format_exc()[-2000:]})
         out = (f'The script hit an internal error ({type(e).__name__}). ' +
-               ("Call route.py with ['next'] again.\n\nNEXT: call run_skill_script with skill_name fix-issue, "
-                "file_path route.py and args ['next']" if stage == 'route' else DONE))
+               ("Call route.py with ['next'] again.\n\n" + next_call('route.py', 'next') if stage == 'route' else DONE))
     _state.record({'stage': stage, 'args': [a[:300] for a in args][:8], 'answer': out[:300]})
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
@@ -2856,6 +2889,7 @@ def main(stage, argv):
 # lock (_state.lock), so the workers' calls run one at a time while their model calls run at once.
 
 FAST_DONE = 'NEXT: no call: reply with exactly: done'
+
 REPRO_MIN_S = 150       # reproduce runs beside specify only with this much time left (V22: it took 30-225 s)
 WORK_STAGE = {'repair': None}    # repair specifies and edits, by the state of its place
 

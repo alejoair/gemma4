@@ -341,3 +341,39 @@ Per-turn tables: `tools/step_lab_report.py` on the sessions.
   - **`missing` naming a place that is already planned** (5 calls). The answer says "its own specifier writes its change", which is false when the same specifier gets that place next. Its NEXT does not offer the three-part form, and the model repeated the call (fastapi_14419 turns 4-5).
   - **A refused 'no change' sent again** (rich_3180, rich_3934). The second send is accepted with the same signature line, because only one refusal is made. That line is the function's `def` line, so the refusal does not help: it only costs a call.
 - **The thought is still cut** in every decision call but one (rich_3905, 615 tokens).
+
+## Technical debt 1: the call forms in one place (10-18)
+
+The user asked to start on the technical debt with the call forms. Before this change, each of the 16 NEXT lines that
+call a script was written out by hand, in `_stages.py`. Two of those copies disagreed with the rules their script
+applies:
+- specify offered a bare `['no change']` where the rule asks for the line that already does it;
+- the "named by another specifier" refusal offered the old one-part form, and the model sent it again three times.
+
+Now `FORM` (`_stages.py`) holds every form once, and `next_call(script, *forms)` builds each NEXT line from it.
+`_specify_forms(p)` picks specify's forms from the same state its checks read (finding or sentence, `no change` with
+its line where that line is checked, `missing` unless the place was named by another specifier). Only one literal
+"NEXT: call run_skill_script" is left, inside `next_call`.
+
+The same round fixed the planned-place `missing` answer, which was the loop seen in vf8 on the multi-place cases.
+Before, the answer said "already a place of the fix" and dropped what was said. Now:
+- it keeps what was said, as a hint for that place (`q['hints']`);
+- it says so, then asks what changes in the place itself;
+- the hint is shown in the other place's view, under "What other specifiers said must change here:".
+
+Checks done:
+- the replays of the vf5 and vf7 traces (5 tasks) print NO PROBLEMS;
+- a dry check on fastapi_14419 shows the three-part NEXT, the new planned-place answer and the hint in
+  `get_dependant`'s view.
+
+No model run has been done yet.
+
+| Checklist item | Effect | Why |
+|---|---|---|
+| B12 (instructions and feedback agree) | closer | An answer can no longer offer a form its script refuses: the NEXT is built from the script's state. |
+| B5 (feedback states facts, not the failed input) | closer | The planned-place answer says what was kept and where it will be shown, instead of a refusal with no fact. |
+| B11 (one exact next call) | closer | Every answer ends with one NEXT built the same way, with the same wording for the same form. |
+| Others | neutral | The texts the model reads are the same forms. Only the two wrong copies changed. |
+
+Why it is generic: it changes how the answers are built, not what any task needs. The forms are the scripts' own, for
+any repository and any issue.
