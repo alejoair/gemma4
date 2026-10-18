@@ -456,6 +456,13 @@ def requirements(root, st, args):
     lookup = not _looks_like_requirements(items) and (st['names'] is None or (
         items and all(len(x.split()) <= 4 for x in items) and not any(COMMAND.match(x) for x in items)
         and st.get('lookups', 0) < 3))
+    if lookup and st['names'] is not None and len(items) % 2 == 0 and items == st.get('last_lookup'):
+        # g11 (rich_4076, whose whole issue is "preserve newlines"): ['preserve newlines', 'preserve newlines'] was
+        # read as two names twice and saved the third time; a call sent again unchanged after its lookup answer is
+        # the agent's requirements
+        lookup = False
+        items = [_sentence(a) for a in args if a and a.strip()]
+    st['last_lookup'] = items if lookup else None
     if lookup:
         # vf3 audit (rich_3180, rich_3772): a second names call (['wrap', 'fold']) was saved as requirement R1 because
         # it came second; a call is read by its content: short names are a lookup, pairs with sentences are requirements
@@ -517,7 +524,11 @@ def requirements(root, st, args):
                                               "not in the repository (code of the issue's own example, new code the "
                                               'issue asks for, or library code)'))
         st['names'] = list(dict.fromkeys((st.get('names') or []) + names))
-        return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + form + '\n\n'
+        # g11: the same pair sent twice got the same lookup answer; the answer says how the call was read (B5)
+        read = ('This call was read as names to look up: each item is short. Requirements are saved when each '
+                "'what must happen' is a sentence of 3 or more words, or when this same call is sent again.\n\n"
+                if len(items) % 2 == 0 and st.get('lookups', 0) > 1 else '')
+        return ('What the repository defines for those names:\n' + '\n'.join(lines) + '\n\n' + read + form + '\n\n'
                 + next_call('req.py', 'pairs'))
     if any(COMMAND.match(x) for x in items) or (len(items) == 1 and len(items[0].split()) < 6):
         # vf3 (Gemma, requests_7205 and 3 more): req.py was called with 'grep -r "netrc" src/requests', the command was
