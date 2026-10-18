@@ -1898,7 +1898,11 @@ def specify(root, st, args):
         evidence = ' '.join(items[1:]).strip()
         if not _in_place(root, p, evidence, body_only=True) and p.get('nc_refused', 0) < NC_REFUSALS:
             p['nc_refused'] = p.get('nc_refused', 0) + 1
-            what = 'names no line' if not evidence else f'names a line that is not in {p["handle"]}'
+            # lab 10-18 (rich_3180, twice): the def line was refused as "a line that is not in" the place, which is false
+            what = ('names no line' if not evidence else
+                    f'names only the signature, decorators or docstring of {p["handle"]}, which do not do what a '
+                    f'requirement says' if _in_place(root, p, evidence) else
+                    f'names a line that is not in {p["handle"]}')
             return (f"This 'no change' {what}. 'no change' means a line of {p['handle']} already does what {ids} "
                     f"says: send it with that line copied as written, ['no change', '<that line>']. If no line does "
                     f'it, {ids} fails here: send the lines that make it fail and what they do now.\n\n'

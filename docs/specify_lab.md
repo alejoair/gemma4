@@ -366,7 +366,21 @@ Checks done:
 - a dry check on fastapi_14419 shows the three-part NEXT, the new planned-place answer and the hint in
   `get_dependant`'s view.
 
-No model run has been done yet.
+Model run (10-18, local 31B, budget 1024, `build_f9`, one sample per case), on the three multi-place cases where vf8
+looped:
+
+| Case | Turns | Planned-place `missing` | What the specifier sent |
+|---|---|---|---|
+| fastapi_14419 | 5 | 0 | no change for `Dependant.cache_key` and `get_parameterless_sub_dependant`; a finding and sentence for `get_dependant` |
+| rich_3180 | 6 | 1, then it moved on | a finding and sentence for both places; the hint was shown in `divide_line`'s view |
+| rich_3934 | 5 | 1, then it moved on | `Live.stop`: no change; `LiveRender`: a finding and sentence |
+
+The loop is gone: in vf8 the same answer was refused and sent again up to three times. Each case is down to one call
+per place, plus the window and at most one correction.
+
+What the run showed is left: the `def` line sent as the line that already does it, three times (rich_3180 ×2,
+rich_3934). The refusal said "a line that is not in chop_cells", which is false. It now says the line is only the
+signature, decorators or docstring, which do not do what a requirement says (B5, closer; checked dry on rich_3180).
 
 | Checklist item | Effect | Why |
 |---|---|---|
