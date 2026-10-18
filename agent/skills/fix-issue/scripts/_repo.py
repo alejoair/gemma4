@@ -1,11 +1,16 @@
 """The task repository: where it is, its Python files, exact reads and writes, and the diff the patch will contain."""
 import os
+import re
 import subprocess
 
 SKIP_DIRS = {'.git', '.hg', '.tox', '.nox', '.venv', 'venv', 'env', 'node_modules', 'build', 'dist', '__pycache__',
              '.mypy_cache', '.pytest_cache', '.ruff_cache', 'site-packages', '.eggs'}
-DOC_DIRS = {'docs', 'doc', 'docs_src', 'examples', 'example', 'benchmarks', 'scripts'}
 TEST_DIRS = {'tests', 'test', 'testing'}
+# Documentation, examples, benchmarks and scripts beside the package, by the first word of the top-level directory's
+# name (docs, docs_src, doc-examples, example_app, benchmarks ...): naming conventions of Python projects, not the names
+# of one repository
+AUX_WORDS = {'doc', 'docs', 'example', 'examples', 'sample', 'samples', 'demo', 'demos', 'tutorial', 'tutorials',
+             'benchmark', 'benchmarks', 'bench', 'script', 'scripts'}
 
 if __name__ == '__main__':
     print('This is an internal module. Call scripts/step.py.')
@@ -38,8 +43,50 @@ def is_test_path(rel):
             or name == 'conftest.py')
 
 
+def is_aux_name(name):
+    """Whether a top-level directory name is documentation, examples, benchmarks or scripts (its first word)."""
+    return re.split(r'[_\-.]', name.lower(), maxsplit=1)[0] in AUX_WORDS
+
+
 def is_doc_path(rel):
-    return rel.replace('\\', '/').split('/')[0] in DOC_DIRS
+    parts = rel.replace('\\', '/').split('/')
+    return len(parts) > 1 and is_aux_name(parts[0])
+
+
+_ROOTS = {}
+
+
+def import_roots(root):
+    """The directories the repository's own packages are imported from, most code first, the repository root last.
+    A package's import root is the directory above its topmost __init__.py, so a src/, lib/ or python/ layout is found
+    from the files themselves; documentation, examples and tests are not import roots."""
+    if root in _ROOTS:
+        return _ROOTS[root]
+    count = {}
+    for rel in iter_py(root, docs=False):
+        parts = rel.split('/')
+        top = None
+        for i in range(len(parts) - 1, 0, -1):        # the outermost directory of an unbroken chain of packages
+            if os.path.isfile(os.path.join(root, *parts[:i], '__init__.py')):
+                top = i - 1
+            else:
+                break
+        if top:                                       # 0: a package at the repository root, which comes last anyway
+            base = '/'.join(parts[:top])
+            count[base] = count.get(base, 0) + 1
+    _ROOTS[root] = [os.path.join(root, b) for b in sorted(count, key=lambda b: (-count[b], b))] + [root]
+    return _ROOTS[root]
+
+
+def module_name(root, rel):
+    """The import name of a source file (pkg/sub/mod.py -> pkg.sub.mod), relative to the import root that holds it."""
+    path = os.path.join(root, rel)
+    for base in import_roots(root):
+        if base != root and path.startswith(base + os.sep):
+            rel = os.path.relpath(path, base).replace(os.sep, '/')
+            break
+    mod = rel[:-3].replace('/', '.')
+    return mod[:-9] if mod.endswith('.__init__') else mod
 
 
 def iter_py(root, tests=False, docs=True):

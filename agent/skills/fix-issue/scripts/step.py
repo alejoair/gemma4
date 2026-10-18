@@ -646,8 +646,7 @@ def _context_view(root, p, focus=None):
         assigned_self[cls] = assigned_self.get(cls.split('.')[-1], set())
 
     def module_of(rel):
-        mod = rel[:-3].replace('/', '.')
-        return mod[4:] if mod.startswith('src.') else mod
+        return _repo.module_name(root, rel)
 
     def resolve(name, how):
         found = table.find(name)

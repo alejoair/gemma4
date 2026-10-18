@@ -261,3 +261,34 @@ Stage spans (medians over the 30 tasks):
 - edit 5-35 s (2 calls when nothing is left to edit).
 
 Calls after a part was finished are few: 28 log lines, at most 5 per task.
+
+## The repository's layout found from its files, not assumed (10-18)
+
+S8 (vf5) scored 0.06 on the public leaderboard although the eval judged 12/30; every dev task comes from fastapi,
+rich, requests or httpx, and the hidden tasks from private repositories. The user asked to fix what assumed the shape
+of those repositories. The audit found no repository name in the scripts' logic (only in comments citing traces), but
+it did find layout assumptions:
+
+- `src/` was the only import root besides the repository root, written in five places (`_tests._module_names`,
+  `_tests._env`'s PYTHONPATH, `_tests._missing_modules`, `step.py`'s `module_of`, `_example._packages`). A package under
+  `lib/`, `python/` or any other directory got wrong module names (the import check probed `lib.pkg.mod`), was not on
+  the tests' PYTHONPATH, and was not recognised as the repository's package.
+  Now `_repo.import_roots(root)` derives the roots from the files: a package's import root is the directory above its
+  topmost `__init__.py`, ordered by how much code each holds, the repository root last. `_repo.module_name(root, rel)`
+  names a file from the root that holds it.
+- `DOC_DIRS` listed `docs_src`, fastapi's own directory name, and `_example._packages` listed it again with
+  `tutorial`. Now a top-level directory is documentation, examples, benchmarks or scripts when the first word of its
+  name is one of those conventions (`docs`, `docs_src`, `doc-examples`, `example_app`, `benchmarks`), `_repo.is_aux_name`.
+
+Checks: on the dev repositories the roots and module names are the same as before (fastapi and rich: the root;
+requests and httpx: `src`, then the root); a made-up `lib/` layout gives `lib` and `mypkg.sub.core`; replays of the
+vf5d traces on 6 tasks (requests ×2, fastapi ×2, rich ×2) print NO PROBLEMS. No model run: the dev repositories do not
+exercise the new cases, so only a task from a repository of another layout can show the effect.
+
+| Checklist item | Effect | Why |
+|---|---|---|
+| B1-B15 (what the model reads and sends) | neutral | No text the model reads changes on the dev repositories. |
+| What the scripts show about another layout | closer | Module names, the import check, the tests' imports and the repository's package are right for any import root. |
+
+Why it is generic: the layout is read from each repository's own files (`__init__.py` chains); the remaining names
+are conventions of Python projects (`tests`, `docs`, `examples`, `scripts`), none from one repository.

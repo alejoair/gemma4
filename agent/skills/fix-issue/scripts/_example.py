@@ -17,16 +17,15 @@ MAX_OUT = 900
 
 
 def _packages(root):
-    """The repository's top-level importable names (src/ layout included)."""
+    """The repository's top-level importable names, from each of its import roots (src/, lib/ ... layouts)."""
     out = set()
-    for base in (root, os.path.join(root, 'src')):
+    for base in _repo.import_roots(root):
         try:
             for name in os.listdir(base):
                 p = os.path.join(base, name)
                 # gk15 (rich_3894): 'benchmarks' (asv's) was named as the repository's package next to rich
-                if name.startswith(('.', '_')) or name in ('tests', 'test', 'testing', 'docs', 'docs_src', 'scripts',
-                                                           'benchmarks', 'benchmark', 'bench', 'examples', 'example',
-                                                           'tools', 'tasks', 'tutorial', 'site'):
+                if name.startswith(('.', '_')) or name in _repo.TEST_DIRS or _repo.is_aux_name(name) or \
+                        name in ('tools', 'tasks', 'site'):
                     continue
                 if os.path.isdir(p) and os.path.isfile(os.path.join(p, '__init__.py')):
                     out.add(name)

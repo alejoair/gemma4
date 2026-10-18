@@ -42,12 +42,9 @@ COMMON = {'self', 'cls', 'None', 'True', 'False', 'return', 'import', 'from', 'd
           'async', 'await', 'str', 'int', 'list', 'dict', 'len', 'isinstance', 'value', 'name', 'args', 'kwargs'}
 
 
-def _module_names(rel):
-    """Import names of a source file: pkg/sub/mod.py -> pkg.sub.mod (and without a leading src.)."""
-    mod = rel[:-3].replace('/', '.')
-    if mod.endswith('.__init__'):
-        mod = mod[:-9]
-    return [mod[4:]] if mod.startswith('src.') else [mod]
+def _module_names(root, rel):
+    """Import names of a source file: pkg/sub/mod.py -> pkg.sub.mod, relative to its import root (src/, lib/ ...)."""
+    return [_repo.module_name(root, rel)]
 
 
 def _test_functions(tree):
@@ -98,7 +95,7 @@ def select(root, changed, use_map=True):
     slow = set(_state.load('slow_tests', []))
     texts = {r: _repo.read_text(root, r) for r in tests}
     words = {r: set(IDENT.findall(t)) for r, t in texts.items()}
-    modules = [m_ for rel in changed for m_ in _module_names(rel)]
+    modules = [m_ for rel in changed for m_ in _module_names(root, rel)]
     n = len(tests)
     idf = {w: math.log(1 + n / (1 + sum(w in ws for ws in words.values()))) for w in names}
     stems = {os.path.basename(rel)[:-3].lstrip('_') for rel in changed if rel.endswith('.py')} - {'__init__'}
@@ -191,7 +188,7 @@ def _env(root, extra=()):
         if k.lower() in ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
             # the sandbox has no proxy; a proxy in the environment made 8 of requests' tests wait 5 s each (audit)
             del env[k]
-    paths = list(extra) + ([os.path.join(root, 'src')] if os.path.isdir(os.path.join(root, 'src')) else []) + [root]
+    paths = list(extra) + _repo.import_roots(root)        # the repository's own import roots, the root last
     env['PYTHONPATH'] = os.pathsep.join(paths + ([env['PYTHONPATH']] if env.get('PYTHONPATH') else []))
     env['PYTHONDONTWRITEBYTECODE'] = '1'
     return env
@@ -375,8 +372,8 @@ def _missing_modules(root, text):
         top = m.split('.')[0]
         if '.' in m and _installed(top):
             continue                     # a submodule of an installed package: the code's own error
-        if os.path.exists(os.path.join(root, top)) or os.path.exists(os.path.join(root, top + '.py')) or \
-                os.path.exists(os.path.join(root, 'src', top)) or _installed(top):
+        if any(os.path.exists(os.path.join(base, top)) or os.path.exists(os.path.join(base, top + '.py'))
+               for base in _repo.import_roots(root)) or _installed(top):
             continue
         if imported is None:
             imported = _test_imports(root)
@@ -595,7 +592,7 @@ def import_check(root, rels):
     """[(module, error)] of the changed modules that cannot be imported now but can on the original code (audit: an
     edit that broke importing requests was 'Kept, not checked' because conftest failed before any test ran)."""
     mods = [m for rel in rels if rel.endswith('.py') and not _repo.is_test_path(rel) and not _repo.is_doc_path(rel)
-            for m in _module_names(rel)]
+            for m in _module_names(root, rel)]
     if not mods:
         return []
     code = ('import importlib, json, sys, traceback\nres = {}\n'

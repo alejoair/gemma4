@@ -1219,7 +1219,7 @@ def _importers(root, table, located, limit=4):
     for p in located:
         if p['name'] != MODULE or not p['rel'].endswith('.py'):
             continue
-        mods = _tests._module_names(p['rel'])
+        mods = _tests._module_names(root, p['rel'])
         last = os.path.basename(p['rel'])[:-3]
         pat = re.compile(r'^\s*(from\s+(' + '|'.join(re.escape(m) for m in mods) + r'|\.+' + re.escape(last) +
                          r')\s+import|import\s+(' + '|'.join(re.escape(m) for m in mods) + r')\b)', re.M)
@@ -2325,7 +2325,7 @@ def _import_errors(root, rel, before):
     About a second; the per-edit test run is off, this check stays (the user's, 2026-10-14)."""
     if not rel.endswith('.py') or _repo.is_test_path(rel) or _repo.is_doc_path(rel):
         return []
-    mods = _tests._module_names(rel)
+    mods = _tests._module_names(root, rel)
     now = _probe_imports(root, mods)
     if not now:
         return []
