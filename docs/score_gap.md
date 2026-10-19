@@ -2,11 +2,11 @@
 
 | Build | Internal eval (Kaggle, our judge) | Public leaderboard |
 |---|---|---|
-| S1, the official sample agent (no LoRA, out 8192, 4 min, 40 calls) | not measured on the 30 tasks yet (version 35 runs it) | 0.12 |
+| S1, the official sample agent (no LoRA, out 8192, 4 min, 40 calls) | **14/30** (version 35, 10-19) | 0.12 |
 | S4 = V3 (native tools plus scripts, 5 min) | 3/10 (old 10-task set, old judge) | 0.13 |
 | S7 = V25 (stages build) | 5/30, 8/30 on V25-30 | 0.06 |
 | S8 = vf5 (fast build) | 12/30 | 0.06 |
-| S9 = vf11 | not measured (vf10, its neighbour, 7/30) | pending |
+| S9 = vf11 | not measured (vf10, its neighbour, 7/30) | 0.05 |
 
 The internal eval ranks vf5 far above S1 and S4; the leaderboard ranks it below both. Every dev task comes from
 fastapi, rich, requests or httpx (67, 48, 13 and 1 of 129); the hidden tasks come from private repositories.
@@ -42,3 +42,17 @@ fastapi, rich, requests or httpx (67, 48, 13 and 1 of 129); the hidden tasks com
   vf5, our agent's advantage does not carry to the hidden repositories.
 - A held-out set from repositories the scripts have never seen (public SWE-bench-style tasks) is the only eval that can
   predict the leaderboard for a design tuned on fastapi, rich and requests.
+
+## Result of the calibration (10-19)
+
+S1, the official sample agent as submitted (native tools, 4 minutes, 40 calls, no tuning), resolved **14 of the same 30
+tasks** with the same judge: more than vf5 (12), vf5d (11) and vf10 (7). It leaves 4 empty patches against 8-11 for the
+fast builds. So:
+
+- **The internal eval orders the builds as the leaderboard does** (S1 above vf5 in both), but compresses the gap: 14 vs
+  12 here, 0.12 vs 0.06 there. The hidden set is much harder for every build (S1: 47% here, about 12% there).
+- **Our step design has never beaten the untuned baseline on our own tasks.** The internal numbers looked like progress
+  (vf3 7/30, vf4 9/30, vf5 12/30) because no baseline was measured on the same tasks with the same judge; the baseline
+  was already at 14/30.
+- From now on every internal eval should run S1 next to the build on the same tasks: a build is better only when it
+  beats S1 there.
