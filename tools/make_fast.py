@@ -90,16 +90,12 @@ STAGES = {
         steps=[
             "First call {script} with args ['open']: you get a place's code, the requirements it serves, the code it "
             "uses and the other places of the fix with their sentences.",
-            "The requirements do not hold in the current code (that is why the issue exists), so send in one call "
-            "the lines of the place that make them fail (copied as written), what they do now, and one sentence of "
-            "what they must do instead, with the exact names, messages and signatures the issue gives, complete in "
-            "itself (the editor does not see the other places). "
-            "If the place already does what the requirements say, send ['no change', '<the line that already does "
-            "it>']. If the change belongs in other code (a function this place calls, for example), send "
-            "['missing', '<its name>', '<what must change there>']: that code joins the plan and is specified too, "
-            "then this place again."],
-        forms=[['open'], ['<the lines that make it fail>', '<what they do now>', '<what they must do instead>'],
-               ['no change', '<the line that already does it>'],
+            "Then send one sentence: what to add, remove or replace there, and with what, with the exact names, "
+            "messages and signatures the issue gives, complete in itself (the editor does not see the other places). "
+            "Or ['no change'] if this place keeps its code. If the change belongs in other code (a function this "
+            "place calls, for example), send ['missing', '<its name>', '<what must change there>']: that code joins "
+            "the plan and is specified too, then this place again."],
+        forms=[['open'], ['<what changes here, in one sentence>'], ['no change'],
                ['missing', '<name of the other code>', '<what must change there>']],
         sampling='sampling_1k.yaml', desc='Writes one sentence of what must change in one place of the code.'),
     'edit': dict(

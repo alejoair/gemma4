@@ -1777,7 +1777,10 @@ NUMBERED = re.compile(r'(?m)^(\s*)\d+\|')
 # it copied code. The decision is split: first the lines that make the requirement fail and what they do now (kept
 # in the conversation as the call's own text), then what they must do; 'no change' names the line that already does
 # what the requirement says.
-DIAGNOSE = True
+# vf7 9/30 and vf10 7/30 against vf5 12/30 and vf5d 11/30 (Kaggle, the same 30 tasks): with it, specify took 136-167 s
+# and 7-8 calls for a single place and three tasks stopped at 5 min before editing; off since 10-19 (the user's), the
+# specifier sends vf5's one sentence per place
+DIAGNOSE = False
 NC_REFUSALS = 1          # 'no change' without a line of the place is refused at most this many times (g10: 2 cost calls)
 
 
