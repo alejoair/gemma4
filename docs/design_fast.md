@@ -396,3 +396,57 @@ This is the inventory of the points where the model's answer decides the outcome
 | 8 | "missing" chains | A place already "no change" can be named again (1928). | rich_3180 and fastapi_14419 lost time this way. | One "missing" per place. |
 
 Caveat: in fastapi_15661, rich_3934 and rich_3772 the located place was wrong. Forcing a change there gives a non-empty patch that is probably still wrong.
+
+### The forcing fixes (10-20, the user's: "a decision that matters is forced, not asked for")
+
+All of these are in `_stages.py`. They apply only to the fast build.
+
+1. **Specifier "no change".** A "no change" is replaced by a sentence the script writes when two things hold:
+   - no other place carries a change (a sentence or an applied edit);
+   - the place is the main place (the first one located), or no other place is still unspecified.
+
+   The script's sentence is what a specifier said must change there, or else what the place's requirements say must happen (`_default_sentence`). The specifier is told so and is not asked again. vf5's one-time warning is removed: it fired 7 times and was answered "no change" 7 times.
+2. **Claims of earlier stages are released** at every claim (`_settle`), because those workers have ended.
+   - A requirement nobody located gets the top candidate.
+   - At the edit stage, a place nobody specified gets the default sentence (`_unspecified_default`).
+   - A place left "to edit" is taken by repair.
+3. **Review "done" with broken existing tests.** When the script's own test run says BROKEN, the review's "done" becomes "not done".
+   - The edited places of that requirement go to repair with the failures.
+   - Repair's editor keeps an edit whose failing test checks what the issue changes.
+   - This applies while review rounds and time are left.
+4. **The editor's "no change" with an empty patch.** When the place has a sentence and the patch is empty, the editor's "no change" or "skip" is refused once, then the place is marked failed. Repair's empty-patch retry then takes it.
+5. **Stage ends (`STAGE_END`)**: requirements at 75 s, locate at 110 s, specify at 180 s, edit at 235 s.
+   - After its end, a worker finishes the item it holds and takes no other.
+   - "missing" is not added.
+   - Requirements are not replaced.
+   - What is left gets the defaults of item 2.
+6. **Reversal of a "no change".** A specifier whose last place ended as "no change" can still send a sentence or "missing" for it until the edit stage starts. The call is applied, not refused as "your part is finished".
+7. **Copied requirements.** Requirements whose "what must happen" all repeat the issue's sentence are refused once.
+8. **One "missing" per place.** A second "missing" from the same place is refused, and so is a "missing" sent after the stage's end.
+9. **No duplicate places.** A member of a split class that is already in the plan is not added twice (rich_3772).
+
+What the script cannot force:
+- A call the model writes inside its thinking (rich_4075). Item 2 only lets repair take the place afterwards.
+- A malformed call that the ADK rejects before our script runs (rich_4076: the same call 98 times).
+
+Checklist (`docs/llm_checklist.md`):
+
+| Item | Effect | Why |
+|---|---|---|
+| B9 deciding when to stop | closer | The script decides when a stage ends and whether an empty patch is acceptable. The model no longer decides either. |
+| B10 budget | closer | Stage ends are enforced by the script, not left to a model that cannot see the time. |
+| B11 trusting output | closer | "done" against the script's own failing tests is overridden by the test result. |
+| F3 doubting a verdict | closer | The test verdict replaces the model's verdict where the two disagree. |
+| F4 resisting a challenge | closer | The "no change" warning (a challenge, answered the same way 7 of 7 times) is gone. The script states what it did instead. |
+| F9 facts over advice | neutral | The answers state what the script did (the sentence it saved, the failures), not advice. |
+| B12 contradictions | closer | "Your part is finished" no longer refuses an answer that the next stage would need. |
+| B5/F7 repeated calls | closer | The second "missing" is refused with its reason, and the chain ends. |
+| W3 reasoning on code in front of it | farther, with a reason | A place the model judged correct can now be edited from the requirement text. The reason: in vf5 that judgement was wrong at the reference's places (fastapi_13207, rich_3480, requests_7505, fastapi_14419), and an empty patch never scores. |
+
+Why it is generic: every rule reads only the procedure's own state:
+- the plan, its sentences and statuses;
+- whether the diff is empty;
+- the script's test verdict, compared against the original code;
+- the elapsed time.
+
+None of the rules names a repository, a library or a task. The traces are only the evidence.

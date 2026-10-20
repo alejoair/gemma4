@@ -51,6 +51,11 @@ BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(4 * 60 + 30)))
 # targets one agent call handles in a row (V22: the ceremony of an agent call is about 21 s); specify keeps 3 (V23), so
 # that its views (up to 12,000 characters each) stay under the harness's compaction at 14,336 tokens
 BATCH = {'locate': 6, 'review': 6, 'specify': 3}
+# audit 10-20 (docs/design_fast.md, "Decisions left to the model"): no stage had an end of its own; vf5 started edit at
+# 262 s (rich_3480) and 8 of its 9 tasks cut at 5 minutes had an empty patch. After its end (seconds of the task) a
+# stage's workers finish the item they hold and take no other; what is left gets the script's default
+STAGE_END = {'requirements': 75, 'locate': 110, 'specify': 180, 'edit': 235}
+ORDER = ('requirements', 'reproduce', 'locate', 'specify', 'edit', 'review', 'repair')
 REPRO_LEFT_S = 360    # V22: reproduce took 30-225 s; it runs only when this much time is left
 REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
 REPRO_NAME = 'test_swe_reproduce_issue.py'
@@ -597,6 +602,13 @@ def requirements(root, st, args):
             reqs = keep
             for i, r in enumerate(reqs):
                 r['id'] = f'R{i + 1}'
+    if FAST and all(_copied(r) for r in reqs) and not st.get('copy_refused'):
+        # audit 10-20: a lone requirement that only repeats the issue's sentence was saved in 6 of vf5's 30 tasks
+        # (2 resolved); it states no situation and no result for locate and specify to work from. Refused once
+        st['copy_refused'] = True
+        return ('Not saved: what must happen repeats the issue\'s sentence word for word ("' + reqs[0]['what'][:120]
+                + '"), so it states no situation and no result. Send each pair again with what must happen: the '
+                'situation and the expected result, with the exact names. ' + form + '\n\n' + next_call('req.py', 'pairs'))
     st['reqs'] = reqs
     _save_statement(st)
     listed = '\n'.join('  ' + _req_line(r) + (f' [new: {", ".join(r["new"])}]' if r['new'] else '') for r in reqs)
@@ -1360,6 +1372,24 @@ def _main_place(st):
     return None
 
 
+def _default_sentence(st, p):
+    """The sentence the script gives a place nobody specified: what a specifier said must change there, else what its
+    requirements say must happen."""
+    note = str(p.get('note') or '')
+    said = note.split('what it says must change here: ', 1)[-1] if 'what it says must change here: ' in note else ''
+    if said and said != '(not said)':
+        return said[:MAX_SENTENCE]
+    if p.get('hints'):
+        return '; '.join(h.split(': ', 1)[-1] for h in p['hints'])[:MAX_SENTENCE]
+    return '; '.join(_req(st, rid)['what'] for rid in p['reqs'] if _req(st, rid))[:MAX_SENTENCE] or 'no change'
+
+
+def _has_change(st, but=None):
+    """Whether a place other than but carries a change (a sentence, or an applied edit)."""
+    return any(q is not but and (q.get('sentence') not in (None, 'no change') or q.get('status') == 'done')
+               for q in st['plan'])
+
+
 LITERAL = re.compile(r"^\s*(?:in\s+`[^`]+`\s*,\s*)?replace\s+(?:the\s+\w+(?:\s+\w+)?\s+)?`([^`]+)`\s+with\s+`([^`]*)`\s*\.?\s*$",
                      re.I | re.S)
 
@@ -1480,7 +1510,9 @@ def _make_plan(root, st, extra, located=None, auto=None, newp=None):
             continue
         p = {k: p[k] for k in ('rel', 'name', 'start', 'end', 'reqs', 'new', 'owner') if k in p}
         p.update({'sentence': None, 'status': None})
-        plan += _split_class(root, st, p)
+        # audit 10-20 (rich_3772): a split class's member was also located on its own, and the plan held
+        # render_stack twice (one 'to edit', one 'no change'); its editor and repair spent 130 s on the double
+        plan += [m for m in _split_class(root, st, p) if not any(_key(q) == _key(m) for q in plan)]
     for p in plan:
         _refresh(root, p)
     st['plan'] = _order(root, plan)
@@ -1917,6 +1949,13 @@ def specify(root, st, args):
             # V23 (rich_3521): the specifier named its own place with what must change there; that is its sentence
             items, self_named = [what], True
     if not self_named and _args.clean(items[0]).lower() == 'missing':
+        if FAST and (p.get('missing_sent') or _late(st, st.get('stage_now'))):
+            # audit 10-20 (rich_3180, fastapi_14419): 'missing' chains went back and forth between places for 60-150 s
+            # and the sentence came at 293 s; one 'missing' per place, none after the stage's end
+            why = (f'{p["handle"]} already named other code once' if p.get('missing_sent') else
+                   'the time for specifying is up')
+            return (f'Not added: {why}. Send what changes in {p["handle"]} itself, or that it keeps its code.\n\n'
+                    + next_call('specify.py', *_specify_forms(p, may_name=False)))
         if (p.get('note') or '').startswith('the specifier of'):
             # V23 (fastapi_14986): get_openapi named OpenAPI, which named Server, then both were 'no change' (170 s);
             # code named by a specifier names no further code
@@ -1954,6 +1993,7 @@ def specify(root, st, args):
         st['missing'].append([name, f'the specifier of {p["handle"]} named this code; what it says must change here: '
                               f'{what[:300] or "(not said)"}',
                               list(p['reqs']), _key(p)])
+        p['missing_sent'] = True
         p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
         _reset_asks(st, 'specify', p)
         return (f'{name} goes into the plan: it is specified next, then {p["handle"]} again.\n\n{DONE}')
@@ -1999,15 +2039,14 @@ def specify(root, st, args):
                 "`return self.router.on_event(event_type)` with ...'. Send the sentence again.\n\n" + nxt)
     if len(sentence) > MAX_SENTENCE:
         return f'Too long ({len(sentence)} characters, at most {MAX_SENTENCE}). Send it shorter.\n\n{nxt}'
-    if step.NO_CHANGE.match(sentence) and FAST and not p.get('nc_warned') and not any(
-            q.get('sentence') not in ('no change',) and q is not p for q in st['plan']):
-        # vf3 audit (rich_4075, rich_4076): every place got 'no change' and the patch stayed empty; this answer is the
-        # last that could carry a change, a new fact, said once (F9; not a bare 'are you sure', F4)
-        p['nc_warned'] = True
-        ids = ', '.join(p['reqs']) or 'the requirements'
-        return (f'With this, no place of the fix changes: the patch stays empty and {ids} would not be met. If '
-                f"{p['handle']} must change for {ids}, send what changes here; if the change belongs elsewhere, send "
-                "['no change'] again.\n\n" + nxt)
+    forced = False
+    if step.NO_CHANGE.match(sentence) and FAST and not p.get('edited') and not _has_change(st, p) and (
+            p is _main_place(st) or not any(q is not p and q.get('sentence') is None for q in st['plan'])):
+        # audit 10-20: vf5's warning ("the patch stays empty") fired in 7 tasks and 'no change' came back every time;
+        # every place kept its code in 4 empty patches, two of them at the reference's places (fastapi_13207). The
+        # place where the requirement was located, or the last place that could carry a change, is not left
+        # unchanged: the requirement itself becomes its sentence, and its editor writes the change
+        sentence, forced = _default_sentence(st, p), True
     if step.NO_CHANGE.match(sentence):
         p['sentence'], p['status'] = 'no change', 'nochange'
         if p.get('edited'):
@@ -2024,6 +2063,10 @@ def specify(root, st, args):
     p.pop('note', None)
     if p['status'] == 'nochange':
         return f'{p["handle"]} keeps its code: it is not edited.\n\n{DONE}'
+    if forced:
+        return (f'Not kept as no change: no other place of the fix has a change, so the patch would stay empty and '
+                f'{ids} would not be met. {p["handle"]} keeps the change: its editor writes it from what {ids} says: '
+                f'{sentence[:300]}\n\n{DONE}')
     if LITERAL.match(sentence) and not p.get('new'):
         return f'Saved for {p["handle"]}: the script makes this replacement.\n\n{DONE}'
     return f'Saved for {p["handle"]}: its editor writes the change from this sentence.\n\n{DONE}'
@@ -2204,6 +2247,16 @@ def edit(root, st, args):
                         "['replace', '<the old lines, as shown>', '<the new lines>'].")
         return '\n\n'.join(view) + '\n\n' + nxt
     if first in ('no change', 'skip', 'nothing'):
+        if FAST and p.get('sentence') not in (None, 'no change') and p.get('status') != 'done' \
+                and not _patch_files(root) and p.get('nc_edit_refused', 0) < 2:
+            # audit 10-20 (fastapi_13207, rich_3772): the editor's 'no change' undid the script's own retry of an
+            # empty patch; a place with a change to make, while the patch is empty, is edited (refused once, then failed)
+            p['nc_edit_refused'] = p.get('nc_edit_refused', 0) + 1
+            if p['nc_edit_refused'] < 2:
+                return (f'Not accepted: the patch is empty, and this is the change to make in {p["handle"]}: '
+                        f'{_brief(p["sentence"])} Send the edit that does it.\n\n' + nxt)
+            p['status'] = 'failed'
+            return f'{p["handle"]} is left as it is: no edit was sent for its change.\n\n{DONE}'
         if p.get('status') != 'done':
             p['status'] = 'nochange'
         return f'{p["handle"]} keeps its code.\n\n{DONE}'
@@ -2813,6 +2866,23 @@ def review(root, st, args):
                     '\nSo the patch does not do it yet: name the place that is wrong or missing and what is missing '
                     "there: ['not done', '<place>', '<what is missing>'].\n\n" + nxt)
         reg = st.get('reg') or {}
+        if FAST and first in ('done', 'yes') and reg.get('verdict') == 'BROKEN' and st['round'] < MAX_ROUNDS \
+                and _left(st) > REVIEW_LEFT_S:
+            # audit 10-20: vf5's review said 'done' 15 times and 'not done' never; in fastapi_14953 and rich_3718 it
+            # said 'done' with failing existing tests in its view (rich_3718 broke 3 in the judge). The script's own
+            # test run decides: the places edited for this requirement go back to repair with the failures, whose
+            # editor keeps the edit when the failing test checks what the issue changes
+            fails = ', '.join(reg.get('failures') or [])[:300]
+            what = ('existing tests that pass on the original code fail with the patch' + (f' ({fails})' if fails else '')
+                    + ': ' + reg['detail'][:500])
+            st['reviews'][rid] = {'verdict': 'not done', 'place': '', 'what': what, 'by': 'the existing tests'}
+            st.setdefault('recheck', []).append(rid)
+            for p in places:
+                if p.get('status') == 'done':
+                    p['old_sentence'] = p.get('sentence')
+                    p['sentence'], p['note'] = None, f'the review of {rid} says: {what}'
+            return (f'{rid}: not done, by the script\'s test run: {what[:400]}\nThe edited places go back to be '
+                    f'changed so that these tests pass, or kept when a test checks what the issue changes.\n\n{DONE}')
         if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid) and not FAST:
             # (the fast build shows these failures in the open view already: a second ask adds no fact, F4)
             st.setdefault('reg_refused', {})[rid] = True
@@ -2987,8 +3057,49 @@ def _release(st, worker, what=None):
         st.setdefault('wfinished', {}).setdefault(worker, []).append(what or f'{cur[1]} is finished')
 
 
+def _late(st, stage):
+    return stage in STAGE_END and _elapsed(st) > STAGE_END[stage]
+
+
+def _worker_stage(worker):
+    s = worker.rstrip('0123456789')
+    return 'requirements' if s == 'req' else s
+
+
+def _settle(root, st, stage):
+    """What earlier stages left: their workers have ended (the stages run one after another), so an item one of them
+    still holds was left unfinished. audit 10-20 (rich_4075): edit2 opened Console.print, the reference's place, wrote
+    its edit inside its thinking and never sent it; the claim stayed, repair answered 'Nothing is left to change' and
+    the patch was empty. The claims are released, and what no stage did gets the script's default."""
+    if stage not in ORDER:
+        return
+    for w in list(st.get('wcur', {})):
+        ws = _worker_stage(w)
+        if ws in ORDER and ORDER.index(ws) < ORDER.index(stage):
+            _release(st, w, f'{st["wcur"][w][1]} was left unfinished')
+    if ORDER.index(stage) > ORDER.index('requirements') and not st['reqs']:
+        st['reqs'] = [{'id': 'R1', 'quote': '', 'what': 'Fix the issue as the statement describes.',
+                       'names': list(st.get('names') or []), 'new': []}]
+        _save_statement(st)
+    if ORDER.index(stage) > ORDER.index('locate') and not st['scope_done']:
+        for r in st['reqs']:
+            if r['id'] not in st['located']:
+                st['located'][r['id']] = _fallback_locate(root, st, r)
+
+
+def _unspecified_default(st):
+    """At the edit stage, a place no specifier finished (requests_7505: _encode_params stayed 'to specify') gets the
+    script's default sentence and is edited (repair still specifies its own places)."""
+    for p in st['plan']:
+        if p.get('sentence') is None and not _claims(st).get(f'specify {p["handle"]}'):
+            p['sentence'] = _default_sentence(st, p)
+            p['status'] = 'nochange' if p['sentence'] == 'no change' else 'todo'
+            p['fails'], p['edits'], p['refused'] = 0, 0, 0
+
+
 def _claim(root, st, stage, worker):
     """The next open item of stage for worker (its target, also set as the worker's current), or None."""
+    _settle(root, st, stage)
     if stage == 'requirements':
         if not st['reqs'] and not _claimed(st, stage, 'the issue', worker) and _ask(st, 'requirements'):
             return _take(st, stage, 'the issue', worker, 'requirements')
@@ -3020,6 +3131,8 @@ def _claim(root, st, stage, worker):
             if any(st['located'].values()):
                 _make_plan(root, st, [])
         _add_missing(root, st)
+        if stage == 'edit':
+            _unspecified_default(st)
     if stage == 'repair':
         # vf3 audit (fastapi_14372, fastapi_13713): repair wrote a sentence and then the code from it, two calls per
         # place, and nothing was applied when it started late; the review's finding is the sentence, and the editor
@@ -3055,8 +3168,8 @@ def _claim(root, st, stage, worker):
                 continue            # its copy is being specified now: it takes that sentence
             if _ask(st, f'specify {_key(p)} {p.get("respecs", 0)} {stage}'):
                 return _take(st, 'specify', p['handle'], worker, 'specify')
-            p['sentence'] = '; '.join(_req(st, rid)['what'] for rid in p['reqs'] if _req(st, rid)) or 'no change'
-            p['status'] = 'todo'
+            p['sentence'] = _default_sentence(st, p)
+            p['status'] = 'nochange' if p['sentence'] == 'no change' else 'todo'
         if stage == 'specify':
             return None
     if stage in ('edit', 'repair'):
@@ -3218,8 +3331,20 @@ def main_fast(stage, worker, argv):
             if st.setdefault('wfinished', {}).get(worker):
                 st['wfinished'][worker].pop()
             cur = st['wcur'][worker]
+        st['stage_now'] = stage
+        if stage == 'specify' and cur is None and last and first not in ('', 'open', 'start', 'next', 'done'):
+            q = _place_by(st, last)
+            if q is not None and q.get('status') == 'nochange' and not q.get('edited') \
+                    and not _claims(st).get(f'specify {q["handle"]}'):
+                # audit 10-20 (rich_3480): after its 'no change' the specifier sent the right sentence for
+                # Text.append_text and was told its part was finished; the patch stayed empty. Until the edit stage
+                # starts, the worker's next answer replaces its 'no change'
+                _take(st, 'specify', q['handle'], worker, 'specify')
+                if st.setdefault('wfinished', {}).get(worker):
+                    st['wfinished'][worker].pop()
+                cur = st['wcur'][worker]
         if stage == 'requirements' and cur is None and st['reqs'] and not st['located'] and len(args) >= 2 \
-                and _looks_like_requirements([_sentence(a) for a in args]):
+                and not _late(st, stage) and _looks_like_requirements([_sentence(a) for a in args]):
             # vf3: an agent whose saved requirement was wrong sent the right ones and was told it was finished; before
             # anything is located, new requirements replace the old
             st['reqs'] = []
@@ -3236,7 +3361,9 @@ def main_fast(stage, worker, argv):
                                   and _claim(root, st, stage, worker) is not None):
             # hf1 (rich_3905): the requirements agent's first call already holds the names (its prompt's step 1): it
             # is answered, not replaced by the first question
-            target = _claim(root, st, stage, worker)
+            # after the stage's end a worker that has done an item takes no other (STAGE_END)
+            target = (None if _late(st, stage) and st.get('wdone', {}).get(worker)
+                      else _claim(root, st, stage, worker))
             if target is None:
                 if stage == 'repair' and not st['submitted']:
                     _submit(root, st)
@@ -3262,7 +3389,8 @@ def main_fast(stage, worker, argv):
                 st.setdefault('wlast', {})[worker] = cur[1]
                 limit = BATCH.get(stage, 3) * 2
                 st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
-                target = _claim(root, st, stage, worker) if st['wdone'][worker] < limit else None
+                target = (_claim(root, st, stage, worker) if st['wdone'][worker] < limit and not _late(st, stage)
+                          else None)
                 if target is not None:
                     out = (body + f'\n\nYour part goes on with {target}, in the same way:\n\n'
                            + _view(root, st, stage, worker, target))
