@@ -513,4 +513,9 @@ The judgement compares each task's journal with the reference patch. The trace o
 | statement without detail | 2 |
 | edit | 1 |
 
-Review accepted a wrong patch ("done" or "cannot tell") in 15 of the 18.
+Review on these 18 tasks:
+
+- It accepted a wrong patch ("done" or "cannot tell") in 10.
+- It said "done" in 4 more, and the script's test run overrode it.
+- It did not run in 3, because the patch was still empty when review started.
+- It said "not done" in 1 (fastapi_13713).
