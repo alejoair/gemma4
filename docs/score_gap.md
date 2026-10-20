@@ -56,3 +56,22 @@ fast builds. So:
   was already at 14/30.
 - From now on every internal eval should run S1 next to the build on the same tasks: a build is better only when it
   beats S1 there.
+
+## vf5's empty patches (analysis of the Kaggle traces, 10-20)
+
+vf5 submitted 11 empty patches in 30 tasks; 8 of them were stopped at 5 minutes. Statement lengths matter: 6 of the 11
+statements are 64-354 characters, mostly a PR title and "Fixes #N".
+
+| Cause | Tasks | What the trace shows |
+|---|---|---|
+| Every specifier answered "no change" | fastapi_13207, rich_3934, fastapi_14419, fastapi_15661 | The specifier reads the place and judges that it already does what the requirement says: "it *already* handles `None` by returning `""`" (rich_3934), "this already does that" (fastapi_14419), "Correct" (fastapi_15661, which needs a new file). These statements give only a title, and the specifier has no failing output, so the code looks right. |
+| The fix was specified but the time ran out before the edit | requests_7505, fastapi_14459, rich_3480, rich_3180 | Specify took 120-200 s, going back and forth between "missing" (the change is in other code) and "no change". The edits arrived at 270-308 s and were refused with "the time is up". In fastapi_14459, a `replace` was also refused twice because its old lines occur 2 times. In rich_3180, the reference's place `divide_line` got its sentence at 293 s. |
+| Requirements took the whole budget | rich_4076 | The same malformed call (`file_path` "req.py`,skill_name:") was repeated 98 times: the ADK's error never reaches the script. |
+| The editor's call was written inside its thinking | rich_4075 | The `replace` that removes the two lines (the right fix) is at the end of a thought, so no call was made. Review answered "Nothing to review" and repair answered "Nothing is left to change", although the patch was empty and the place was still "to edit". |
+| The same place appears twice in the plan | rich_3772 | The nested `render_stack` was listed once as "to edit" and once as "no change". The editor and repair spent 130 s asking why. |
+
+**vf5's two fixes for empty patches fired but changed nothing:**
+- The warning "With this, no place of the fix changes: the patch stays empty" fired in 7 tasks. Every time, the model sent "no change" again. Its thought in fastapi_13207: "Let's try `no change` again to see if it moves to `get_schema_from_model_field`".
+- Repair's retry on the main place fired in 3 tasks (fastapi_13207, fastapi_14372, rich_3772). None of them produced a diff from it.
+
+**How much it matters:** S1 resolved only 1 of these 11 tasks (rich_4075). Its patches for the other 10 fail as well. Of S1's three tasks that vf5 does not resolve, two are tasks where vf5 wrote a wrong patch (rich_3718 and rich_3043). Removing the empty patches alone would recover about 1 task against S1.
