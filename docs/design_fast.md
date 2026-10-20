@@ -450,3 +450,31 @@ Why it is generic: every rule reads only the procedure's own state:
 - the elapsed time.
 
 None of the rules names a repository, a library or a task. The traces are only the evidence.
+
+### First run of the forcing fixes: Haiku, vf5's 30 tasks (h12, 10-20)
+
+This run used Haiku through `tools/anthropic_proxy.py`, at the user's request. It tests the system; it is not evidence for Gemma. Result: 12/30 judged resolved, no empty patch, no internal error, no task cut at 5 minutes, median 85 s.
+
+How often each rule fired, in tasks:
+
+| Rule | Tasks |
+|---|---|
+| Forced sentence | 10 |
+| Editor "no change" refused | 5 |
+| Review "done" overridden by the test run | 4 |
+| Copied requirement refused | 1 |
+| Stage end | 0 (Haiku is fast) |
+
+- **Formerly empty patches.** Two of vf5's empty-patch tasks were resolved: requests_7505 and fastapi_14459. The other 7 now carry a patch.
+  - In 4 of those, the patch is in the reference's file and function: fastapi_13207, fastapi_14419, rich_3180, rich_3480.
+  - In 3, it is in another file, because locate chose wrong: fastapi_15661, rich_4075, rich_4076.
+- **Review overridden by the test run** (fastapi_14953, rich_3043, rich_3718, fastapi_14419). In fastapi_14953 and rich_3043 the failing tests were snapshots of the value the issue changes. Repair kept the edit, after 15-20 s of trying to name the test files with "missing". Nothing was lost.
+- **What is left: the content of the change.** Of the 18 tasks not resolved:
+  - 14 changed the reference's file, with a fix that is incomplete or different. In fastapi_13207 the change landed in `get_schema_from_model_field` and was missing in `get_definitions`. In rich_3180 the change was made in `_wrap.py` and was missing in `cells.py`.
+  - 4 changed another file.
+
+  The bottleneck moved from "no change" to what the change is, and to finding the second place.
+- **Faults found and fixed** (5d04efb):
+  - An edit refusal offered "skip" where "skip" is refused.
+  - The recap said "its edits were undone" for a place where no edit was sent.
+  - A requirement id was repeated ("R1, R1").
