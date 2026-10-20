@@ -1997,7 +1997,7 @@ def specify(root, st, args):
         p['sentence'], p['note'] = None, f'you named {name} for the change; specify this place again, seeing its sentence'
         _reset_asks(st, 'specify', p)
         return (f'{name} goes into the plan: it is specified next, then {p["handle"]} again.\n\n{DONE}')
-    ids = ', '.join(p['reqs']) or 'the requirements'
+    ids = ', '.join(dict.fromkeys(p['reqs'])) or 'the requirements'     # h12 (rich_4075): "R1, R1 would not be met"
     first = _args.clean(items[0])
     if step.NO_CHANGE.match(first or '') and not p.get('edited') and not p.get('new') and DIAGNOSE:
         evidence = ' '.join(items[1:]).strip()
@@ -2247,15 +2247,14 @@ def edit(root, st, args):
                         "['replace', '<the old lines, as shown>', '<the new lines>'].")
         return '\n\n'.join(view) + '\n\n' + nxt
     if first in ('no change', 'skip', 'nothing'):
-        if FAST and p.get('sentence') not in (None, 'no change') and p.get('status') != 'done' \
-                and not _patch_files(root) and p.get('nc_edit_refused', 0) < 2:
+        if FAST and _must_edit(root, p) and p.get('nc_edit_refused', 0) < 2:
             # audit 10-20 (fastapi_13207, rich_3772): the editor's 'no change' undid the script's own retry of an
             # empty patch; a place with a change to make, while the patch is empty, is edited (refused once, then failed)
             p['nc_edit_refused'] = p.get('nc_edit_refused', 0) + 1
             if p['nc_edit_refused'] < 2:
                 return (f'Not accepted: the patch is empty, and this is the change to make in {p["handle"]}: '
                         f'{_brief(p["sentence"])} Send the edit that does it.\n\n' + nxt)
-            p['status'] = 'failed'
+            p['status'], p['unsent'] = 'failed', True
             return f'{p["handle"]} is left as it is: no edit was sent for its change.\n\n{DONE}'
         if p.get('status') != 'done':
             p['status'] = 'nochange'
@@ -2512,6 +2511,11 @@ def _undefined(lines):
     return loads - bound
 
 
+def _must_edit(root, p):
+    """A place with a change to make while the patch is empty: its editor's 'no change' or 'skip' is not accepted."""
+    return p.get('sentence') not in (None, 'no change') and p.get('status') != 'done' and not _patch_files(root)
+
+
 def _unspent(p):
     """A send that changed nothing (refused before it was applied) is not an edit: it is counted apart."""
     p['edits'] = max(0, p.get('edits', 1) - 1)
@@ -2527,6 +2531,10 @@ def _after_edit(root, st, p, r, before, names, nxt):
             # the base procedure's numbered form is not an answer form here (gm9: Gemma answered it with 'ls -R')
             err = ("what was sent is not a whole definition (a def or class line and its body); to change some of "
                    "its lines send ['replace', '<the old lines, as shown>', '<the new lines>']")
+        if FAST and _must_edit(root, p):
+            # h12 (Haiku, fastapi_15661): this answer offered 'skip' while 'skip' was refused for this place (B12)
+            err = err.replace(" (if this place needs no change, send ['skip'])", f': the change to make is: '
+                              f'{_brief(p["sentence"])}')
         return f'Not applied: {err}.\n\n{nxt}'
     after = _repo.read_lines(root, p['rel'])
     changed = {p['rel']: names + [l.strip() for l in after[r.start - 1:r.end]]}
@@ -3234,7 +3242,8 @@ def _summary(st, handler, target, body):
     if handler == 'edit':
         q = _place_by(st, target)
         if q is not None:
-            return f'{q["handle"]}: ' + {'done': 'edited', 'failed': 'its edits were undone', 'nochange': 'kept its code'
+            return f'{q["handle"]}: ' + {'done': 'edited', 'failed': 'no edit was sent' if q.get('unsent') else
+                                         'its edits were undone', 'nochange': 'kept its code'
                                          }.get(q.get('status'), 'specified again first')
     if handler == 'locate':
         return f'{target}: located at ' + ', '.join(c['name'] for c in st['located'].get(target, [])) if st['located'].get(target) \
