@@ -478,3 +478,39 @@ How often each rule fired, in tasks:
   - An edit refusal offered "skip" where "skip" is refused.
   - The recap said "its edits were undone" for a place where no edit was sent.
   - A requirement id was repeated ("R1, R1").
+
+#### h12: the stage where each unresolved task first went wrong
+
+The judgement compares each task's journal with the reference patch. The trace of each task is in the scratchpad (`h12_b*/results/traces`), and the per-task dossier is `h12dossier.txt`.
+
+| Task | Stage | What happened |
+|---|---|---|
+| fastapi_15280 | statement | The title only ("Add support for `@app.vibe()`"). The reference is an LLM-prompt route that the statement does not describe. |
+| rich_3942 | statement | The title only ("Update to markdown styles"). Nothing says which styles. |
+| fastapi_14953 | locate | Only `UploadFile.__get_pydantic_json_schema__` was chosen. The reference changes the bytes schema in `fastapi/_compat/v2.py`. |
+| fastapi_15661 | locate | The reference creates a new file (`scripts/prepare_release.py`); locate chose the existing `main` of another script. |
+| fastapi_9753 | locate | R1 was never located. R2 went to `get_typed_signature`; the reference changes `Dependant` in `dependencies/models.py`. |
+| rich_3180 | locate | `divide_line` was chosen. The reference changes `words` in `_wrap.py` and `set_cell_size` in `cells.py`. |
+| rich_3480 | locate | `Renderables.append` and `Lines.append` were chosen. The editor's "missing" reached `Text.append` (the reference's place), but `append_text` was not changed. |
+| rich_3772 | locate | `_render_stack` and `render_locals` were chosen. The reference changes `extract`, `safe_str` and `get_locals`. |
+| rich_3934 | locate | `Live.refresh` and `LiveRender.set_renderable` were chosen; the reference changes `Live.__init__`, `stop` and `live_render.py`. The statement is the title only. |
+| rich_4075 | locate | The module-level `rich.print` was chosen (twice) instead of `Console.print` in `console.py`. |
+| rich_4076 | locate | `Syntax.highlight` and `Text.split` were chosen; the reference changes `ansi.py` `decode`. The statement is the title only. |
+| fastapi_13207 | specify | The right places. `get_definitions` was kept as "no change", and the sentence for `get_schema_from_model_field` was wrong ("remove the override_mode logic"). |
+| fastapi_14258 | specify | The right place and the right check. The sentence raised `FastAPIError`; the reference uses `assert`, as the lines next to it do. |
+| fastapi_14419 | specify | The right places (`get_dependant`, `solve_dependencies`). The sentence invented a `uses_security_scopes` attribute; the reference's change is different. |
+| rich_3043 | specify | The right place (`CONSOLE_HTML_FORMAT`). The fix comes from issue #3021, which is not in the statement. |
+| rich_3718 | specify | The right places. Both changed, and an existing test broke. The reference "reverts the change in 7a38204", which the statement does not show. |
+| fastapi_14372 | specify (script fault) | The specifier's `['missing', 'Depends (fastapi/params.py:765) class Depends', …]` and the editor's "class Depends in fastapi/params.py" were matched to the planned function `Depends` (param_functions.py). The `params.Depends` class the reference changes was never planned. |
+| fastapi_13713 | edit | The editor of `FastAPI.__init__` (a signature of about 750 lines with `**extra`) failed 6 times. Each time it was told "arguments cannot follow var-keyword" or "old lines not found". |
+
+**Totals:**
+
+| Stage | Tasks |
+|---|---|
+| locate | 9 |
+| specify | 5 (+1 script fault) |
+| statement without detail | 2 |
+| edit | 1 |
+
+Review accepted a wrong patch ("done" or "cannot tell") in 15 of the 18.
