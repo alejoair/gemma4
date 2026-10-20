@@ -379,3 +379,20 @@ Why it is generic: every rule reads the repository's own files (`__init__.py` ch
 files, its coding cookies, its `.gitignore` through git) or follows Python and pytest conventions (PEP 263, PEP 420,
 `sys.stdlib_module_names`, unittest's `TestCase`, pytest's collection options, the conventional names of vendored and
 generated code, the build tools' own module names); none names a repository, a library or a file seen in a trace.
+
+## Decisions left to the model (audit, 10-20)
+
+This is the inventory of the points where the model's answer decides the outcome and the script accepts it without checking it. Line numbers refer to `_stages.py` at head; vf5 behaves the same. Counts are over vf5's 30 Kaggle traces. The user's rule for these points is that a decision that matters is forced by the script (refused, defaulted or taken over), not persuaded by prompt text.
+
+| # | Free decision | Script check today | vf5 evidence | How the script can force it |
+|---|---|---|---|---|
+| 1 | Specifier "no change" | One warning, then accepted (2002-2011). The warning counts an unspecified place (None) as a change, so with parallel specifiers it rarely fires. | 45 sent, 26 accepted, in 17 tasks. Accepted at a place the reference changes in fastapi_13207, rich_3480, requests_7505 and fastapi_14419. | Refuse it on the main place, or when no other place has a sentence. Default: the requirement text as the sentence. |
+| 2 | Leaving a claimed place without finishing it | The claim never expires; repair skips the place. | rich_4075: the reference place was opened at 219 s and never sent, and the patch was empty. requests_7505: a place stayed "to specify". | Release the claims of earlier stages; repair takes every unspecified or unedited place. |
+| 3 | Review "done" | Accepted. The refusal for broken existing tests is off in fast (`and not FAST`, 2816). | 15 "done" and 0 "not done". 4 wrong patches were accepted with 63-152 s left. In 2 of them (fastapi_14953, rich_3718) the view showed failing tests. | The script turns a BROKEN verdict into "not done" for the owning place, then repair. |
+| 4 | Editor or repair "no change" / "skip" | Accepted unconditionally (2206). | It overrode the script's own empty-patch retry in fastapi_13207 and rich_3772. | Refuse it when the place has a sentence and the patch is empty. |
+| 5 | When a stage ends | No per-stage deadline, only BUDGET_S. A ParallelAgent waits for its slowest worker. | rich_4076: requirements ran until the cut. fastapi_14419: requirements took 123 s. rich_3480: edit started at 262 s. 9 of 30 tasks were cut; 8 of them have an empty patch. | Script deadlines per stage with the existing fallbacks (R1, `_fallback_locate`, the requirement-text sentence). After a deadline, every call to that stage is answered "time is up". |
+| 6 | A sentence sent after "no change" | Refused as "your part is finished". | rich_3480: the right sentence for `Text.append_text` was refused at 205 s. | Accept it until that place's edit starts. |
+| 7 | A single requirement copied from the title | Accepted when it is the only one (591). | 6 tasks (2 resolved). | Refuse it once. |
+| 8 | "missing" chains | A place already "no change" can be named again (1928). | rich_3180 and fastapi_14419 lost time this way. | One "missing" per place. |
+
+Caveat: in fastapi_15661, rich_3934 and rich_3772 the located place was wrong. Forcing a change there gives a non-empty patch that is probably still wrong.
