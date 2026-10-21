@@ -544,7 +544,15 @@ These address the faults that the script can remove deterministically. Each is g
    - the method a wrapper hands its call on to under its own name (`rich.print` → `Console.print`), when at most 3 classes define that method;
    - the functions the first 3 candidates call that share words with the requirement.
 
-   Each entry says why it is there (`[the call of X]`, `[called by X]`). It mirrors `_with_callers`, one step up, and is measured with `tools`-style benchmarks on the 129 dev tasks before it is kept (below).
+   Each entry says why it is there (`[the call of X]`, `[called by X]`). It mirrors `_with_callers`, one step up, and was measured on the dev tasks before it was kept (`bench_callees.py` in the scratchpad: the statement as the requirement, `step._rank_candidates` plus `_with_callers`, against the reference's places).
+
+   Results on 128 tasks with gold places:
+   - a gold place on the list: 92 → 93 tasks;
+   - more gold places on the list in 7 tasks: fastapi_14986, rich_4070, httpx_3672, fastapi_15800, fastapi_15745, fastapi_14616 and rich_3782;
+   - none lost: the list only grows;
+   - mean list length: 9.7 → 10.8.
+
+   On rich_4075's chosen `print`, the list now holds `Console.print`, the reference's place.
 
    | Item | Effect | Why |
    |---|---|---|
