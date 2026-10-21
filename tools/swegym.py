@@ -240,6 +240,31 @@ def cmd_ids(a) -> None:
     print(','.join(t['instance_id'] for t in _of(a.data, a.repo, a.version)))
 
 
+def _install_package(a, version: str, py: str, src: Path, old: Path, reqs: list[str], env: dict):
+    """The package with its own dependencies (not editable: the tests import the task's workspace, eval_env.py, but
+    some code reads its installed version), then the test requirements. uv's cache hardlinks the files into each
+    venv, so the versions of a repository share the disk."""
+    extras = EXTRAS.get(a.repo, '')
+    if old.exists():
+        # the oldest commit's package first: a runtime dependency its code has and the newest dropped (moto 4.0's
+        # older code imports pytz) stays, as the newest install below replaces only the package itself
+        _install(py, [f'{old}{extras}'], [], env)
+    r = _install(py, [f'{src}{extras}'], reqs, env)
+    if r.returncode:
+        # the checkout has no tags, so a version read from git is '0+untagged' and a pin on it fails (dask[complete]
+        # needs distributed of dask's own version): the release of this version from PyPI brings the same
+        # dependencies; the tests import the workspace's code anyway (eval_env.py)
+        release = f'{a.repo.lower()}{extras}=={version}.*'
+        print(f'{a.repo} {version}: the checkout did not install, trying the release {release}')
+        r = _install(py, [release], reqs, env)
+    if r.returncode and reqs:
+        # no release installs on 3.13 either (mypy's own build): the test requirements alone, which list the runtime
+        # dependencies too in these repositories
+        print(f'{a.repo} {version}: installing its test requirements only')
+        r = _install(py, [], reqs, env)
+    return r
+
+
 def cmd_env(a) -> None:
     tasks = _of(a.data, a.repo, a.version)
     if not tasks:
@@ -273,25 +298,12 @@ def cmd_env(a) -> None:
                     for line in _requirements(commit_src / name):
                         reqs.setdefault(re.split(r'[<>=!~\[; ]', line, maxsplit=1)[0].lower(), line)
         reqs = list(reqs.values())
-        # the package with its own dependencies (not editable: the tests import the task's workspace, eval_env.py,
-        # but some code reads its installed version), then the test requirements
-        # uv's cache hardlinks the files into each venv, so the versions of a repository share the disk
         # a Rust extension pinned by an older version (pydantic-core 2.18) predates PyO3's support of 3.13: build it
         # against the stable ABI, as PyO3 allows
-        env = dict(os.environ, PYO3_USE_ABI3_FORWARD_COMPATIBILITY='1')
-        r = _install(py, [f'{src}{EXTRAS.get(a.repo, "")}'], reqs, env)
-        if r.returncode:
-            # the checkout has no tags, so a version read from git is '0+untagged' and a pin on it fails (dask[complete]
-            # needs distributed of dask's own version): the release of this version from PyPI brings the same
-            # dependencies; the tests import the workspace's code anyway (eval_env.py)
-            release = f'{a.repo.lower()}{EXTRAS.get(a.repo, "")}=={version}.*'
-            print(f'{a.repo} {version}: the checkout did not install, trying the release {release}')
-            r = _install(py, [release], reqs, env)
-        if r.returncode and reqs:
-            # no release installs on 3.13 either (mypy's own build): the test requirements alone, which list the
-            # runtime dependencies too in these repositories
-            print(f'{a.repo} {version}: installing its test requirements only')
-            r = _install(py, [], reqs, env)
+        base_env = dict(os.environ, PYO3_USE_ABI3_FORWARD_COMPATIBILITY='1')
+        # packages of today: the packages of the version's time (uv --exclude-newer) do not run on 3.13 (old build
+        # backends, pyyaml 6.0's build, and at run time 'typing.TypeVar is not an acceptable base type'), tried 10-21
+        r = _install_package(a, version, py, src, Path(tmp) / 'old', reqs, base_env)
         if r.returncode:
             print(r.stderr[-3000:])
             sys.exit(f'{a.repo} {version}: install failed')
@@ -301,7 +313,10 @@ def cmd_env(a) -> None:
         subprocess.run(['uv', 'pip', 'uninstall', '-q', '-p', py, *dup], check=True)
     # the harness's venv after this venv's own packages; written last: with it in place, uv sees the harness's
     # packages as this venv's and upgrades or uninstalls them there (it removed the harness's pytest once)
-    Path(_site_packages(py), 'zz_harness.pth').write_text(str(_harness_view(base_python, venv)) + '\n', encoding='utf-8')
+    # relative to site-packages, so the venv can be moved
+    site = Path(_site_packages(py))
+    view = os.path.relpath(_harness_view(base_python, venv), site)
+    (site / 'zz_harness.pth').write_text(view + '\n', encoding='utf-8')
     if _freeze(base_python) != before:
         sys.exit(f"the harness's venv changed while {a.repo}'s was set up: check it with uv pip check -p {base_python}")
     print(f'{a.repo} {version}: {venv} (from {t["instance_id"]}, {t["base_commit"][:10]}); {len(tasks)} tasks: '
