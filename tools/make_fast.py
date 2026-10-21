@@ -12,8 +12,9 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'variants'
 MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
 # h13 (Haiku): locate2 had nothing to do in 32 of 60 runs and edit2 in 9; with Gemma (vf5) one worker costs about 8 s in
 # locate and 2 s in edit, while specify alone would cost about 53 s (docs/design_fast.md). Parallel workers also lose
-# answers in the harness's trace. One worker for locate and edit; specify keeps three
-WORKERS = {'locate': 1, 'specify': 3, 'edit': 1}
+# answers in the harness's trace. One worker for locate and edit. Specify: two (h14: 12 of 30 tasks used one
+# specifier, 11 two, 7 three; the third was idle in 23 tasks, at 2 model turns each)
+WORKERS = {'locate': 1, 'specify': 2, 'edit': 1}
 # vf1 (Gemma, Kaggle): the reproduce branch kept the specify stage open after the specifiers ended (a ParallelAgent
 # waits for every branch): its agent sent its kept test 8 more times in rich_3905, and 8 of 30 tasks never reached
 # edit; off until it can end on its own
