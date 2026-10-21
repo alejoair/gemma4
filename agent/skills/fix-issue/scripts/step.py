@@ -59,7 +59,7 @@ MAX_CHARS = 7000        # a cap on one answer (about 2,000 tokens) against conte
 
 # ---------------------------------------------------------------------------------------------------------- views
 
-def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=None):
+def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=None, names=None):
     """Numbered lines start..end of rel, long strings collapsed. Over the limit: the head of the place (its def and
     first lines) and the part where the focus terms occur most. Sizes count the lines shown (a collapsed text is one
     line) and text lines score nothing: in V13b (fastapi_14851) raw counts and scored Doc texts that name "FastAPI" hid
@@ -87,11 +87,12 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     if size(start, end) <= limit + 20:         # hiding a few lines saves little and hides code
         return _code.numbered(lines, start, end, collapse=collapse)
     head = min(end, start + 14)
-    sig_end = None
+    sig_end, kw_line = None, None
     for node in ast.walk(tree) if tree is not None else ():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.body and \
                 min([node.lineno] + [d.lineno for d in node.decorator_list]) == start:
             sig_end = node.body[0].lineno - 1
+            kw_line = node.args.kwarg.lineno if node.args.kwarg is not None else None
             break
     if sig_end is not None and sig_end - start + 1 > 8 and not (show and show[0] <= sig_end):
         # a long signature (FastAPI's Annotated[..., Doc(...)] parameters): its first line, then the body, so that
@@ -99,17 +100,25 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
         # vf3 audit (fastapi_13713): the hidden parameters were what the change needed (a new parameter), and the
         # editor guessed the lines; the signature's last lines (where a parameter is added) and the hidden lines that
         # hold the requirement's terms are shown
+        # h13 (Haiku, fastapi_13713): the terms matched dozens of 'openapi_*' lines and the sentence's own
+        # `openapi_tags` was not among the six shown; the '**extra: Annotated[...]' parameter (8 lines) was hidden, so
+        # the new parameter went after it. The names the sentence gives come first, and the '**kwargs' parameter is
+        # shown whole, with the lines after it
         terms = [t for t in (focus_terms or {}) if len(t) > 3]
-        keep = [i for i in range(start + 1, sig_end - 1)
-                if terms and any(t in lines[i - 1].lower() for t in terms)][:6] + list(range(max(start + 1, sig_end - 1),
-                                                                                         sig_end + 1))
+        named = [i for i in range(start + 1, sig_end - 1)
+                 if names and any(re.search(rf'(?<![\w.]){re.escape(n)}\b', lines[i - 1]) for n in names)][:6]
+        termed = [i for i in range(start + 1, sig_end - 1)
+                  if terms and any(t in lines[i - 1].lower() for t in terms) and i not in named][:max(0, 6 - len(named))]
+        tail = list(range(kw_line if kw_line and start < kw_line <= sig_end else max(start + 1, sig_end - 1),
+                          sig_end + 1))
+        keep = sorted(set(named + termed + tail))
         out, prev = [_code.numbered(lines, start, start, collapse=collapse)], start
         for i in keep:
             if i > prev + 1:
                 out.append(f'      ... ({i - prev - 1} parameter lines not shown) ...')
             out.append(_code.numbered(lines, i, i, collapse=collapse))
             prev = i
-        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2 - len(keep), show=show)
+        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2 - len(keep), show=show, names=names)
         return '\n'.join(out + [body])
     width = limit - size(start, head)
     toks = focus_terms or {}
@@ -117,6 +126,8 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     for i in range(head + 1, end + 1):
         if toks and i not in prose and not lines[i - 1].lstrip().startswith('#'):
             score[i] = sum(toks.get(t, 0) for w in re.findall(r'[A-Za-z_]\w*', lines[i - 1]) for t in _rank.tokens(w))
+        if names and i not in prose and any(re.search(rf'(?<![\w]){re.escape(n)}\b', lines[i - 1]) for n in names):
+            score[i] += 20          # a line the place's sentence names (h13, fastapi_13713: self.openapi_tags = ...)
     total = [0] * (end + 2)
     for i in range(head + 1, end + 1):
         total[i] = total[i - 1] + score[i]
@@ -1971,7 +1982,11 @@ def _whole_edit(root, p, text):
             own = next((x for x in syms if x.name == p['name']), None)
             if own is not None:
                 anchor = own.end
-                inner = own.kind == 'class' and not isinstance(d, ast.ClassDef)
+                # h13 (Haiku, requests_7505): the class SupportsRead and, after it at column 0, a module-level
+                # def is_supports_read were sent together; the def went into the class and the module's import of it
+                # failed. A def sent beside its class is a sibling; only a def sent alone with a class is a member
+                sent_with_class = any(isinstance(x, ast.ClassDef) and x.name == p['name'].split('.')[-1] for x in defs)
+                inner = own.kind == 'class' and not isinstance(d, ast.ClassDef) and not sent_with_class
                 pad = _indent_of(lines[own.def_line - 1]) + ('    ' if inner else '')
             else:
                 anchor, pad = len(lines), ''

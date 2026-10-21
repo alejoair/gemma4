@@ -1837,8 +1837,24 @@ def _place_view(root, st, p, limit=80):
         # finding could not copy its lines
         body = _code.numbered(_repo.read_lines(root, p['rel']), p['start'], p['end'], collapse=())
     else:
-        body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit)
+        body = step._code_view(root, p['rel'], p['start'], p['end'], _focus(reqs), limit=limit,
+                               names=_sentence_names(p.get('sentence')))
     return f'{p["handle"]} ({p["rel"]}, lines {p["start"]}-{p["end"]}):\n{body}'
+
+
+def _sentence_names(sentence):
+    """The code names a place's sentence gives (in backticks, or with an underscore or a dot): the lines that hold them
+    are shown in a long place (h13, fastapi_13713)."""
+    if not sentence or sentence == 'no change':
+        return []
+    found = re.findall(r'`([^`]+)`', sentence) + re.findall(r'\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b|\b\w*_\w+\b', sentence)
+    names = []
+    for f in found:
+        for n in re.findall(r'[A-Za-z_][\w.]*', f):
+            n = n[5:] if n.startswith('self.') else n
+            if len(n) > 3 and ('_' in n.strip('_') or '.' in n) and n not in names:   # not None, Dict, Optional
+                names.append(n)
+    return names[:12]
 
 
 def _refresh(root, p):
@@ -2051,6 +2067,15 @@ def specify(root, st, args):
             return (f'{q["handle"]} is already a place of the fix{said}.{kept} Now say what changes in {p["handle"]} '
                     'itself, or that it keeps its code.\n\n' + next_call('specify.py', *_specify_forms(p, may_name=False)))
         n0 = (_missing_names(name) or [name])[0]
+        if '::' not in n0 and re.fullmatch(r'[A-Za-z_]\w*', n0) \
+                and not any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n0])):
+            # h13 (Haiku, requests_7505): ['missing', '_is_supports_read', 'Add a shared helper ... in
+            # src/requests/_types.py'] named a new function and gave its file only in what must change; the file
+            # written there makes it new code of that file (path.py::name), as 'missing' with the path would
+            path = next((x for x in re.findall(r'[\w./-]+\.py\b', what) if os.path.isfile(os.path.join(root, x))
+                         and not _repo.is_test_path(x)), None)
+            if path:
+                n0 = name = f'{path}::{n0}'
         if not any(not _repo.is_doc_path(c['rel']) for c in step._resolve(root, [n0])) \
                 and not ('.' in n0 and step._new_definition_owner(root, n0)):
             return (f'No code named {name} was found. Send its qualified name (Class.method, or path.py::name), or what '
@@ -2246,6 +2271,15 @@ def _replace_text(root, p, old, new):
             j, k = j + 1, k + 1
         if k == len(want):
             hits.append((i + 1, j))
+    frag, rep = old.strip('\n'), new.strip('\n')
+    if not hits and '\n' not in frag and '\n' not in rep and frag.strip():
+        # h13 (Haiku, rich_3278): '(?:\x1b([(@-Z\\-_]|' was a part of line 13 of the regex, and the edit was refused as
+        # "not found"; a part of one line, found once in the place, is replaced inside that line (W2, B2)
+        found = [i for i in range(p['start'] - 1, min(p['end'], len(lines))) if frag.strip() in lines[i]]
+        if len(found) == 1 and lines[found[0]].count(frag.strip()) == 1:
+            i = found[0]
+            line = lines[i].rstrip('\r\n').replace(frag.strip(), rep.strip(), 1)
+            return i + 1, i + 1, line
     if not hits:
         return 'the old lines were not found in this place (send them as the window shows them)'
     if len(hits) > 1:
@@ -2369,6 +2403,13 @@ def edit(root, st, args):
         _reset_asks(st, 'edit', p)   # asked again after the new code
         return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
                 f'\n\n{DONE}')
+    if FAST and st.get('stage_now') == 'repair' and len(items) == 1 and _prose(items[0]):
+        # h13 (Haiku, rich_3772): repair specifies and edits; its edit view was answered with a sentence ("Guard the
+        # locals traversal in Traceback.extract so ..."), refused as code that does not compile. A sentence sent
+        # there is the place's new sentence, and the edit view follows (B12: the two roles of one agent)
+        p['sentence'], p['status'] = items[0].strip()[:MAX_SENTENCE], 'todo'
+        return (f'Saved as the change for {p["handle"]}: {_brief(p["sentence"])} Now send the code that makes it.\n\n'
+                + edit(root, st, ['open']))
     if p.get('edits', 0) >= MAX_EDITS or p.get('refused', 0) >= MAX_REFUSED:
         return f'{p["handle"]} has had {MAX_EDITS} edits; it stays as it is.\n\n{DONE}'
     # hk30 (rich_3043): sends refused before anything was applied counted as edits, and the place was given up after
@@ -2586,6 +2627,18 @@ def _undefined(lines):
         elif hasattr(ast, 'TypeVar') and isinstance(n, getattr(ast, 'TypeVar')):
             bound.add(n.name)
     return loads - bound
+
+
+def _prose(text):
+    """Whether a sent item is a sentence, not code: one line of 6 or more words that does not parse as Python."""
+    t = (text or '').strip()
+    if '\n' in t or len(t.split()) < 6 or not re.match(r'[A-Z][a-z]', t):
+        return False
+    try:
+        ast.parse(t)
+        return False
+    except SyntaxError:
+        return True
 
 
 def _must_edit(root, p):

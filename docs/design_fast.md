@@ -631,3 +631,30 @@ Each call was checked against the script's own journal (`events.jsonl`), not the
 5. In repair, a sentence sent to an edit view becomes the place's new sentence, and the edit view follows.
 
 **Not a script fault:** 13 of the 25 calls are the model unable to write a change from a sentence that names none (title-only issues). The forcing turns those into an attempt and a repair. It cannot create the missing information.
+
+### Fixes from h13's refusals, the journal, and one worker for locate and edit (10-21)
+
+1. **A function sent with its class stays at module level** (`step._whole_edit`). A def sent beside the class of a class place is a sibling. Only a def sent alone with a class place is a member. Checked on requests_7505's snapshot: `is_supports_read` lands after `SupportsRead`, at column 0.
+2. **Long places show what the sentence names** (`step._code_view(names=)`, `_sentence_names`).
+   - In a long signature, the parameters whose names the sentence gives come first, and the `**kwargs` parameter is shown whole with the lines after it.
+   - In the body, lines that hold those names score high.
+   - FastAPI.__init__ now shows `openapi_tags: Annotated[`, the 8 lines of `**extra`, and `self.openapi_tags = openapi_tags`.
+3. **Replace accepts a part of one line** (`_replace_text`), when that text occurs once in the place.
+4. **"missing" for a new function names its file.** A bare new name (`_is_supports_read`) whose file is written in what must change becomes `path.py::name`, new code of that file.
+5. **Repair: a sentence sent to its edit view becomes the place's sentence**, and the edit view follows (`_prose`).
+
+**The journal.** `_state.record` keeps every call's args and its whole answer, as printed. `tools/journals.py` finds a task's journal by its first calls. `local_eval.py` and `kaggle_eval.py` copy it to `journal_<task>.jsonl`. The Kaggle dataset's `bench/` must hold `journals.py`.
+
+**One worker for locate and edit** (`tools/make_fast.py`, `WORKERS`). Specify keeps three. One editor chains through every place (`BATCH['edit'] = 6`, at most 12 places).
+
+| Item | Effect | Why |
+|---|---|---|
+| W2 writing code | closer | Fixes 1 and 3: what the model wrote is applied where it meant it |
+| W3 code in front of it | closer | Fix 2: the lines the change needs are in the window |
+| B2 copying long text | closer | Fix 3: a part of a line is enough |
+| B12 contradictions | closer | Fixes 4 and 5: a new function's file and repair's two roles no longer contradict the answer |
+| B16 repurposing a form | neutral | "missing" is still the only way to say "the sentence names no change"; no new form |
+| B10 budget | farther, with a reason | One worker in locate and edit costs about 10 s with Gemma (vf5: +8 s and +2 s). It removes 41 of h13's 98 idle workers and the lost answers in those stages |
+| P10 uniform observations | neutral | — |
+
+**Why it is generic:** the rules read Python syntax (a sibling def, the `**kwargs` parameter, a line part), the names the sentence itself writes, and the file the model names. None of them names a repository or a task.
