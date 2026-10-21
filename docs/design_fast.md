@@ -560,3 +560,17 @@ These address the faults that the script can remove deterministically. Each is g
    | P7 unneeded context | farther, with a reason | Up to 3 more lines, each with the link that put it there; in h12 the reference's place was missing from the list in 9 of 18 unresolved tasks |
    | B9 exploring | closer | Fewer searches by hand (rich_4075 searched 4 times) |
    | B13 order | neutral | The new entries come after the ranked ones, marked |
+
+### h13: the three fixes with Haiku (10-21)
+
+Run: vf13 (`build_f19`) on vf5's 30 tasks, with Haiku. Result: 15/30 judged resolved (h12: 12/30), with no task lost.
+
+**Gained over h12:**
+- **fastapi_14372.** The "missing" file fix put the class `params.Depends` into the plan. That class is the reference's place.
+- **rich_3718 and rich_3772.**
+
+**Two empty patches** (fastapi_15661, rich_3942). Both came from the same fault of the forcing. The editor's refused "no change" was counted on the place, so repair's first "no change" was not refused, and the place was marked failed.
+
+Fixed in db4d48f: the count is now kept per stage. Also fixed there: a "missing" that names its own place is answered as such, not as "goes into the plan".
+
+Rerun of the two tasks with the fix (h13r, `build_f20`): both end with a patch, and neither is resolved. Both statements are title only.
