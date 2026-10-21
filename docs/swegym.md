@@ -102,3 +102,63 @@ The scorable tasks, by venv:
 **Next sources, if a wider set is wanted:**
 - SWE-Gym full (2,438 tasks, the same 11 repositories, `--split full`): more moto and conan, and more versions of the others.
 - Tasks from repositories whose current versions support 3.13.
+
+## The task's own Python in the sandbox (10-21, at the user's request: "indaga más en la forma 2")
+
+**The obstacle is 3.13, not how the venvs are grouped.** The venvs are already one per repository and version. What leaves pydantic, dvc, dask and hydra out is that their code or pinned dependencies do not run on Python 3.13.
+
+**What runs where** (swegemma 0.2.11, subprocess sandbox):
+- **The harness runs in the Python that starts local_eval or judge**: the ADK, the model calls, swegemma.
+- **Every command of a task runs in the sandbox.** It runs in `<sandbox>/venv` with that venv's `python3` first on PATH (`SubprocessManager.exec`). That includes:
+  - the skill's scripts: the ADK's `run_skill_script` writes a stdlib-only wrapper (`runpy.run_path`) and runs it with `python3`;
+  - the tests: `python3 -m pytest` in `verification.py`;
+  - the harness's small `python3 -S -c` helpers.
+- **`SubprocessManager.start` makes that venv from the harness's own interpreter** (`venv.create`). The setup script is not run in subprocess mode.
+
+So the sandbox can run on another Python while the harness stays on 3.13.
+
+**`eval_env.py` with `SWE_TASK_PYTHON=<a task venv's python>`.**
+- After `start`, the sandbox's venv is made again from that Python.
+- Its `_host_env.pth` lists the task venv's site-packages, not the harness's: packages built for another Python do not import there.
+- `workspace_paths.pth` lists the task venv's directories before the workspace's, as the harness's do.
+- The judge's environment fingerprint probes the sandbox, so its cache tells the two apart. pydantic_9066 recorded Python 3.12.3 and pydantic 2.7.0.
+- Nothing in the submission changes.
+
+**`tools/swegym.py env --python 3.12`** builds `<repo>-<version>-py3.12` with uv.
+- uv installs 3.9 and 3.10 itself; 3.11 and 3.12 are in the image.
+- The venv is then the sandbox's whole package set: its own numpy and pytest, no view of the harness, no masked plugins.
+- For every venv, `env` now also reads the test groups a `pyproject.toml` declares (extras, pdm's dev groups, PEP 735 groups, poetry's groups; pydantic keeps pytest and dirty-equals in pdm's `testing`). It always installs pytest.
+
+**Checked:**
+1. **The skill's scripts import on Python 3.9, 3.10 and 3.11** (every module of the fast build). `_repo.py`'s `tomllib` is guarded.
+   - Importing them by hand left `__pycache__` in the build folder, and the harness then refused the skill ("disallowed extension '.pyc'"). Such a test must run on a copy.
+   - The submitted zip was built before and holds no `.pyc`.
+2. **pydantic 2.7 on Python 3.12: 2 of 6 tasks score here.** It did not install on 3.13.
+   - The other 4 fail many tests with the reference (333 in `test_json_schema.py`).
+   - Every pydantic commit pins its own exact pydantic-core, and the venv has the newest task's. A venv per version is too coarse for a repository that pins exactly: such tasks need a venv per task.
+3. **End to end:** the fast build (S10's files) ran with Haiku on `pydantic_9214`, with `SWE_TASK_PYTHON` set to the 3.12 venv.
+   - It was **resolved**, and judged resolved, in 98.6 s, with 18 tool calls and 26 model calls.
+   - The skill's scripts parsed and edited pydantic's code on 3.12 inside the sandbox.
+
+**What it changes in what we measure:**
+- The skill's scripts run on the task's Python, not on Kaggle's 3.13. A fault that only 3.13 shows would not appear here, nor the reverse. The run on our own 129 tasks stays on 3.13 and covers that.
+- The scripts parse the repository with the task's own Python (`ast`). For older code that is closer to what the code was written for.
+
+**A venv per task, and where the tasks would come from.**
+
+SWE-rebench (Nebius, Hugging Face `nebius/SWE-rebench`, split `filtered`): 6,542 validated tasks from 1,790 repositories, almost one repository per task, as the private set is. Each task carries:
+- the Python it was validated on: 3.9 for 4,162 tasks, 3.10 for 303, 3.11 for 109, 3.12 for 12, older for the rest;
+- the exact frozen requirements (`requirements`, a pip freeze);
+- the install command (mostly `pip install -e .[dev]`) and pre-install steps (`apt-get install gcc` for 3,502; gcc is in this image);
+- the test command (pytest for 6,469).
+
+With the frozen requirements and the task's Python nothing is guessed, and the venv is per task, which pydantic shows is needed.
+
+Leave out:
+- the 285 tasks that need a conda environment;
+- tasks before 3.9, which uv can still install but are less useful.
+
+Cost:
+- a venv per task (uv's cache hardlinks shared packages);
+- about 1-2 minutes to build and 2-4 minutes to screen (the reference twice, no patch twice);
+- about 3-6 minutes per task in all.
