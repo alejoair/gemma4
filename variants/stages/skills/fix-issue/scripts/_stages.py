@@ -58,6 +58,7 @@ STAGE_END = {'requirements': 75, 'locate': 110, 'specify': 180, 'edit': 235}
 ORDER = ('requirements', 'reproduce', 'locate', 'specify', 'edit', 'review', 'repair')
 REPRO_LEFT_S = 360    # V22: reproduce took 30-225 s; it runs only when this much time is left
 REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
+REG_LIMIT_S = 60      # the review's run of the existing tests (h14: 117-180 s without a limit)
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
 ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
@@ -2850,7 +2851,14 @@ def _regression_check(root, st):
         lines = step._status.changed_statements((old or '').splitlines(True), _repo.read_lines(root, rel))
         if lines:
             cover[rel] = lines
-    verdict, detail, failures = _tests.check(root, changed, use_map=False, cover=cover or None)
+    # h14 (Haiku, requests_7505, requests_7205): the review's test run took 117-180 s of the 270, and repair had 36 s
+    # left; the check of existing tests gets at most REG_LIMIT_S, what did not finish is not reported as broken
+    saved = _tests.DEADLINE
+    _tests.DEADLINE = min(saved or time.time() + REG_LIMIT_S, time.time() + REG_LIMIT_S)
+    try:
+        verdict, detail, failures = _tests.check(root, changed, use_map=False, cover=cover or None)
+    finally:
+        _tests.DEADLINE = saved
     st['reg'] = {'sig': sig, 'verdict': verdict, 'detail': detail[:1200], 'failures': list(failures)[:8]}
     _state.save('reg_cache', {**(_state.load('reg_cache', {}) or {}), sig: st['reg']})
     return st['reg']

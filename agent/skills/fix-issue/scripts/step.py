@@ -22,6 +22,7 @@ import re
 import sys
 import textwrap
 import time
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -1908,9 +1909,11 @@ def _target(syms, p, name):
     cls = pname.rsplit('.', 1)[0] if '.' in pname else ''
     for q in (pname if pname.split('.')[-1] == name else '', f'{pname}.{name}' if pname else '',
               f'{cls}.{name}' if cls else '', name):
-        hit = next((x for x in syms if q and x.name == q), None)
-        if hit:
-            return hit
+        hits = [x for x in syms if q and x.name == q]
+        if hits:
+            # h14 (requests_7505): with @overload stubs the name has several definitions; the last one is the
+            # implementation, the one a new definition without @overload replaces
+            return hits[-1]
     same = [x for x in syms if x.name.split('.')[-1] == name]
     return same[0] if len(same) == 1 else None
 
@@ -1971,6 +1974,19 @@ def _whole_edit(root, p, text):
                     # the new copy; the answer lists the code that still uses the old name
                     t = own
                     repairs.append(f'{p["name"].split(".")[-1]} renamed to {d.name}')
+        if t is not None and not re.search(r'@(typing\.)?overload\b', piece):
+            # h14 (Haiku, requests_7505): the place _encode_params spans its four @overload stubs and the
+            # implementation; the implementation alone was sent and the stubs were deleted. Without @overload in the
+            # new code, only the implementation (the last def of the name, with its own decorators) is replaced
+            old = lines[t.start - 1:t.end]
+            if any(re.match(r'\s*@(typing\.)?overload\b', l) for l in old):
+                defs_at = [i for i, l in enumerate(old) if re.match(rf'\s*(async\s+)?def\s+{re.escape(d.name)}\b', l)]
+                if len(defs_at) > 1:
+                    k = defs_at[-1]
+                    while k > 0 and old[k - 1].lstrip().startswith('@') and \
+                            not re.match(r'\s*@(typing\.)?overload\b', old[k - 1]):
+                        k -= 1
+                    t = types.SimpleNamespace(start=t.start + k, end=t.end)
         if t is not None:
             pad = _indent_of(lines[t.start - 1])
             r = _edit.apply(root, rel, t.start, t.end, textwrap.indent(piece, pad))
