@@ -1678,7 +1678,9 @@ def _add_missing(root, st):
                 owner = step._new_definition_owner(root, name)
                 if owner:
                     c, short = owner
-                    added.append({'rel': c['rel'], 'name': f'{c["name"]}.{short}', 'start': c['start'],
+                    # h14 replay (requests_7505): a new module-level function was planned as '<module>._is_supports_read'
+                    added.append({'rel': c['rel'], 'name': short if c['name'] == MODULE else f'{c["name"]}.{short}',
+                                  'start': c['start'],
                                   'end': c['end'], 'new': True, 'owner': c['name'], 'reqs': rids,
                                   'sentence': None, 'status': None, 'note': note})
         for p in added:
