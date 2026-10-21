@@ -163,12 +163,20 @@ def _freeze(python: str) -> str:
     return subprocess.run(['uv', 'pip', 'freeze', '-p', python], check=True, capture_output=True, text=True).stdout
 
 
-def _requirements(path: Path) -> list[str]:
-    """The requirement lines of a requirements file, without the ones the harness's venv provides, editable or
-    nested includes, or the package itself ('-e .')."""
+def _requirements(path: Path, seen: set | None = None) -> list[str]:
+    """The requirement lines of a requirements file and the files it includes (-r), without the ones the harness's
+    venv provides, other options, or the package itself ('-e .')."""
+    seen = set() if seen is None else seen
+    if path in seen or not path.exists():
+        return []
+    seen.add(path)
     out = []
     for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
         line = line.split('#', 1)[0].strip()
+        m = re.match(r'-r\s*(\S+)$', line)
+        if m:
+            out += _requirements(path.parent / m.group(1), seen)
+            continue
         if not line or line.startswith(('-', '.')):
             continue
         name = re.split(r'[<>=!~\[; ]', line, maxsplit=1)[0].lower()
@@ -227,6 +235,11 @@ def cmd_env(a) -> None:
         # uv's cache hardlinks the files into each venv, so the versions of a repository share the disk
         cmd = ['uv', 'pip', 'install', '-q', '-p', py, f'{src}{EXTRAS.get(a.repo, "")}', *reqs]
         r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode and reqs:
+            # the package does not build on 3.13 (mypy's own build): its test requirements alone, which list its
+            # runtime dependencies too in these repositories; the tests import the workspace's code anyway
+            print(f'{a.repo} {version}: the package did not build, installing its test requirements only')
+            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, *reqs], capture_output=True, text=True)
         if r.returncode:
             print(r.stderr[-3000:])
             sys.exit(f'{a.repo} {version}: install failed')
