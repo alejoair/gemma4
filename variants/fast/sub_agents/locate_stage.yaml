@@ -1,6 +1,0 @@
-agent_class: ParallelAgent
-name: locate_stage
-description: The locate workers, at the same time.
-sub_agents:
-  - config_path: locate1.yaml
-  - config_path: locate2.yaml

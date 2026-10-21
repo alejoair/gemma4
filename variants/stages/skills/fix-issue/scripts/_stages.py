@@ -50,7 +50,7 @@ BIG_CLASS = 120         # a class place longer than this is split into the membe
 BUDGET_S = int(os.environ.get('SWE_STAGE_BUDGET', str(4 * 60 + 30)))
 # targets one agent call handles in a row (V22: the ceremony of an agent call is about 21 s); specify keeps 3 (V23), so
 # that its views (up to 12,000 characters each) stay under the harness's compaction at 14,336 tokens
-BATCH = {'locate': 6, 'review': 6, 'specify': 3}
+BATCH = {'locate': 6, 'review': 6, 'specify': 3, 'edit': 6}    # one editor goes through every place (h14)
 # audit 10-20 (docs/design_fast.md, "Decisions left to the model"): no stage had an end of its own; vf5 started edit at
 # 262 s (rich_3480) and 8 of its 9 tasks cut at 5 minutes had an empty patch. After its end (seconds of the task) a
 # stage's workers finish the item they hold and take no other; what is left gets the script's default
@@ -3099,7 +3099,7 @@ def main(stage, argv):
         _state.record({'trace': traceback.format_exc()[-2000:]})
         out = (f'The script hit an internal error ({type(e).__name__}). ' +
                ("Call route.py with ['next'] again.\n\n" + next_call('route.py', 'next') if stage == 'route' else DONE))
-    _state.record({'stage': stage, 'args': [a[:300] for a in args][:8], 'answer': out[:300]})
+    _state.record({'stage': stage, 'args': [a[:20000] for a in args][:12], 'answer': out})
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
@@ -3491,8 +3491,10 @@ def main_fast(stage, worker, argv):
         _state.record({'trace': traceback.format_exc()[-2000:]})
         _release(st, worker)
         out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
-    _state.record({'stage': worker, 'args': [a[:300] for a in args][:8], 'answer': out[:300]})
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
+    # h13: the harness's trace keeps one answer of the calls that parallel workers send at the same moment (122 of
+    # 600 lost); the journal holds every call and the whole answer as printed, and the eval tools copy it per task
+    _state.record({'stage': worker, 'args': [a[:20000] for a in args][:12], 'answer': out})
     print(out)

@@ -389,6 +389,7 @@ def main() -> None:
     from swegemma.models import load_tasks
     sys.path.insert(0, str(Path(__file__).resolve().parent))     # judge.py and eval_env.py ship next to this file
     import eval_env
+    import journals
     import judge
     eval_env.patch()            # the tests import the task's src/ code (see eval_env.py for what is known of the scorer)
     judge.install_capture()     # per-test outcomes from the JUnit report of every verify_task run
@@ -537,6 +538,13 @@ def main() -> None:
                 summarize_trace(task.instance_id, results_dir)
             except Exception as e:  # noqa: BLE001
                 print(f'(trace summary failed: {type(e).__name__}: {e})')
+            try:
+                # the skill's journal: every call and its whole answer (the trace loses parallel workers' answers, h13)
+                journals.copy(results_dir / 'traces' / f'trace_{task.instance_id}.json',
+                              WORK / f'journal_{task.instance_id}.jsonl',
+                              since=time.time() - float(getattr(r, 'duration_seconds', 0) or 0) - 120)
+            except Exception as e:  # noqa: BLE001
+                print(f'(journal not copied: {type(e).__name__}: {e})')
             with lock:
                 state['vllm_offset'] = vllm_new_lines(server, state['vllm_offset'])
                 rows.append(row)

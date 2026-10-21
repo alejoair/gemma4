@@ -22,6 +22,8 @@ import shutil
 import time
 from pathlib import Path
 
+import journals  # noqa: E402  (tools/journals.py)
+
 COMPACTION_THRESHOLD = 14336
 DECLARED = 'gemma-4-31b-it-qat-w4a16-ct'
 
@@ -157,7 +159,12 @@ def main() -> None:
             if args.fetch_snapshots:
                 fetch(task)
             mark = judge.capture_mark()
+            started = time.time()
             r = asyncio.run(evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)))
+            # the skill's journal, whole answers of every call (the trace loses parallel workers' answers)
+            journals.copy(results_dir / 'traces' / f'trace_{task.instance_id}.json',
+                          args.out / f'journal_{task.instance_id}.jsonl', since=started - 5,
+                          root=os.environ.get('SWE_STATE_ROOT', '/tmp'))
             row = dict(task_id=task.instance_id, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                        patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
                        duration_s=round(r.duration_seconds, 1), error=(r.error_message or '')[:300])

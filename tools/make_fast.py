@@ -10,7 +10,10 @@ import shutil
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'variants', 'fast')
 MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
-WORKERS = {'locate': 2, 'specify': 3, 'edit': 2}
+# h13 (Haiku): locate2 had nothing to do in 32 of 60 runs and edit2 in 9; with Gemma (vf5) one worker costs about 8 s in
+# locate and 2 s in edit, while specify alone would cost about 53 s (docs/design_fast.md). Parallel workers also lose
+# answers in the harness's trace. One worker for locate and edit; specify keeps three
+WORKERS = {'locate': 1, 'specify': 3, 'edit': 1}
 # vf1 (Gemma, Kaggle): the reproduce branch kept the specify stage open after the specifiers ended (a ParallelAgent
 # waits for every branch): its agent sent its kept test 8 more times in rich_3905, and 8 of 30 tasks never reached
 # edit; off until it can end on its own
@@ -33,6 +36,7 @@ END = ("{n}. Every answer of the script ends with your own next call: make it. W
 ISSUE = '\n## The issue\n<issue>\n{problem_description}\n</issue>\n'
 SHARED = ('Other agents like you work at the same time on the other {what}; the script gives each of you its own, and '
           'after each one it may give you the next.')
+ALONE = 'The script gives you the {what} one at a time: after each one it may give you the next.'
 
 STAGES = {
     'requirements': dict(
@@ -74,7 +78,7 @@ STAGES = {
         sampling='sampling_1k.yaml', desc='Writes one test that shows one requirement is not met yet.'),
     'locate': dict(
         intro='You find where in the code the behaviour of a requirement is decided. That is your only task: other '
-              'agents decide what changes and change it. ' + SHARED.format(what='requirements'),
+              'agents decide what changes and change it. ' + ALONE.format(what='requirements'),
         steps=[
             "First call {script} with args ['open']: you get a requirement and the functions and classes most related "
             "to it, each by its name.",
@@ -99,8 +103,8 @@ STAGES = {
                ['missing', '<name of the other code>', '<what must change there>']],
         sampling='sampling_1k.yaml', desc='Writes one sentence of what must change in one place of the code.'),
     'edit': dict(
-        intro='You write the code of one place from its sentence. That is your only task. '
-              + SHARED.format(what='places'),
+        intro='You write the code of the places from their sentences, one place at a time. That is your only task. '
+              + ALONE.format(what='places'),
         steps=[
             "First call {script} with args ['open']: you get a place's numbered code, what to change there, and the "
             "code it uses.",
@@ -204,6 +208,9 @@ def main():
                                                         STAGES['reproduce']['desc'], 'sampling_1k.yaml'))
             write(os.path.join(scripts, 'repro.py'), ENTRY.format(stage='reproduce', worker='repro'))
             members.append('reproduce.yaml')
+        if len(members) == 1:
+            sub.append(f'sub_agents/{members[0]}')     # one worker: no ParallelAgent around it
+            continue
         write(f'sub_agents/{stage}_stage.yaml',
               f'agent_class: ParallelAgent\nname: {stage}_stage\ndescription: The {stage} workers, at the same '
               f'time.\nsub_agents:\n' + ''.join(f'  - config_path: {m}\n' for m in members))
@@ -223,7 +230,7 @@ def main():
                                              'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n')
     sub.append('sub_agents/finish.yaml')
     write('agent.yaml', 'agent_class: SequentialAgent\nname: issue_fixer\ndescription: Fixes the issue through its '
-                        'stages in a fixed order, with the workers of a stage at the same time (docs/design_fast.md).\n'
+                        'stages in a fixed order, with the specify workers at the same time (docs/design_fast.md).\n'
                         'sub_agents:\n' + ''.join(f'  - config_path: {s}\n' for s in sub))
     write('skills/fix-issue/SKILL.md', '---\nname: fix-issue\ndescription: The scripts that fix the issue in the Python '
                                        'repository at /workspace. Each agent calls the one script its instructions '

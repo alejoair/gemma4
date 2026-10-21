@@ -184,7 +184,7 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
    monitor.
 7. Analyse each finished task (result, calls, wasted calls and their cause, the fix) and record it in
    `docs/design_single.md`.
-8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
+8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env,hermetic,journals}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
    set `SUBMISSION` in `scratchpad/kn_single*/run.py`, `kaggle kernels push`. Outputs: `kaggle kernels output`.
    Traces: `scratchpad/trace_brief.py`, `trace_stats.py`.
 

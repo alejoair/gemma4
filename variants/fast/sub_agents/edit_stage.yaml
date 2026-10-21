@@ -1,6 +1,0 @@
-agent_class: ParallelAgent
-name: edit_stage
-description: The edit workers, at the same time.
-sub_agents:
-  - config_path: edit1.yaml
-  - config_path: edit2.yaml
