@@ -475,6 +475,62 @@ def _library_homes(root, name):
     return [f'{mod}.{short}' for mod in _library_modules(root) if short in names.get(mod, ())][:2]
 
 
+def _name_lines(root, st, items):
+    """What the repository defines for each name: (lines, names). The requirements agent's lookup, and since h14
+    the answer that saves the requirements (one call less per task: the names in the requirements are looked up)."""
+    table = _impact.Table(root, docs=False)
+    lines, names, index = [], [], None
+    for raw in items[:20]:
+        name = re.sub(r'\(.*$', '', raw).strip('`.: ')
+        if not name:
+            continue
+        names.append(name)
+        found = table.find(name.split('.')[-1]) if re.fullmatch(r'[A-Za-z_][\w.]*', name) else []
+        found = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name) or
+                 s.name.endswith('.' + name.split('.')[-1])]
+        exact = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name)]
+        if exact and '.' in name:
+            found = exact           # gk11: 'Session.send' also showed BaseAdapter.send
+        shown = []
+        for rel, s in found:
+            sig = _sig(s)
+            if sig not in shown and len(shown) < 2:
+                shown.append(sig)
+                lines.append(f'  {name}: {sig}  ({rel}, {s.kind} {s.name})')
+        homes = _library_homes(root, name)
+        if homes:
+            st.setdefault('lib_names', []).extend(h for h in homes if h not in st.get('lib_names', []))
+        if found and homes:
+            lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
+                         'import it from there)')
+        mod = _module_of(root, table, name) if not found and not homes else None
+        if mod:
+            # vf3 audit: a file path or module was called "a parameter, attribute or variable"
+            rel, defs = mod
+            lines.append(f'  {name}: the module {rel}; it defines ' + (', '.join(defs[:12]) or 'no function or class'))
+            continue
+        owners = _param_owners(table, name) if not found and not homes else []
+        assigned = step.assignment(root, table, name) if not found and not homes and not owners and \
+            re.fullmatch(r'[A-Za-z_]\w*', name) else None
+        if assigned:
+            # the template CONSOLE_HTML_FORMAT (rich_3043) read as "not a function or class"
+            lines.append(f'  {name}: a module-level assignment in {assigned["rel"]} (lines {assigned["start"]}-'
+                         f'{assigned["end"]})')
+        elif owners:
+            # hk30 (rich_4075): 'end' was only "a parameter, attribute or variable", not tied to Console.print, and
+            # the requirement named no code (W6, W3): the functions that take it as a parameter, public first
+            more = f' and {len(owners) - 3} more' if len(owners) > 3 else ''
+            lines.append(f'  {name}: a parameter of ' + ', '.join(f'{q} ({r})' for r, q in owners[:3]) + more)
+        elif not found:
+            index = index or _rank.Index(root)
+            lines.append(f'  {name}: ' + (f'library code: {", ".join(homes)}' if homes else
+                                          'not a function or class; the code uses this name (a parameter, '
+                                          'attribute or variable)' if name.split('.')[-1] in index.names else
+                                          "not in the repository (code of the issue's own example, new code the "
+                                          'issue asks for, or library code)'))
+    return lines, names
+
+
 def requirements(root, st, args):
     items = [_args.clean(a) if len(a) < 300 else a.strip() for a in args if a and a.strip()]
     if st['names'] is not None or _looks_like_requirements(items):
@@ -501,56 +557,7 @@ def requirements(root, st, args):
             return ('Send the names the issue mentions (functions, classes, parameters, files), one per item. req.py '
                     'runs no commands: it shows what the repository defines for those names.\n\n'
                     + next_call('req.py', 'names'))
-        table = _impact.Table(root, docs=False)
-        lines, names, index = [], [], None
-        for raw in items[:20]:
-            name = re.sub(r'\(.*$', '', raw).strip('`.: ')
-            if not name:
-                continue
-            names.append(name)
-            found = table.find(name.split('.')[-1]) if re.fullmatch(r'[A-Za-z_][\w.]*', name) else []
-            found = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name) or
-                     s.name.endswith('.' + name.split('.')[-1])]
-            exact = [(r, s) for r, s in found if s.name == name or s.name.endswith('.' + name)]
-            if exact and '.' in name:
-                found = exact           # gk11: 'Session.send' also showed BaseAdapter.send
-            shown = []
-            for rel, s in found:
-                sig = _sig(s)
-                if sig not in shown and len(shown) < 2:
-                    shown.append(sig)
-                    lines.append(f'  {name}: {sig}  ({rel}, {s.kind} {s.name})')
-            homes = _library_homes(root, name)
-            if homes:
-                st.setdefault('lib_names', []).extend(h for h in homes if h not in st.get('lib_names', []))
-            if found and homes:
-                lines.append(f'  {name}: also in the library: ' + ', '.join(homes) + ' (an example of the issue may '
-                             'import it from there)')
-            mod = _module_of(root, table, name) if not found and not homes else None
-            if mod:
-                # vf3 audit: a file path or module was called "a parameter, attribute or variable"
-                rel, defs = mod
-                lines.append(f'  {name}: the module {rel}; it defines ' + (', '.join(defs[:12]) or 'no function or class'))
-                continue
-            owners = _param_owners(table, name) if not found and not homes else []
-            assigned = step.assignment(root, table, name) if not found and not homes and not owners and \
-                re.fullmatch(r'[A-Za-z_]\w*', name) else None
-            if assigned:
-                # the template CONSOLE_HTML_FORMAT (rich_3043) read as "not a function or class"
-                lines.append(f'  {name}: a module-level assignment in {assigned["rel"]} (lines {assigned["start"]}-'
-                             f'{assigned["end"]})')
-            elif owners:
-                # hk30 (rich_4075): 'end' was only "a parameter, attribute or variable", not tied to Console.print, and
-                # the requirement named no code (W6, W3): the functions that take it as a parameter, public first
-                more = f' and {len(owners) - 3} more' if len(owners) > 3 else ''
-                lines.append(f'  {name}: a parameter of ' + ', '.join(f'{q} ({r})' for r, q in owners[:3]) + more)
-            elif not found:
-                index = index or _rank.Index(root)
-                lines.append(f'  {name}: ' + (f'library code: {", ".join(homes)}' if homes else
-                                              'not a function or class; the code uses this name (a parameter, '
-                                              'attribute or variable)' if name.split('.')[-1] in index.names else
-                                              "not in the repository (code of the issue's own example, new code the "
-                                              'issue asks for, or library code)'))
+        lines, names = _name_lines(root, st, items)
         st['names'] = list(dict.fromkeys((st.get('names') or []) + names))
         # g11: the same pair sent twice got the same lookup answer; the answer says how the call was read (B5)
         read = ('This call was read as names to look up: each item is short. Requirements are saved when each '
@@ -615,7 +622,12 @@ def requirements(root, st, args):
     listed = '\n'.join('  ' + _req_line(r) + (f' [new: {", ".join(r["new"])}]' if r['new'] else '') for r in reqs)
     note = ('\nLeft out, because what must happen repeats the issue\'s sentence (no situation and result): ' +
             '; '.join(f'"{r["what"][:80]}"' for r in dropped)) if dropped else ''
-    return f'Saved {len(reqs)} requirements:\n{listed}{note}\n\n{DONE}'
+    look = list(dict.fromkeys(n for r in reqs for n in r['names']))[:12]
+    defined = ''
+    if FAST and look:
+        nl, _ = _name_lines(root, st, look)
+        defined = ('\n\nWhat the repository defines for the names in them:\n' + '\n'.join(nl)) if nl else ''
+    return f'Saved {len(reqs)} requirements:\n{listed}{note}{defined}\n\n{DONE}'
 
 
 def _module_of(root, table, name):
@@ -2664,6 +2676,13 @@ def _after_edit(root, st, p, r, before, names, nxt):
             # the base procedure's numbered form is not an answer form here (gm9: Gemma answered it with 'ls -R')
             err = ("what was sent is not a whole definition (a def or class line and its body); to change some of "
                    "its lines send ['replace', '<the old lines, as shown>', '<the new lines>']")
+        if FAST and st.get('stage_now') == 'repair' and _patch_files(root) and \
+                re.match(r'the new (code|lines) (is|are) the same as the old', err):
+            # h14 (Haiku, fastapi_14953, rich_3043): after the test run's 'not done', repair sent the place's code back
+            # unchanged to keep it (the failing test checked what the issue changes) and was refused; code sent back
+            # unchanged is the place kept as it is now
+            p['status'] = 'done' if p.get('edited') else 'nochange'
+            return f'{p["handle"]} keeps its code as it is now.\n\n{DONE}'
         if FAST and _must_edit(root, p):
             # h12 (Haiku, fastapi_15661): this answer offered 'skip' while 'skip' was refused for this place (B12)
             err = err.replace(" (if this place needs no change, send ['skip'])", f': the change to make is: '
@@ -2674,10 +2693,18 @@ def _after_edit(root, st, p, r, before, names, nxt):
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
         if tag in ('delete', 'replace'):
             changed[p['rel']].extend(l.strip() for l in before[i1:i2])
-    if EDIT_TESTS:
+    if EDIT_TESTS or (FAST and st.get('stage_now') == 'repair'):
+        # h14 (the user's question: does any stage run the tests?): only the review ran the existing tests, and
+        # repair's edits came after it, unchecked (requests_7505 lost its @overload stubs there). Repair's edits run
+        # the existing tests of the changed code, at most REG_LIMIT_S, and an edit that breaks one is undone
         cover = step._status.changed_statements(before, after)
-        verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
-                                                 undo=(p['rel'], before))
+        saved = _tests.DEADLINE
+        _tests.DEADLINE = min(saved or time.time() + REG_LIMIT_S, time.time() + REG_LIMIT_S)
+        try:
+            verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
+                                                     undo=(p['rel'], before))
+        finally:
+            _tests.DEADLINE = saved
     else:
         verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
         broken = _import_errors(root, p['rel'], before)
@@ -2953,15 +2980,25 @@ def _verify(root, st):
 
 def review(root, st, args):
     rid = (st['current'] or (None, None))[1]
-    r = _req(st, rid)
-    if r is None:
+    every = rid == 'ALL'
+    # h14: one call per requirement (1.4 per task); the fast build reviews every open requirement in one call
+    rids = ([x['id'] for x in st['reqs'] if x['id'] not in st['reviews']] or [x['id'] for x in st['reqs']]
+            if every else [rid])
+    r = _req(st, rid) if not every else (_req(st, rids[0]) if len(rids) == 1 else None)
+    if r is None and not every:
         return 'Nothing to review now.\n\n' + DONE
+    label = ', '.join(rids)
+
+    def store(v):
+        for x in rids:
+            st['reviews'][x] = dict(v)
     items = [a for a in args if a and a.strip()]
     nxt = next_call('review.py', 'done', 'not done', 'cannot tell', sep=', or ')
-    places = [p for p in st['plan'] if rid in p['reqs']] or st['plan']
+    places = [p for p in st['plan'] if set(rids) & set(p['reqs'])] or st['plan']
     first = _args.clean(items[0]).lower() if items else ''
     if not items or first in ('open', 'start', rid.lower()):
-        view = [f'Does the patch do this?\n  {_req_line(r)}']
+        view = ([f'Does the patch do this?\n  {_req_line(r)}'] if r is not None else
+                ['Does the patch do these?\n' + '\n'.join('  ' + _req_line(_req(st, x)) for x in rids)])
         for p in places:
             _refresh(root, p)
             diff = step._patch_here(root, p) if p.get('status') == 'done' else ''
@@ -3023,13 +3060,13 @@ def review(root, st, args):
             fails = ', '.join(reg.get('failures') or [])[:300]
             what = ('existing tests that pass on the original code fail with the patch' + (f' ({fails})' if fails else '')
                     + ': ' + reg['detail'][:500])
-            st['reviews'][rid] = {'verdict': 'not done', 'place': '', 'what': what, 'by': 'the existing tests'}
+            store({'verdict': 'not done', 'place': '', 'what': what, 'by': 'the existing tests'})
             st.setdefault('recheck', []).append(rid)
             for p in places:
                 if p.get('status') == 'done':
                     p['old_sentence'] = p.get('sentence')
-                    p['sentence'], p['note'] = None, f'the review of {rid} says: {what}'
-            return (f'{rid}: not done, by the script\'s test run: {what[:400]}\nThe edited places go back to be '
+                    p['sentence'], p['note'] = None, f'the review of {label} says: {what}'
+            return (f'{label}: not done, by the script\'s test run: {what[:400]}\nThe edited places go back to be '
                     f'changed so that these tests pass, or kept when a test checks what the issue changes.\n\n{DONE}')
         if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid) and not FAST:
             # (the fast build shows these failures in the open view already: a second ask adds no fact, F4)
@@ -3038,11 +3075,11 @@ def review(root, st, args):
                     "\nIf they check behaviour the issue keeps, the patch is not done: name the place that is wrong "
                     "and what must change there: ['not done', '<place>', '<what is wrong>']. If they check a value "
                     "the issue changes, send ['done'] again.\n\n" + nxt)
-        st['reviews'][rid] = {'verdict': 'done' if first in ('done', 'yes') else 'cannot tell'}
-        return f'{rid}: {st["reviews"][rid]["verdict"]}.\n\n{DONE}'
+        store({'verdict': 'done' if first in ('done', 'yes') else 'cannot tell'})
+        return f'{label}: {st["reviews"][rids[0]]["verdict"]}.\n\n{DONE}'
     if first in ('not done', 'no') and len(items) >= 2:
         name, what = _args.clean(items[1]), ' '.join(items[2:])[:600]
-        st['reviews'][rid] = {'verdict': 'not done', 'place': name, 'what': what}
+        store({'verdict': 'not done', 'place': name, 'what': what})
         if st['round'] < MAX_ROUNDS:
             # gk12 (fastapi_14851): after the re-edit nothing reviewed R2 again; it is reviewed again once the
             # places it sent back are done (_next_tool)
@@ -3050,10 +3087,10 @@ def review(root, st, args):
             p = _place_by(st, name)
             if p is not None:
                 p['old_sentence'] = p.get('sentence')
-                p['sentence'], p['note'] = None, f'the review of {rid} says: {what}'
+                p['sentence'], p['note'] = None, f'the review of {label} says: {what}'
             else:
-                st['missing'].append([name, f'the review of {rid} says: {what}', [rid], None])
-        return f'{rid}: not done; {name} goes back to be specified and edited.\n\n{DONE}'
+                st['missing'].append([name, f'the review of {label} says: {what}', list(rids), None])
+        return f'{label}: not done; {name} goes back to be specified and edited.\n\n{DONE}'
     return ("The answer was not read: its first item must be done, not done (then the place and what is missing) "
             "or cannot tell.\n\n" + nxt)
 
@@ -3178,6 +3215,7 @@ def main(stage, argv):
 # lock (_state.lock), so the workers' calls run one at a time while their model calls run at once.
 
 FAST_DONE = 'NEXT: no call: reply with exactly: done'
+CHECK_DONE = 'NEXT: call the tool submit_patch with no arguments, then reply with exactly: done'
 
 REPRO_MIN_S = 150       # reproduce runs beside specify only with this much time left (V22: it took 30-225 s)
 WORK_STAGE = {'repair': None}    # repair specifies and edits, by the state of its place
@@ -3337,6 +3375,20 @@ def _claim(root, st, stage, worker):
         return None
     if stage == 'review':
         _verify(root, st)
+        open_ = [r for r in st['reqs'] if r['id'] not in st['reviews']]
+        if FAST and not st['repro'] and len(open_) > 1:
+            # h14: one review call for every open requirement (it took 1.4 calls per task, one per requirement)
+            if _claimed(st, stage, 'ALL', worker):
+                return None
+            if not _patch_files(root) or _left(st) < REVIEW_LEFT_S:
+                for r in open_:
+                    st['reviews'][r['id']] = {'verdict': 'not reviewed'}
+                return None
+            if _ask(st, 'review ALL'):
+                return _take(st, stage, 'ALL', worker, 'review')
+            for r in open_:
+                st['reviews'][r['id']] = {'verdict': 'cannot tell'}
+            return None
         for r in st['reqs']:
             if r['id'] in st['reviews'] or _claimed(st, stage, r['id'], worker):
                 continue
@@ -3389,6 +3441,9 @@ def _summary(st, handler, target, body):
         return f'{target}: located at ' + ', '.join(c['name'] for c in st['located'].get(target, [])) if st['located'].get(target) \
             else f'{target}: located'
     if handler == 'review':
+        if target == 'ALL':
+            return '; '.join(f'{r["id"]}: ' + (st['reviews'].get(r['id']) or {}).get('verdict', 'reviewed')
+                             for r in st['reqs'])
         return f'{target}: ' + (st['reviews'].get(target) or {}).get('verdict', 'reviewed')
     if handler == 'requirements':
         return 'the requirements ' + '; '.join(f'{r["id"]}: {r["what"][:140]}' for r in st['reqs'])
@@ -3438,7 +3493,8 @@ def _idle(st, stage, worker):
 
 def _for_worker(out, stage, worker):
     """The handlers' NEXT lines name the stage's own script; a worker calls its own."""
-    names = ('specify.py', 'edit.py') if stage == 'repair' else (SCRIPT[stage],)
+    names = (('specify.py', 'edit.py', 'review.py') if worker == 'check' else ('specify.py', 'edit.py')
+             if stage == 'repair' else (SCRIPT[stage],))
     for n in names:
         out = out.replace(f'file_path {n}', f'file_path {worker}.py')
     return out
@@ -3466,10 +3522,23 @@ def main_fast(stage, worker, argv):
     _tests.DEADLINE = time.time() + max(5, _left(st) - 10)
     args = _args.split_single_quoted(list(argv))
     first = _args.clean(args[0]).lower() if args and args[0] else ''
+    # h14 (Haiku): repair ran with nothing to do in 22 of 30 tasks, and the finish agent took two more model turns
+    # for submit_patch; one agent ('check') reviews, then repairs what the review sends back, then submits
+    check = stage == 'check'
+
+    def claim(stage):
+        t = _claim(root, st, stage, worker)
+        if t is None and check and stage == 'review':
+            st['stage_now'] = 'repair'
+            return _claim(root, st, 'repair', worker), 'repair'
+        return t, stage
     try:
         _tests.record_preexisting(root)
         cur = st.setdefault('wcur', {}).get(worker)
         last = (st.get('wlast') or {}).get(worker)
+        if check:
+            stage = ('review' if (cur[0] == 'review' if cur else
+                                  any(r['id'] not in st['reviews'] for r in st['reqs'])) else 'repair')
         if stage == 'locate' and cur is None and last and not st['scope_done'] and first not in ('', 'open', 'start',
                                                                                                 'next', 'done'):
             # vf3 audit (rich_2943, rich_4075): a name sent "to check it" chose it, and the right place sent one call
@@ -3502,7 +3571,7 @@ def main_fast(stage, worker, argv):
         if _over_budget(st):
             # B10 (docs/design_stages.md, "How the 90 runs ended"): the harness cut 44 of 90 runs while an agent worked
             _release(st, worker)
-            if stage == 'repair' and not st['submitted']:
+            if stage in ('repair', 'review') and not st['submitted']:
                 _submit(root, st)
             out = ('This call was not applied: the time is up. ' + _progress(root, st)
                    + ' The patch as it is now will be submitted.\n\n' + FAST_DONE)
@@ -3511,8 +3580,8 @@ def main_fast(stage, worker, argv):
             # hf1 (rich_3905): the requirements agent's first call already holds the names (its prompt's step 1): it
             # is answered, not replaced by the first question
             # after the stage's end a worker that has done an item takes no other (STAGE_END)
-            target = (None if _late(st, stage) and st.get('wdone', {}).get(worker)
-                      else _claim(root, st, stage, worker))
+            target, stage = ((None, stage) if _late(st, stage) and st.get('wdone', {}).get(worker)
+                             else claim(stage))
             if target is None:
                 if stage == 'repair' and not st['submitted']:
                     _submit(root, st)
@@ -3538,8 +3607,8 @@ def main_fast(stage, worker, argv):
                 st.setdefault('wlast', {})[worker] = cur[1]
                 limit = BATCH.get(stage, 3) * 2
                 st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
-                target = (_claim(root, st, stage, worker) if st['wdone'][worker] < limit and not _late(st, stage)
-                          else None)
+                target, stage = (claim(stage) if st['wdone'][worker] < limit and not _late(st, stage)
+                                 else (None, stage))
                 if target is not None:
                     out = (body + f'\n\nYour part goes on with {target}, in the same way:\n\n'
                            + _view(root, st, stage, worker, target))
@@ -3548,12 +3617,17 @@ def main_fast(stage, worker, argv):
                         _submit(root, st)
                     out = body + '\n\n' + _part_done(st, stage, worker)
         out = _for_worker(out, stage, worker)
+        if check and out.endswith(FAST_DONE):
+            if not st['submitted']:
+                _submit(root, st)
+            out = out[:-len(FAST_DONE)].replace('so nothing more is needed from you', 'so only the submission is '
+                                                'left') + CHECK_DONE
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{worker} {type(e).__name__}: {e}'})
         import traceback
         _state.record({'trace': traceback.format_exc()[-2000:]})
         _release(st, worker)
-        out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
+        out = f'The script hit an internal error ({type(e).__name__}).\n\n{CHECK_DONE if check else FAST_DONE}'
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]

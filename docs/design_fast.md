@@ -690,3 +690,29 @@ The 14 refused calls in h14:
 | Not a definition (a placeholder line, a setup.py shim) | 2 |
 
 **Open:** in repair, a definition sent back unchanged could be read as "keeps its code". No rule for it yet.
+
+### Fewer model turns (10-21, after h14: 26 turns per task, median)
+
+1. **Requirements in one call.** The prompt asks for the pairs at once. The answer that saves them shows what the repository defines for the names in them (`_name_lines`), so the agent can send corrected pairs. The separate names lookup still works.
+2. **One agent, `check`, reviews, repairs and submits.** It replaces review, repair and finish. `main_fast` gives the check worker the open review item first, then repair's places (`claim`), and ends with "call the tool submit_patch" (`CHECK_DONE`). The agent has the tool `submit_patch` beside the skill.
+3. **One review call for every open requirement.** The claim target is `ALL`, and the verdict is stored for each requirement (`store`).
+4. **Repair: code sent back unchanged keeps the place as it is**, instead of a refusal.
+5. **Two specifiers** (h14: the third was idle in 23 of 30 tasks).
+
+**Where the tests run** (checked at the user's request, from h14's journals and the code):
+- In h14 only the review ran the existing tests, in 27 of 30 tasks. The other 3 had an empty patch at review.
+- Per-edit tests are off (`EDIT_TESTS`). All 36 edits were answered "Kept, not checked".
+- Reproduce and `VERIFY` are off in the fast build.
+- So repair's edits, which come after the review, were never checked. requests_7505 lost its `@overload` stubs there.
+- **Now:** repair's edits run the existing tests of the changed code. The run is limited to `REG_LIMIT_S`, and an edit that breaks a test passing just before it is undone (`_after_edit`).
+
+| Item | Effect | Why |
+|---|---|---|
+| B8 number of forms | **farther, with a reason** | `check` has review's 3 answers plus repair's 4. The agents removed cost 2 turns each in 22 of 30 tasks (repair) and 2 in every task (finish). The script's NEXT names which form it expects at each step, as repair already did |
+| P8 progress recited | closer | One agent sees its review and the repair it causes in one context |
+| B10 budget | closer | About 5 fewer model turns per task |
+| F3 doubting a verdict | closer | Repair's edits are checked by the tests, not trusted |
+| W1 choosing | neutral | The same verdicts |
+| P7 unneeded context | farther, with a reason | The review view holds every open requirement; with 1-2 requirements per task (h14: 1.4 calls) the view grows little |
+
+**Why it is generic:** the changes are in the procedure's own agents, forms and test runs. None of them names a repository or an issue.

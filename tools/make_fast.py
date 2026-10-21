@@ -47,10 +47,7 @@ STAGES = {
               'You read no files and run no commands, because the requirements come from the issue\'s own words; '
               'req.py shows what the repository defines for the names you send, which is all you need from the code.',
         steps=[
-            'First call {script} with the names the issue mentions (functions, classes, methods, parameters, files), '
-            'one per item. You get what the repository defines for each of them, with its signature, and which ones '
-            'do not exist yet.',
-            "Then call {script} with the requirements, one pair of items each: a sentence copied from the issue, then "
+            "Call {script} with the requirements, one pair of items each: a sentence copied from the issue, then "
             "what must happen, written as the situation and the expected result with the exact names (for example: "
             "'Prompt.ask(..., case_sensitive=False) accepts \"paul\" for the choice \"Paul\"'). Write only what the "
             "issue states: no case, value, cause or mechanism the issue does not give (the next agents look for code "
@@ -60,8 +57,10 @@ STAGES = {
             "which check that behaviour). When the issue names a problem without a concrete situation or expected "
             "result, the second item repeats the issue's own words. 1 to 6 requirements: the ones the issue asks for "
             "now. Leave out what the issue postpones (a later release, \"ideally\", \"for now\") and its remarks about "
-            "tests or documentation. Until you reply done, sending the pairs again replaces the saved requirements."],
-        forms=[['<name>', '<name>'], ['<a sentence copied from the issue>', '<what must happen>']],
+            "tests or documentation. The answer shows what the repository defines for the names in them, with each signature, "
+            "and which ones do not exist yet; until you reply done, sending the pairs again replaces the saved "
+            "requirements (with the exact names it shows)."],
+        forms=[['<a sentence copied from the issue>', '<what must happen>']],
         sampling='sampling_1k.yaml', desc='Turns the issue into 1 to 6 concrete requirements.'),
     'reproduce': dict(
         intro='You write one test that shows one requirement of the issue below is not met yet. That is your only '
@@ -141,6 +140,29 @@ STAGES = {
         forms=[['open'], ['<what changes here, in one sentence>'], ['<the whole new definition>'],
                ['replace', '<the old lines>', '<the new lines>'], ['no change']],
         sampling='sampling_edit.yaml', desc='Specifies and edits the places the review sent back.'),
+    # h14 (Haiku): repair had nothing to do in 22 of 30 tasks and the finish agent spent two model turns on
+    # submit_patch; one agent reviews, repairs what the review sends back, and submits (docs/design_fast.md)
+    'check': dict(
+        intro='You check whether the patch does the requirements, finish what is wrong or missing, and submit the '
+              'patch. That is your only task.',
+        steps=[
+            "First call {script} with args ['open']: you get the requirements, each place of the fix with its "
+            "planned sentence and its diff, and what the existing tests do with the patch.",
+            "Then answer from what the code and the output show: ['done'] if the patch does them; ['not done', "
+            "'<place>', '<what is missing there>'] naming the one place that is wrong or where the change is "
+            "missing; or ['cannot tell'] if the code shown does not decide it. Your answer can only add or correct "
+            "a change, never undo the patch.",
+            "When a place goes back to be finished, the script gives it to you: when the window asks what must "
+            "change there, send one sentence (or ['no change']); when it shows the place's numbered code with its "
+            "sentence, send the whole new definition, or ['replace', '<the old lines, as shown>', '<the new "
+            "lines>']. The window's NEXT always says which of the two it expects.",
+            "When the script's NEXT says to call submit_patch, call the tool submit_patch with no arguments, then "
+            "reply with exactly: done"],
+        forms=[['open'], ['done'], ['not done', '<place>', '<what is missing there>'], ['cannot tell'],
+               ['<what changes here, in one sentence>'], ['<the whole new definition>'],
+               ['replace', '<the old lines>', '<the new lines>'], ['no change']],
+        tools=['submit_patch'],
+        sampling='sampling_edit.yaml', desc='Reviews the patch, finishes what is missing, and submits it.'),
 }
 
 ENTRY = '''"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)
@@ -165,16 +187,19 @@ def prompt(stage, script):
     lines += [f'{i}. {s}' for i, s in enumerate(steps, 1)]
     lines += [END.format(n=len(steps) + 1), '', 'Call forms (the values in angle brackets are placeholders):']
     lines += [FORM.format(args=','.join(Q.format(a) for a in f), script=script) for f in t['forms']]
+    lines += [f'<|tool_call>call:{tool}{{}}<tool_call|>' for tool in t.get('tools') or []]
     lines += ['', ERRORS, ISSUE]
     return '\n'.join(lines)
 
 
 def llm_yaml(name, stage, script, desc, sampling):
+    tools = STAGES.get(stage, {}).get('tools') or []
     return (f'name: {name}\ndescription: {desc}\nmodel: {MODEL}\n'
             f'# a fresh context per stage agent (docs/design_fast.md): its instruction, the previous agent\'s last\n'
             f'# message and its own calls\ninclude_contents: none\n'
             f'instruction: !include {name}.md\nskills: [skills/fix-issue]\n'
-            f'generate_content_config: !include {sampling}\n')
+            + (('tools:\n' + ''.join(f'  - {t}\n' for t in tools)) if tools else '')
+            + f'generate_content_config: !include {sampling}\n')
 
 
 def write(rel, text):
@@ -216,20 +241,12 @@ def main():
               f'agent_class: ParallelAgent\nname: {stage}_stage\ndescription: The {stage} workers, at the same '
               f'time.\nsub_agents:\n' + ''.join(f'  - config_path: {m}\n' for m in members))
         sub.append(f'sub_agents/{stage}_stage.yaml')
-    for stage, script in (('review', 'review.py'), ('repair', 'repair.py')):
-        write(f'sub_agents/{stage}.md', prompt(stage, script))
-        write(f'sub_agents/{stage}.yaml', llm_yaml(stage, stage, script, STAGES[stage]['desc'],
-                                                   STAGES[stage]['sampling']))
-        write(os.path.join(scripts, script), ENTRY.format(stage=stage, worker=script[:-3]))
-        sub.append(f'sub_agents/{stage}.yaml')
-    write('sub_agents/finish.md', 'The work on the issue is finished and the patch is ready. Call the tool '
-                                  'submit_patch with no arguments, then reply with one sentence.\n')
-    write('sub_agents/finish.yaml', f'name: finish\ndescription: Submits the patch.\nmodel: {MODEL}\n'
-                                    'include_contents: none\ninstruction: !include finish.md\ntools:\n  - submit_patch\n'
-                                    'generate_content_config: !include sampling_finish.yaml\n')
-    write('sub_agents/sampling_finish.yaml', 'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: 512\n'
-                                             'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n')
-    sub.append('sub_agents/finish.yaml')
+    # h14: review, repair and finish in one agent ('check', docs/design_fast.md)
+    write('sub_agents/check.md', prompt('check', 'check.py'))
+    write('sub_agents/check.yaml', llm_yaml('check', 'check', 'check.py', STAGES['check']['desc'],
+                                            STAGES['check']['sampling']))
+    write(os.path.join(scripts, 'check.py'), ENTRY.format(stage='check', worker='check'))
+    sub.append('sub_agents/check.yaml')
     write('agent.yaml', 'agent_class: SequentialAgent\nname: issue_fixer\ndescription: Fixes the issue through its '
                         'stages in a fixed order, with the specify workers at the same time (docs/design_fast.md).\n'
                         'sub_agents:\n' + ''.join(f'  - config_path: {s}\n' for s in sub))
@@ -243,9 +260,12 @@ def main():
     # the stages build's coordinator, its route and its per-stage agents are not used here
     write('REMOVE.txt', '\n'.join(['prompts/coordinator.md', 'configs/sampling.yaml'] +
                                   [f'sub_agents/{n}' for n in ('locate.yaml', 'locate.md', 'specify.yaml',
-                                                               'specify.md', 'edit.yaml', 'edit.md')] +
+                                                               'specify.md', 'edit.yaml', 'edit.md', 'review.yaml',
+                                                               'review.md', 'repair.yaml', 'repair.md',
+                                                               'reproduce.yaml', 'reproduce.md')] +
                                   [f'skills/fix-issue/scripts/{n}' for n in ('route.py', 'scope.py', 'locate.py',
-                                                                             'specify.py', 'edit.py')]) + '\n')
+                                                                             'specify.py', 'edit.py', 'review.py',
+                                                                             'repair.py', 'repro.py')]) + '\n')
 
 
 if __name__ == '__main__':

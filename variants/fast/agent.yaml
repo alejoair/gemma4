@@ -6,6 +6,4 @@ sub_agents:
   - config_path: sub_agents/locate1.yaml
   - config_path: sub_agents/specify_stage.yaml
   - config_path: sub_agents/edit1.yaml
-  - config_path: sub_agents/review.yaml
-  - config_path: sub_agents/repair.yaml
-  - config_path: sub_agents/finish.yaml
+  - config_path: sub_agents/check.yaml
