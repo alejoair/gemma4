@@ -109,33 +109,34 @@ def _removed_defs(old, new):
     return [n for n in names if not re.search(rf'\b(def|class)\s+{re.escape(n)}\b', text)]
 
 
-VAR_KW = re.compile(r'^\s*\*\*\w+\s*(:[^=]*)?,?\s*$')
-SIG_END = re.compile(r'^\s*\)\s*(->.*)?:\s*(#.*)?$')
+VAR_KW = re.compile(r'^\s*\*\*\w+')
+DEF_LINE = re.compile(r'^\s*(async\s+)?def\s')
 
 
-def _params_before_var_kw(lines, start, end):
-    """lines with the parameters written after a '**kwargs' line moved before it, or None. h12 (Haiku, fastapi_13713):
-    a new parameter added at the end of FastAPI.__init__'s 750-line signature landed after '**extra: Any' and the edit
-    was refused six times ("arguments cannot follow var-keyword argument"); Python allows no parameter there, so the
-    only reading of the edit is the parameter before '**kwargs'. Only the replaced range is moved."""
-    for k in range(start - 1, min(end, len(lines))):
-        if not VAR_KW.match(lines[k]):
-            continue
-        j = next((i for i in range(k + 1, len(lines)) if SIG_END.match(lines[i])), None)
-        if j is None or j == k + 1 or j > end + 1:
-            return None
-        moved = lines[k + 1:j]
-        last = len(moved) - 1
-        while last >= 0 and not moved[last].strip():
-            last -= 1
-        if last < 0:
-            return None
-        nl = _repo.newline_of(lines)
-        if not moved[last].rstrip().endswith(','):
-            moved[last] = moved[last].rstrip('\r\n').rstrip() + ',' + nl
-        kw = lines[k] if lines[k].rstrip().endswith(',') else lines[k].rstrip('\r\n').rstrip() + ',' + nl
-        return lines[:k] + moved + [kw] + lines[j:]
-    return None
+def _params_before_var_kw(lines, start, stop, cand):
+    """The file with the lines an edit inserted after a '**kwargs' parameter moved before it, or None. h12 and h13
+    (Haiku, fastapi_13713): a new parameter added at the end of FastAPI.__init__'s 750-line signature landed after
+    '**extra: Annotated[...]' (several lines) and the edit was refused six times ("arguments cannot follow
+    var-keyword argument"); Python allows no parameter there, so the only reading of the edit is the parameter
+    before '**kwargs'. Only lines the edit inserted are moved, to just before the '**' line above the edit."""
+    import difflib
+    old = lines[start - 1:stop]
+    ops = [op for op in difflib.SequenceMatcher(None, old, cand, autojunk=False).get_opcodes() if op[0] != 'equal']
+    if len(ops) != 1 or ops[0][0] != 'insert':
+        return None
+    _, i1, _, j1, j2 = ops[0]
+    block = cand[j1:j2]
+    k = next((i for i in range(start - 2, max(-1, start - 2 - 1200), -1)
+              if VAR_KW.match(lines[i]) or DEF_LINE.match(lines[i])), None)
+    if k is None or not VAR_KW.match(lines[k]):
+        return None
+    nl = _repo.newline_of(lines)
+    last = max(i for i, l in enumerate(block) if l.strip()) if any(l.strip() for l in block) else None
+    if last is None:
+        return None
+    if not block[last].rstrip().endswith(','):
+        block[last] = block[last].rstrip('\r\n').rstrip() + ',' + nl
+    return lines[:k] + block + lines[k:start - 1] + old + lines[stop:], k + 1
 
 
 def apply(root, rel, start, end, text):
@@ -196,21 +197,23 @@ def apply(root, rel, start, end, text):
             continue
         result = lines[:start - 1] + cand + lines[stop:]
         err = _compiles(result)
+        first_line = start
         if err and err.startswith('arguments cannot follow var-keyword argument'):
-            moved = _params_before_var_kw(result, start, start + len(cand) - 1)
-            if moved is not None and _compiles(moved) is None:
-                result, err, extra = moved, None, extra + ['moved the parameters written after **kwargs before it']
+            moved = _params_before_var_kw(lines, start, stop, cand)
+            if moved is not None and _compiles(moved[0]) is None:
+                result, err, extra = moved[0], None, extra + ['moved the parameters written after **kwargs before it']
+                first_line = moved[1]       # the moved lines are part of the change
         if err is None:
             _repo.write_lines(root, rel, result)
             new_end = start + len(cand) - 1
             warnings = []
-            unknown = unknown_names(result, start, max(start, new_end))
+            unknown = unknown_names(result, first_line, max(first_line, new_end))
             if unknown:
                 warnings.append('nothing in the file defines or imports: ' + ', '.join(unknown))
             removed = _removed_defs(lines[start - 1:stop], cand)
             if removed:
                 warnings.append('the edit removed the definition of: ' + ', '.join(removed))
-            return Result(True, start, new_end, None, repairs + extra, warnings)
+            return Result(True, first_line, new_end, None, repairs + extra, warnings)
         first_error = first_error or err
     if same_as_old and first_error is None:
         return Result(False, start, end, 'the new lines are the same as the old ones once indented: nothing changes',

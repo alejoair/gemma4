@@ -574,3 +574,35 @@ Run: vf13 (`build_f19`) on vf5's 30 tasks, with Haiku. Result: 15/30 judged reso
 Fixed in db4d48f: the count is now kept per stage. Also fixed there: a "missing" that names its own place is answered as such, not as "goes into the plan".
 
 Rerun of the two tasks with the fix (h13r, `build_f20`): both end with a patch, and neither is resolved. Both statements are title only.
+
+### h13, step by step: where each unresolved task went wrong, and the unnecessary calls (10-21)
+
+**Script faults found in h13, all fixed:**
+- The editor's refused "no change" was counted per place (fastapi_15661, rich_3942); fixed in db4d48f.
+- A "missing" that named its own place was answered "goes into the plan"; fixed in db4d48f.
+- The `**kwargs` repair handled only a one-line `**extra`. FastAPI's `**extra: Annotated[...]` spans 8 lines, so fastapi_13713 was refused again. The repair now moves the lines the edit inserted to just before the `**` line. Replayed on h13's call #15 of fastapi_13713, the edit is kept.
+
+**The stage of each unresolved task (15):**
+
+| Stage | Tasks |
+|---|---|
+| locate | 7: fastapi_14953, fastapi_15661 (a new file), fastapi_9753, rich_3180, rich_3480, rich_3934, rich_4076 |
+| specify | 5: fastapi_13207, fastapi_14258, fastapi_14419, rich_3043, rich_4075 (the right place was reached through "missing"; Console.print was then given "no change") |
+| statement, title only | 2: fastapi_15280, rich_3942 |
+| edit (a script fault) | 1: fastapi_13713 |
+
+**Every model turn of the 30 traces** was classified by `waste.py` (scratchpad): 885 turns, about 30 per task.
+
+| Kind | Turns | Per task | Necessary? |
+|---|---|---|---|
+| Useful calls | 436 | 14.5 | yes |
+| "done" replies that end an agent | 294 | 10 | Yes by design: each of the 10 agents ends with a reply without a call |
+| Idle workers: an "open" answered "nothing left for you" | 98 | 3.3 | **No.** Each costs 2 turns (open and done), about 196 turns or 22%. By stage: locate 32 (locate2 has no work when there is one requirement), specify 31, repair 22, edit 9, review 4 |
+| Refused calls | 25 | 0.8 | **No.** By stage: edit 19, repair 4, specify 2. 7 were refused "no change" (the forcing, by design), 5 sent the same code as before, 6 had old lines not found or did not compile, 4 sent "missing" without a code name |
+| Text without a call in the middle of work | 32 | 1.1 | **No.** Editors stopping with an explanation ("the signature lines are hidden", "I can't write…"); their place goes to repair |
+| The finish agent's sentence after `submit_patch` | 30 | 1 | yes (it ends the agent) |
+| The requirements name lookup | 28 | 0.9 | By design (step 1 of req) |
+| Searches in locate | 5 | 0.2 | yes (looking off the list) |
+| The same call sent again | 2 | — | **No** (6 more are review "done" for R1 then R2, which is not a repeat) |
+
+The biggest waste is the idle workers: the stages have a fixed number of workers whatever the number of items. In these 30 tasks, locate2 had nothing to do in 32 of 60 worker runs (one requirement), and specify in 31 of 90.
