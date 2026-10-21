@@ -171,7 +171,9 @@ def _harness_view(base_python: str, venv: Path) -> Path:
     older pytest fails on plugins written for pytest 9 ('No module named _pytest._io.pprint'). The modules stay
     importable; anyio's metadata stays (its plugin is disabled by the harness's '-p no:anyio')."""
     base = Path(_site_packages(base_python))
-    view = venv / 'harness_site'
+    # the name must contain 'site-packages': swegemma's subprocess sandbox (_host_env.pth) and eval_env.py keep only
+    # the host's paths that do, and without it the sandbox saw none of the harness's packages (no test ran)
+    view = venv / 'harness-site-packages'
     view.mkdir()
     for entry in base.iterdir():
         if entry.name.endswith('.dist-info') and not entry.name.startswith('anyio-'):
@@ -200,6 +202,49 @@ def _install(py: str, targets: list[str], reqs: list[str], env: dict) -> subproc
 
 def _name(req: str) -> str:
     return re.split(r'[<>=!~\[; ]', req, maxsplit=1)[0].lower()
+
+
+def _mask_foreign_plugins(py: str) -> list[str]:
+    """No-op stand-ins, in this venv, for the pytest plugins the sandbox would load from outside it. The subprocess
+    sandbox is a venv with the system's site-packages (/usr/local/lib/python3.13/dist-packages holds pytest-httpbin
+    and inline-snapshot here), and pytest loads every plugin registered there: with the repository's older packages
+    they fail before any test runs (httpbin with moto 4.0's Flask 2.1: 'Flask' object has no attribute 'json').
+    pluggy registers one plugin per entry-point name, the first found in sys.path order, and this venv comes before
+    the system's directories, so a stand-in of the same name keeps the foreign one out. The repository's own plugins
+    are not masked."""
+    site = Path(_site_packages(py))
+    shutil.rmtree(site / 'swegym_masked_plugins-0.dist-info', ignore_errors=True)  # a rerun starts over
+    for old in site.glob('_swegym_masked_*.py'):
+        old.unlink()
+    listing = ('import importlib.metadata as m, json, sys\n'
+               'print(json.dumps(sorted({(e.name, e.value.split(":")[0]) for d in m.distributions() '
+               'for e in d.entry_points if e.group == "pytest11"})))')
+    own = {n for n, _ in json.loads(subprocess.run([py, '-c', listing], check=True, capture_output=True,
+                                                   text=True).stdout)}
+    system = subprocess.run([py, '-c', 'import sys; print(sys._base_executable)'], check=True, capture_output=True,
+                            text=True).stdout.strip()
+    foreign = [(n, mod) for n, mod in json.loads(subprocess.run([system, '-c', listing], check=True,
+                                                                  capture_output=True, text=True).stdout)
+               if n not in own and n != 'anyio']  # anyio's is disabled by the harness's own '-p no:anyio'
+    # only the ones that do not import next to this venv's packages, as the sandbox would import them
+    sys_dirs = json.loads(subprocess.run([system, '-c', 'import json, site; print(json.dumps(site.getsitepackages()))'],
+                                         check=True, capture_output=True, text=True).stdout)
+    probe = f'import sys, importlib; sys.path += {sys_dirs!r}; importlib.import_module(sys.argv[1])'
+    masked = sorted(n for n, mod in foreign
+                    if subprocess.run([py, '-c', probe, mod], capture_output=True, timeout=120).returncode)
+    if masked:
+        # one module per name: pluggy refuses one module registered under two names
+        mods = {n: '_swegym_masked_' + re.sub(r'\W', '_', n) for n in masked}
+        for mod in mods.values():
+            (site / f'{mod}.py').write_text('"""Stands in for a pytest plugin of the system (tools/swegym.py)."""\n',
+                                            encoding='utf-8')
+        info = site / 'swegym_masked_plugins-0.dist-info'
+        info.mkdir(exist_ok=True)
+        (info / 'METADATA').write_text('Metadata-Version: 2.1\nName: swegym-masked-plugins\nVersion: 0\n',
+                                       encoding='utf-8')
+        (info / 'entry_points.txt').write_text('[pytest11]\n' + ''.join(f'{n} = {m}\n' for n, m in mods.items()),
+                                               encoding='utf-8')
+    return masked
 
 
 def _freeze(python: str) -> str:
@@ -311,6 +356,9 @@ def cmd_env(a) -> None:
     dup = [l.split('==')[0] for l in _freeze(py).splitlines() if l.split('==')[0].lower() in KEEP_FROM_BASE]
     if dup:
         subprocess.run(['uv', 'pip', 'uninstall', '-q', '-p', py, *dup], check=True)
+    masked = _mask_foreign_plugins(py)
+    if masked:
+        print(f'{a.repo} {version}: pytest plugins of the system masked: {", ".join(masked)}')
     # the harness's venv after this venv's own packages; written last: with it in place, uv sees the harness's
     # packages as this venv's and upgrades or uninstalls them there (it removed the harness's pytest once)
     # relative to site-packages, so the venv can be moved
