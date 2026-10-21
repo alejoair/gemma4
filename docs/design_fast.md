@@ -741,3 +741,39 @@ These are not tests. The import probe of a changed module (`python -c`, one per 
 | B11 trusting output | neutral | The answers say "Kept, not checked: the existing tests are not run", which is true |
 
 **Why it is generic:** no repository's tests run, so no repository's test speed matters.
+
+### Each agent's context, compaction and feedback (10-21, at the user's request)
+
+**What an agent sees** (`include_contents: none`, ADK `contents._get_current_turn_contents`):
+- its instruction: the stage's prompt, with the issue in `<issue>` tags. It is a system instruction, so it is never compacted;
+- the event that started its turn: for the first agent, the harness's task message; for the others, the previous agent's last reply, "done";
+- its own calls and answers.
+
+**Compaction.** It is official and session-wide (HARNESS_README 7.2: `compaction_interval 5`, `token_threshold 14,336`, `event_retention_size 5`).
+- When a model response reports a prompt of 14,336 tokens or more, ADK summarizes the older events with an extra model call. It keeps the last 5 events and puts the summary in place of the rest.
+- An agent then keeps its instruction (with the issue), its last two calls and answers, and the summary.
+- Every script answer restates what the agent needs: the place, its sentence, the requirements and the exact NEXT call. So the task is still in front of the agent after a compaction. What compaction costs is time: one more model call on a long prompt.
+- With Gemma (vf5 and vf10, from `stages_*.json`), 4 of 593 agent runs crossed 14,336 tokens (requirements 1, specify 3). The medians per agent were 1,874-5,362 tokens.
+- One editor now goes through every place, so its prompt grows by one window per place. **Fix:** a worker whose answers in this task already add up to `CHAIN_CHARS` (32,000 characters, about 9,000 tokens) takes no further item. What is left goes to the next agent (check repairs it).
+- The eval tools used `compaction_interval 15`. **Fix:** 5, as the official harness. The interval counts invocations, and a task is one invocation (more only after a nudge), so it rarely applies.
+
+**What feedback an agent gets on every call:**
+- the progress line: the patch's files, the plan with each place's state, and the time used of 4 min 30 s;
+- the window;
+- the decision it must make;
+- the exact NEXT call.
+
+Refusals state the fact and the way on (F9), without "are you sure" (F4). **Fix:** chained windows ("Your part goes on with X") now carry the progress line too. Before, only the first window had it (P8, B10).
+
+**Prompting practices** (`docs/llm_checklist.md`):
+
+| Item | Status | Note |
+|---|---|---|
+| P1 quoted data | met | The issue is in `<issue>` tags |
+| P3 positive rules with reasons | mostly met | — |
+| P4 pressure words | met | No capitals, no MUST or NEVER in any prompt |
+| P6 the goal at both ends | met | The issue is in the instruction, and each window ends with the decision and NEXT |
+| P9 call forms copied | met | Native Gemma tool-call examples with placeholders |
+| B8 number of forms | gap | Instructions are 2,000-3,100 characters. `check` lists 8 call forms |
+| B8 rules in one paragraph | gap | The requirements step is one paragraph of about 1,500 characters with several rules |
+| W7 thinking | — | requirements, specify, edit and check think up to 1,024 tokens; locate 512; finish 64 |

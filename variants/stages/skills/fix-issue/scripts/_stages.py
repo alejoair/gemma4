@@ -61,6 +61,7 @@ REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
 REG_LIMIT_S = 60      # the review's run of the existing tests (h14: 117-180 s without a limit)
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
+CHAIN_CHARS = 32000    # an agent's answers before it takes no further item (about 9,000 tokens; compaction at 14,336)
 ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
 # The per-edit test check (stage 6), off for now at the user's request (2026-10-14): in requests it cost about 70 s per
 # edit, and the first edit of a task built the call map with a whole-suite run (up to 150 s). SWE_EDIT_TESTS=1 turns
@@ -3597,10 +3598,16 @@ def main_fast(stage, worker, argv):
                 st.setdefault('wlast', {})[worker] = cur[1]
                 limit = BATCH.get(stage, 3) * 2
                 st.setdefault('wdone', {})[worker] = st.setdefault('wdone', {}).get(worker, 0) + 1
-                target, stage = (claim(stage) if st['wdone'][worker] < limit and not _late(st, stage)
+                # the context: an agent's prompt is its instruction plus every answer of its turn; past 14,336 tokens
+                # the harness compacts the session with an extra model call (Gemma, vf5 and vf10: 4 of 593 agent runs).
+                # One editor now goes through every place, so a worker whose answers already fill CHAIN_CHARS takes no
+                # further item: what is left goes to the next agent (check repairs it)
+                full = st.get('wchars', {}).get(worker, 0) + len(body) > CHAIN_CHARS
+                target, stage = (claim(stage) if st['wdone'][worker] < limit and not _late(st, stage) and not full
                                  else (None, stage))
                 if target is not None:
-                    out = (body + f'\n\nYour part goes on with {target}, in the same way:\n\n'
+                    # P8, B10: a chained window recites the progress and the time, as the first one does
+                    out = (body + f'\n\n{_progress(root, st)}\n\nYour part goes on with {target}, in the same way:\n\n'
                            + _view(root, st, stage, worker, target))
                 else:
                     if stage == 'repair' and not st['submitted']:
@@ -3615,9 +3622,10 @@ def main_fast(stage, worker, argv):
         _state.record({'trace': traceback.format_exc()[-2000:]})
         _release(st, worker)
         out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
-    _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
+    st.setdefault('wchars', {})[worker] = st.get('wchars', {}).get(worker, 0) + len(out)
+    _state.save('stages', st)
     # h13: the harness's trace keeps one answer of the calls that parallel workers send at the same moment (122 of
     # 600 lost); the journal holds every call and the whole answer as printed, and the eval tools copy it per task
     _state.record({'stage': worker, 'args': [a[:20000] for a in args][:12], 'answer': out})

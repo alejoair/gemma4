@@ -112,7 +112,7 @@ def main() -> None:
         max_turns=int(ev['max_turns']) if ev.get('max_turns') is not None else None,
         limits=limits, generation_constraints=constraints,
         context_cache_config=ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10),
-        events_compaction_config=EventsCompactionConfig(compaction_interval=15, overlap_size=2,
+        events_compaction_config=EventsCompactionConfig(compaction_interval=5, overlap_size=2,
                                                         token_threshold=COMPACTION_THRESHOLD, event_retention_size=5),
         wheels_dir=args.data / 'wheels', verbose=True,
     )
