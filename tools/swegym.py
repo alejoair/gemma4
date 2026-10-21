@@ -63,9 +63,10 @@ EXTRAS = {
     'dask': '[complete,test]',
     'pydantic': '[email]',
 }
-# packages never installed into a repository's venv: the harness's venv already has them, and a second copy (an old
-# pin from a requirements file) would shadow the harness's own (pytest plugins included)
-KEEP_FROM_BASE = {'pytest', 'torch', 'torchvision', 'numpy'}
+# packages never installed into a repository's venv: the harness's venv already has them, and an old pin cannot build
+# on 3.13 (numpy 1.x) or is several GB (torch). pytest is the repository's own: its plugins of that time need it (dvc's
+# pytest-lazy-fixture fails at collection on pytest 9), and the harness does not import it
+KEEP_FROM_BASE = {'torch', 'torchvision', 'numpy'}
 
 
 def short_id(swe_id: str) -> str:
@@ -160,6 +161,47 @@ def _site_packages(python: str) -> str:
                           check=True, capture_output=True, text=True).stdout.strip()
 
 
+# pytest plugins of the harness's venv that the harness's own pytest command does not use, while it disables anyio's
+PLUGIN_GROUP = 'pytest11'
+
+
+def _harness_view(base_python: str, venv: Path) -> Path:
+    """The harness's site-packages as a directory of links, without the metadata that registers its pytest plugins
+    (inline-snapshot, pytest-httpbin): pytest autoloads every registered plugin it can find, and the repository's own
+    older pytest fails on plugins written for pytest 9 ('No module named _pytest._io.pprint'). The modules stay
+    importable; anyio's metadata stays (its plugin is disabled by the harness's '-p no:anyio')."""
+    base = Path(_site_packages(base_python))
+    view = venv / 'harness_site'
+    view.mkdir()
+    for entry in base.iterdir():
+        if entry.name.endswith('.dist-info') and not entry.name.startswith('anyio-'):
+            ep = entry / 'entry_points.txt'
+            if ep.exists() and f'[{PLUGIN_GROUP}]' in ep.read_text(encoding='utf-8', errors='replace'):
+                continue
+        (view / entry.name).symlink_to(entry)
+    return view
+
+
+def _install(py: str, targets: list[str], reqs: list[str], env: dict) -> subprocess.CompletedProcess:
+    """uv pip install of targets and the test requirements; a test requirement uv names as unsatisfiable (a package
+    gone from PyPI, as MONAI's types-pkg-resources, or one with no release for 3.13) is dropped and the rest retried."""
+    reqs = list(reqs)
+    while True:
+        r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, *targets, *reqs], capture_output=True, text=True,
+                           env=env)
+        err = ' '.join(r.stderr.split()).lower()
+        bad = [q for q in reqs if r.returncode and re.search(
+            r'(?:require|of|for|build) `?' + re.escape(_name(q)) + r'\b', err)]
+        if not bad:
+            return r
+        print(f'  dropped the requirement(s) uv cannot satisfy: {", ".join(bad)}')
+        reqs = [q for q in reqs if q not in bad]
+
+
+def _name(req: str) -> str:
+    return re.split(r'[<>=!~\[; ]', req, maxsplit=1)[0].lower()
+
+
 def _freeze(python: str) -> str:
     return subprocess.run(['uv', 'pip', 'freeze', '-p', python], check=True, capture_output=True, text=True).stdout
 
@@ -234,24 +276,22 @@ def cmd_env(a) -> None:
         # the package with its own dependencies (not editable: the tests import the task's workspace, eval_env.py,
         # but some code reads its installed version), then the test requirements
         # uv's cache hardlinks the files into each venv, so the versions of a repository share the disk
-        cmd = ['uv', 'pip', 'install', '-q', '-p', py, f'{src}{EXTRAS.get(a.repo, "")}', *reqs]
         # a Rust extension pinned by an older version (pydantic-core 2.18) predates PyO3's support of 3.13: build it
         # against the stable ABI, as PyO3 allows
         env = dict(os.environ, PYO3_USE_ABI3_FORWARD_COMPATIBILITY='1')
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        r = _install(py, [f'{src}{EXTRAS.get(a.repo, "")}'], reqs, env)
         if r.returncode:
             # the checkout has no tags, so a version read from git is '0+untagged' and a pin on it fails (dask[complete]
             # needs distributed of dask's own version): the release of this version from PyPI brings the same
             # dependencies; the tests import the workspace's code anyway (eval_env.py)
             release = f'{a.repo.lower()}{EXTRAS.get(a.repo, "")}=={version}.*'
             print(f'{a.repo} {version}: the checkout did not install, trying the release {release}')
-            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, release, *reqs], capture_output=True, text=True,
-                               env=env)
+            r = _install(py, [release], reqs, env)
         if r.returncode and reqs:
             # no release installs on 3.13 either (mypy's own build): the test requirements alone, which list the
             # runtime dependencies too in these repositories
             print(f'{a.repo} {version}: installing its test requirements only')
-            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, *reqs], capture_output=True, text=True, env=env)
+            r = _install(py, [], reqs, env)
         if r.returncode:
             print(r.stderr[-3000:])
             sys.exit(f'{a.repo} {version}: install failed')
@@ -261,7 +301,7 @@ def cmd_env(a) -> None:
         subprocess.run(['uv', 'pip', 'uninstall', '-q', '-p', py, *dup], check=True)
     # the harness's venv after this venv's own packages; written last: with it in place, uv sees the harness's
     # packages as this venv's and upgrades or uninstalls them there (it removed the harness's pytest once)
-    Path(_site_packages(py), 'zz_harness.pth').write_text(_site_packages(base_python) + '\n', encoding='utf-8')
+    Path(_site_packages(py), 'zz_harness.pth').write_text(str(_harness_view(base_python, venv)) + '\n', encoding='utf-8')
     if _freeze(base_python) != before:
         sys.exit(f"the harness's venv changed while {a.repo}'s was set up: check it with uv pip check -p {base_python}")
     print(f'{a.repo} {version}: {venv} (from {t["instance_id"]}, {t["base_commit"][:10]}); {len(tasks)} tasks: '
