@@ -3553,7 +3553,18 @@ def main_fast(stage, worker, argv):
             st['reqs'] = []
             st.get('wfinished', {}).pop(worker, None)
             st['asked'].pop('requirements', None)
-        if _over_budget(st):
+        key = json.dumps([(cur or [None, None])[1], args])[:2000]     # the same call on the same item
+        rep = st.setdefault('wrepeat', {}).get(worker) or ['', 0]
+        rep = [key, rep[1] + 1] if rep[0] == key and first not in ('', 'open', 'start', 'next') else [key, 1]
+        st['wrepeat'][worker] = rep
+        if rep[1] >= 3 and not _over_budget(st):
+            # SWE-Gym (Pan et al., ICML 2025): 'stuck in a loop', the same action three turns in a row, was the commonest
+            # failure of open models (29% of the zero-shot 32B's runs). The third identical call of a worker ends its
+            # part: what it holds goes to the next agent (_settle), and the time goes on to the next stage (F7, B5)
+            _release(st, worker, 'stopped after the same call three times')
+            out = ('This is the third time the same call was sent for the same item, so it is not run again: your '
+                   'part ends here, and the next agent goes on with what is left.\n\n' + FAST_DONE)
+        elif _over_budget(st):
             # B10 (docs/design_stages.md, "How the 90 runs ended"): the harness cut 44 of 90 runs while an agent worked
             _release(st, worker)
             if stage in ('repair', 'review') and not st['submitted']:

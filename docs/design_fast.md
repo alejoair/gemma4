@@ -777,3 +777,18 @@ Refusals state the fact and the way on (F9), without "are you sure" (F4). **Fix:
 | B8 number of forms | gap | Instructions are 2,000-3,100 characters. `check` lists 8 call forms |
 | B8 rules in one paragraph | gap | The requirements step is one paragraph of about 1,500 characters with several rules |
 | W7 thinking | — | requirements, specify, edit and check think up to 1,024 tokens; locate 512; finish 64 |
+
+### The same call three times ends the worker's part (10-21, from SWE-Gym)
+
+SWE-Gym (Pan et al., ICML 2025; `docs/literature.md`) counts an agent as "stuck in a loop" when it repeats the same action three turns in a row, and its trajectories that loop rarely end resolved. Our scripts refuse a wrong call and say the way on, but a worker that sends the same refused call again gets the same refusal each time until its time is gone.
+
+**Fix (`_stages.main_fast`):** the script keeps, per worker, the last call (its args and the item it holds) and how many times in a row it came. The third identical call on the same item is not run: the worker's item is released ("stopped after the same call three times"), and the answer says its part ends there and the next agent goes on with what is left (`FAST_DONE`). Calls that open or move on (`''`, `open`, `start`, `next`) are not counted.
+
+| Item | Effect | Why |
+|---|---|---|
+| F7 repetition | closer | A repeated call no longer costs turns; the item goes on with the next agent (check repairs it) |
+| B5 loops | closer | The loop is cut by the script, not by asking the model to stop |
+| F9 feedback states the fact and the way on | neutral | The answer says what happened and what follows |
+| P6 the goal at both ends | neutral | The answer ends with the finish line as every other final answer |
+
+Generic: it counts the worker's own identical calls on the same item; nothing depends on the repository, the issue or a name. Checked by replaying the 30 h17 traces with `build_f29` (no problems; no h17 worker repeated a call three times, so the rule did not fire there).
