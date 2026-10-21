@@ -658,3 +658,35 @@ Each call was checked against the script's own journal (`events.jsonl`), not the
 | P10 uniform observations | neutral | — |
 
 **Why it is generic:** the rules read Python syntax (a sibling def, the `**kwargs` parameter, a line part), the names the sentence itself writes, and the file the model names. None of them names a repository or a task.
+
+### h14: the refusal fixes, one worker for locate and edit, the journal (10-21)
+
+Run: vf14 (`build_f23`) on vf5's 30 tasks, with Haiku. Result: 13/30 judged resolved (h13: 15/30). This analysis reads the journals (`journal_<task>.jsonl`), not the traces.
+
+- **Gained:** fastapi_14419 and rich_3043.
+- **Lost:**
+  - fastapi_14372, rich_3718 and fastapi_14459. The places and the plan were right, but the change the model wrote differed from h13's. For example, in fastapi_14372 `params.Depends` was planned (the "missing" file fix worked) and given `@dataclass(unsafe_hash=True)`, which the hidden tests reject.
+  - requests_7505. Two script faults cost it:
+    1. Review's run of the existing tests took 180 s, and 117 s in requests_7205. Repair then started with 36 s left. **Fix:** the run is limited to `REG_LIMIT_S = 60`.
+    2. Repair sent the implementation of `_encode_params` alone. The edit replaced the first `@overload` stub's symbol, and the place's four stubs were deleted. **Fix:** `_target` takes the last definition of a name (the implementation). Without `@overload` in the new code, only the implementation and its own decorators are replaced. Checked with repair's real call on the snapshot: the stubs stay.
+  - Rerun of the two requests tasks with both fixes (h14r, `build_f24`): both resolved, in 104 and 108 s.
+
+**Calls, from the journals** (h13 counts were from traces, which miss 20% of the answers):
+
+| Kind | h13 | h14 |
+|---|---|---|
+| Idle workers | 98 | 60 (specify 35, repair 22, review 3; locate and edit 0) |
+| Refused calls | 25 | 14 |
+
+The 14 refused calls in h14:
+
+| Cause | Calls |
+|---|---|
+| The forcing's "no change" refusals, by design | 6 |
+| "missing" naming test files to update (repair, after the test run's "not done"), which are not edited | 2 |
+| "missing" used to say "I cannot" | 1 |
+| The same code sent back by repair to keep an edit whose failing test checks what the issue changes | 2 |
+| Old lines not found | 1 |
+| Not a definition (a placeholder line, a setup.py shim) | 2 |
+
+**Open:** in repair, a definition sent back unchanged could be read as "keeps its code". No rule for it yet.
