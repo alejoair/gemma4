@@ -2315,11 +2315,14 @@ def edit(root, st, args):
                         "['replace', '<the old lines, as shown>', '<the new lines>'].")
         return '\n\n'.join(view) + '\n\n' + nxt
     if first in ('no change', 'skip', 'nothing'):
-        if FAST and _must_edit(root, p) and p.get('nc_edit_refused', 0) < 2:
+        # h13 (fastapi_15661): the count was per place, so repair's first 'no change' after the editor's was not
+        # refused at all; each stage's agent is refused once
+        nck = f'nc_edit_refused_{st.get("stage_now") or "edit"}'
+        if FAST and _must_edit(root, p) and p.get(nck, 0) < 2:
             # audit 10-20 (fastapi_13207, rich_3772): the editor's 'no change' undid the script's own retry of an
             # empty patch; a place with a change to make, while the patch is empty, is edited (refused once, then failed)
-            p['nc_edit_refused'] = p.get('nc_edit_refused', 0) + 1
-            if p['nc_edit_refused'] < 2:
+            p[nck] = p.get(nck, 0) + 1
+            if p[nck] < 2:
                 return (f'Not accepted: the patch is empty, and this is the change to make in {p["handle"]}: '
                         f'{_brief(p["sentence"])} Send the edit that does it.\n\n' + nxt)
             p['status'], p['unsent'] = 'failed', True
@@ -2335,6 +2338,12 @@ def edit(root, st, args):
                 f"that name was found. To change lines of {p['handle']} itself, send ['replace', '<the old lines, as "
                 f"shown>', '<the new lines>'] or the whole new definition.\n\n{nxt}")
     if first == 'missing' and len(items) >= 2:
+        if any(_place_by(st, n) is p for n in _missing_names(items[1])):
+            # h13 (Haiku, fastapi_15661): 'missing' named this place itself by its file and was answered "goes into
+            # the plan before main", which was false; nothing was added (B11, B12)
+            p['refused'] = p.get('refused', 0) + 1
+            return (f'{_args.clean(items[1])} is this place, {p["handle"]}: its change is made here, '
+                    f'from: {_brief(p["sentence"] or "")}\n\n{nxt}')
         done = [q for n in _missing_names(items[1]) for q in [_place_by(st, n)] if q is not None
                 and q is not p and q.get('status') == 'done']
         if done:
