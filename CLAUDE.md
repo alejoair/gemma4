@@ -153,6 +153,9 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
   environment's allowed domains. To restart vLLM there, kill its engine too (`pkill -9 -f 'VLLM::EngineCore'`, then
   wait for the VRAM to drop): `proc.kill()` leaves the engine holding 91 GB and the new server fails (10-15). Stopping a
   cell can kill the tunnel or vLLM started from that kernel; the repository's notebook starts both in new sessions.
+- `tools/swegym.py` (10-21, the user's): SWE-Gym's tasks (Hugging Face, Lite 230 / full 2,438, 11 repositories) as a
+  second task set in the competition's data layout (tasks.jsonl, snapshots/), with one venv per repository and version
+  for the subprocess sandbox; run local_eval/judge with that venv's Python. Which tasks score here: `docs/swegym.md`.
 - `tools/build.py` (build + validate), `tools/bench_locate.py` (129-task localization benchmark; snapshots via
   `tools/fetch_snapshots.sh`).
 - `VERSIONS.md`: every eval run and submission.
