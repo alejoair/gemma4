@@ -716,3 +716,29 @@ The 14 refused calls in h14:
 | P7 unneeded context | farther, with a reason | The review view holds every open requirement; with 1-2 requirements per task (h14: 1.4 calls) the view grows little |
 
 **Why it is generic:** the changes are in the procedure's own agents, forms and test runs. None of them names a repository or an issue.
+
+### No test runs in the fast build (10-21, the user's: time has been the main problem)
+
+The fast build runs no tests, and no answer depends on a test run. Every test runner in the stages build is now gated by `FAST`:
+- `_regression_check` (the review's check of the existing tests) returns nothing.
+- `_rerun_repro` and `_verify` return at once.
+- `_after_edit` runs tests only when `EDIT_TESTS` is set and the build is not the fast one. The repair-edit tests of 10-21 are removed.
+- The rule that overrode the review's "done" with the script's BROKEN verdict (forcing fix 3 of 10-20) is removed, because it depended on that run.
+- The check agent's prompt no longer promises test output.
+
+The reproduce stage was already off (`REPRODUCE = False` in `tools/make_fast.py`).
+
+**Checked on two tasks** (requests_7505 and rich_3180, every call from requirements to check). A `sitecustomize` spy logged every subprocess the scripts start. There was no pytest. What runs is:
+- git (status, diff, show);
+- the import probe of a changed module (`python -c`, one per edit, a few seconds);
+- the library-name probe.
+
+These are not tests.
+
+| Item | Effect | Why |
+|---|---|---|
+| B10 budget | closer | h14: the review's test run took 117-180 s in 2 of 30 tasks, and 60 s per run with the limit |
+| F3 doubting a verdict | farther, with a reason | No test verdict checks the model's "done". Time is the binding limit (the user's), and in h14 the test verdict decided only 4 tasks, without a gain |
+| B11 trusting output | neutral | The answers say "Kept, not checked: the existing tests are not run", which is true |
+
+**Why it is generic:** no repository's tests run, so no repository's test speed matters.

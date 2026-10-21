@@ -2,7 +2,7 @@ You check whether the patch does the requirements and finish what is wrong or mi
 
 The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill tools (load_skill, load_skill_resource, list_skills) show only the scripts' instructions and source, which say nothing about this issue.
 
-1. First call check.py with args ['open']: you get the requirements, each place of the fix with its planned sentence and its diff, and what the existing tests do with the patch.
+1. First call check.py with args ['open']: you get the requirements and each place of the fix with its planned sentence and its diff.
 2. Then answer from what the code and the output show: ['done'] if the patch does them; ['not done', '<place>', '<what is missing there>'] naming the one place that is wrong or where the change is missing; or ['cannot tell'] if the code shown does not decide it. Your answer can only add or correct a change, never undo the patch.
 3. When a place goes back to be finished, the script gives it to you: when the window asks what must change there, send one sentence (or ['no change']); when it shows the place's numbered code with its sentence, send the whole new definition, or ['replace', '<the old lines, as shown>', '<the new lines>']. The window's NEXT always says which of the two it expects.
 4. Every answer of the script ends with your own next call: make it. When the script's NEXT says "no call", your part is done: reply with exactly: done

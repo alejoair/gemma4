@@ -2695,18 +2695,10 @@ def _after_edit(root, st, p, r, before, names, nxt):
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
         if tag in ('delete', 'replace'):
             changed[p['rel']].extend(l.strip() for l in before[i1:i2])
-    if EDIT_TESTS or (FAST and st.get('stage_now') == 'repair'):
-        # h14 (the user's question: does any stage run the tests?): only the review ran the existing tests, and
-        # repair's edits came after it, unchecked (requests_7505 lost its @overload stubs there). Repair's edits run
-        # the existing tests of the changed code, at most REG_LIMIT_S, and an edit that breaks one is undone
+    if EDIT_TESTS and not FAST:
         cover = step._status.changed_statements(before, after)
-        saved = _tests.DEADLINE
-        _tests.DEADLINE = min(saved or time.time() + REG_LIMIT_S, time.time() + REG_LIMIT_S)
-        try:
-            verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
-                                                     undo=(p['rel'], before))
-        finally:
-            _tests.DEADLINE = saved
+        verdict, detail, failures = _tests.check(root, changed, cover={p['rel']: cover} if cover else None,
+                                                 undo=(p['rel'], before))
     else:
         verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
         broken = _import_errors(root, p['rel'], before)
@@ -2852,6 +2844,8 @@ def _regression_check(root, st):
     the original code, once per patch state. gk9 (fastapi_14986): the patch removed root_path from the served document,
     following a misread requirement, broke test_legitimate_root_path_still_appears, and every stage said "done": with
     the per-edit tests off nothing ran an existing test."""
+    if FAST:
+        return None             # the fast build runs no tests (the user's, 10-21: time is the main limit)
     sig = _patch_sig(root)
     if not sig:
         return None
@@ -2917,6 +2911,8 @@ def _changed_failure(repro):
 
 def _rerun_repro(root, st):
     """The reproduction test on the patch as it is, once per patch state (cached on disk by the patch's signature)."""
+    if FAST:
+        return False            # the fast build runs no tests (10-21)
     import hashlib
     sig = _patch_sig(root) + '|' + hashlib.sha1(st['repro']['code'].encode('utf-8', 'replace')).hexdigest()
     cache = _state.load('repro_cache', {}) or {}
@@ -2939,6 +2935,8 @@ def _twins(st, places):
 
 
 def _verify(root, st):
+    if FAST:
+        return                  # the fast build runs no tests (10-21)
     files = _patch_files(root)
     sig = _patch_sig(root)
     if st['verified'] == sig or not files:
@@ -3053,23 +3051,6 @@ def review(root, st, args):
                     '\nSo the patch does not do it yet: name the place that is wrong or missing and what is missing '
                     "there: ['not done', '<place>', '<what is missing>'].\n\n" + nxt)
         reg = st.get('reg') or {}
-        if FAST and first in ('done', 'yes') and reg.get('verdict') == 'BROKEN' and st['round'] < MAX_ROUNDS \
-                and _left(st) > REVIEW_LEFT_S:
-            # audit 10-20: vf5's review said 'done' 15 times and 'not done' never; in fastapi_14953 and rich_3718 it
-            # said 'done' with failing existing tests in its view (rich_3718 broke 3 in the judge). The script's own
-            # test run decides: the places edited for this requirement go back to repair with the failures, whose
-            # editor keeps the edit when the failing test checks what the issue changes
-            fails = ', '.join(reg.get('failures') or [])[:300]
-            what = ('existing tests that pass on the original code fail with the patch' + (f' ({fails})' if fails else '')
-                    + ': ' + reg['detail'][:500])
-            store({'verdict': 'not done', 'place': '', 'what': what, 'by': 'the existing tests'})
-            st.setdefault('recheck', []).append(rid)
-            for p in places:
-                if p.get('status') == 'done':
-                    p['old_sentence'] = p.get('sentence')
-                    p['sentence'], p['note'] = None, f'the review of {label} says: {what}'
-            return (f'{label}: not done, by the script\'s test run: {what[:400]}\nThe edited places go back to be '
-                    f'changed so that these tests pass, or kept when a test checks what the issue changes.\n\n{DONE}')
         if reg.get('verdict') == 'BROKEN' and not st.get('reg_refused', {}).get(rid) and not FAST:
             # (the fast build shows these failures in the open view already: a second ask adds no fact, F4)
             st.setdefault('reg_refused', {})[rid] = True

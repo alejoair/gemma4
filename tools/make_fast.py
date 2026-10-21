@@ -147,8 +147,8 @@ STAGES = {
         intro='You check whether the patch does the requirements and finish what is wrong or missing. That is your '
               'only task; the next agent submits the patch.',
         steps=[
-            "First call {script} with args ['open']: you get the requirements, each place of the fix with its "
-            "planned sentence and its diff, and what the existing tests do with the patch.",
+            "First call {script} with args ['open']: you get the requirements and each place of the fix with its "
+            "planned sentence and its diff.",
             "Then answer from what the code and the output show: ['done'] if the patch does them; ['not done', "
             "'<place>', '<what is missing there>'] naming the one place that is wrong or where the change is "
             "missing; or ['cannot tell'] if the code shown does not decide it. Your answer can only add or correct "
