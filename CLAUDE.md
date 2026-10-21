@@ -155,7 +155,8 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
   cell can kill the tunnel or vLLM started from that kernel; the repository's notebook starts both in new sessions.
 - `tools/swegym.py` (10-21, the user's): SWE-Gym's tasks (Hugging Face, Lite 230 / full 2,438, 11 repositories) as a
   second task set in the competition's data layout (tasks.jsonl, snapshots/), with one venv per repository and version
-  for the subprocess sandbox; run local_eval/judge with that venv's Python. Which tasks score here: `docs/swegym.md`.
+  for the subprocess sandbox; run local_eval/judge with that venv's Python. 39 Lite tasks score here (moto 35,
+  conan 4); the list and why the other repositories do not: `docs/swegym.md`.
 - `tools/build.py` (build + validate), `tools/bench_locate.py` (129-task localization benchmark; snapshots via
   `tools/fetch_snapshots.sh`).
 - `VERSIONS.md`: every eval run and submission.
