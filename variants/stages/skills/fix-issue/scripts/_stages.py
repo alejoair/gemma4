@@ -1025,7 +1025,68 @@ def _candidates(root, st, r, n=8):
             c = step._candidate(index, d, m, note='the reproduction test runs it', root=root)
             cands.append(c)
         step._set_handles(cands)
-    return _with_callers(root, cands)
+    return _with_callees(root, _with_callers(root, cands), text, r['names'])
+
+
+def _forwards_to(table, sym, short):
+    """The methods of the repository a function hands its call on to under its own name: rich.print ends with
+    'return write_console.print(...)', and Console.print is where the behaviour is. A call of a method of the same
+    name on another object, when at most 3 classes of the repository define that method."""
+    out = []
+    for node in ast.walk(sym.node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == short \
+                and not (isinstance(node.func.value, ast.Name) and node.func.value.id in ('self', 'cls', 'super')):
+            defs = [(r, d) for r, d in table.find(short) if '.' in d.name and d.name.endswith('.' + short)
+                    and d.kind == 'def' and not _repo.is_test_path(r) and not _repo.is_doc_path(r)]
+            if 0 < len(defs) <= 3:
+                out += [{'rel': r, 'name': d.name, 'start': d.start, 'end': d.end,
+                         'reason': f'it hands its call on to {short} (line {node.lineno})'} for r, d in defs]
+            break
+    return out
+
+
+def _with_callees(root, cands, text, names, top=3, limit=3):
+    """The candidates and, after them, the code the first ones call that shares words with the requirement, and the
+    method a wrapper hands its call on to. h12 (Haiku): in 9 of 18 unresolved tasks the reference's place was not on
+    the list; rich_4075 got rich.print (which calls Console.print, the reference's place), rich_3180 got Text.wrap and
+    divide_line (which call words and set_cell_size). One step down from the candidates is where such code is, the
+    mirror of _with_callers."""
+    table = _impact.Table(root, docs=False)
+    index = _rank.Index(root)
+    q = index.query({**_statement.terms(text), **{x: 3 for x in names}})
+    docs = {(d.rel, d.name): d for d in index.docs if d.sym is not None}
+    seen = {_key(c) for c in cands}
+    found = []
+    for c in [c for c in cands if c.get('name') not in (None, MODULE) and ', class)' not in (c.get('line') or '')
+              and not _repo.is_doc_path(c['rel'])][:top]:
+        sym = table.get(c['rel'], c['name'])
+        if sym is None:
+            continue
+        short = c['name'].split('.')[-1]
+        wrapped = _forwards_to(table, sym, short) if not short.startswith('__') else []
+        for d in wrapped + _callees(root, table, [c], per_place=8):
+            k = f"{d['rel']}::{d['name']}"
+            if k in seen or _repo.is_test_path(d['rel']) or _repo.is_doc_path(d['rel']):
+                continue
+            doc = docs.get((d['rel'], d['name']))
+            s = index.score(doc, q)[0] if doc is not None else 0
+            if d in wrapped or s > 0:
+                seen.add(k)
+                found.append((d in wrapped, s, c['name'], d))
+    found.sort(key=lambda x: (not x[0], -x[1]))
+    added = []
+    for is_wrap, _, by, d in found[:limit]:
+        res = step._resolve(root, [f"{d['rel']}::{d['name']}"])
+        if res:
+            e = res[0]
+            sym = table.get(d['rel'], d['name'])
+            e['line'] = (f"({d['rel']}, def) {_sig(sym)[:100] if sym is not None else ''}  "
+                         f"[{'the call of' if is_wrap else 'called by'} {by}]")
+            added.append(e)
+    if added:
+        cands = cands + added
+        step._set_handles(cands)
+    return cands
 
 
 def _with_callers(root, cands, top=3, limit=4):
@@ -1564,7 +1625,14 @@ def _missing_names(text):
              and ('::' in n or not re.search(r'(/|\.py$)', n)) and not _repo.is_test_path(n.split('::')[0])
              and not n.split('::')[0].split('/')[-1].startswith('test')]
     dotted = [n for n in names if '.' in n or '::' in n]
-    return (dotted or names)[:3]
+    names = (dotted or names)[:3]
+    # h12 (Haiku, fastapi_14372): 'class Depends in fastapi/params.py' and 'Depends (fastapi/params.py:765) class
+    # Depends' kept only 'Depends', which matched the planned function Depends of another file; the class the
+    # reference changes never joined the plan. A file named with the code decides which definition it is (W6, B12)
+    paths = [p for p in re.findall(r'[\w./-]+\.py\b', text or '') if '::' not in p and not _repo.is_test_path(p)]
+    if paths and names:
+        names = [n if '::' in n else f'{paths[0]}::{n}' for n in names]
+    return names
 
 
 def _names_code(root, text):

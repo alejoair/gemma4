@@ -109,6 +109,35 @@ def _removed_defs(old, new):
     return [n for n in names if not re.search(rf'\b(def|class)\s+{re.escape(n)}\b', text)]
 
 
+VAR_KW = re.compile(r'^\s*\*\*\w+\s*(:[^=]*)?,?\s*$')
+SIG_END = re.compile(r'^\s*\)\s*(->.*)?:\s*(#.*)?$')
+
+
+def _params_before_var_kw(lines, start, end):
+    """lines with the parameters written after a '**kwargs' line moved before it, or None. h12 (Haiku, fastapi_13713):
+    a new parameter added at the end of FastAPI.__init__'s 750-line signature landed after '**extra: Any' and the edit
+    was refused six times ("arguments cannot follow var-keyword argument"); Python allows no parameter there, so the
+    only reading of the edit is the parameter before '**kwargs'. Only the replaced range is moved."""
+    for k in range(start - 1, min(end, len(lines))):
+        if not VAR_KW.match(lines[k]):
+            continue
+        j = next((i for i in range(k + 1, len(lines)) if SIG_END.match(lines[i])), None)
+        if j is None or j == k + 1 or j > end + 1:
+            return None
+        moved = lines[k + 1:j]
+        last = len(moved) - 1
+        while last >= 0 and not moved[last].strip():
+            last -= 1
+        if last < 0:
+            return None
+        nl = _repo.newline_of(lines)
+        if not moved[last].rstrip().endswith(','):
+            moved[last] = moved[last].rstrip('\r\n').rstrip() + ',' + nl
+        kw = lines[k] if lines[k].rstrip().endswith(',') else lines[k].rstrip('\r\n').rstrip() + ',' + nl
+        return lines[:k] + moved + [kw] + lines[j:]
+    return None
+
+
 def apply(root, rel, start, end, text):
     """Replaces lines start..end (1-based, inclusive) of rel with text, trying the repairs in order until the file
     compiles. Returns a Result; the file is written only when applied."""
@@ -167,6 +196,10 @@ def apply(root, rel, start, end, text):
             continue
         result = lines[:start - 1] + cand + lines[stop:]
         err = _compiles(result)
+        if err and err.startswith('arguments cannot follow var-keyword argument'):
+            moved = _params_before_var_kw(result, start, start + len(cand) - 1)
+            if moved is not None and _compiles(moved) is None:
+                result, err, extra = moved, None, extra + ['moved the parameters written after **kwargs before it']
         if err is None:
             _repo.write_lines(root, rel, result)
             new_end = start + len(cand) - 1

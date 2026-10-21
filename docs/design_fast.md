@@ -519,3 +519,36 @@ Review on these 18 tasks:
 - It said "done" in 4 more, and the script's test run overrode it.
 - It did not run in 3, because the patch was still empty when review started.
 - It said "not done" in 1 (fastapi_13713).
+
+### Fixes from h12's stage table (10-21)
+
+These address the faults that the script can remove deterministically. Each is generic: it reads only code structure, the file the model names, or Python's grammar, never a repository or a task.
+
+1. **"missing" keeps the file it names** (`_missing_names`). A `.py` path written with a name, as in "class Depends in fastapi/params.py" or "Depends (fastapi/params.py:765)", now makes `path::Name`. That name matches a planned place only in that file and resolves there. Before, only `Depends` was kept, and it matched the planned function `Depends` of another file (fastapi_14372).
+
+   | Item | Effect | Why |
+   |---|---|---|
+   | W6 names and words | closer | All the model wrote is read, not only the last word |
+   | B12 contradictions | closer | The model named params.py; the script changed another file |
+   | B5 repeated calls | closer | The model asked twice because it never got what it named |
+
+2. **Parameters written after `**kwargs` are moved before it** (`_edit._params_before_var_kw`). This repair applies only when the file does not compile with "arguments cannot follow var-keyword argument" and the misplaced lines are inside the replaced range. In fastapi_13713, a parameter added at the end of `FastAPI.__init__` was refused 6 times.
+
+   | Item | Effect | Why |
+   |---|---|---|
+   | W2 writing code | closer | The model writes the parameter; the script places it where Python allows it |
+   | F1/F7 locating the error, leaving loops | closer | No repeated refusal with the same cause |
+   | B8 number of forms | neutral | No new form |
+
+3. **Locate: one step down** (`_with_callees`, `_forwards_to`). After the candidates and their callers, the list gets up to 3 more entries:
+   - the method a wrapper hands its call on to under its own name (`rich.print` → `Console.print`), when at most 3 classes define that method;
+   - the functions the first 3 candidates call that share words with the requirement.
+
+   Each entry says why it is there (`[the call of X]`, `[called by X]`). It mirrors `_with_callers`, one step up, and is measured with `tools`-style benchmarks on the 129 dev tasks before it is kept (below).
+
+   | Item | Effect | Why |
+   |---|---|---|
+   | W1 choosing from a short list | closer | The right option reaches the list |
+   | P7 unneeded context | farther, with a reason | Up to 3 more lines, each with the link that put it there; in h12 the reference's place was missing from the list in 9 of 18 unresolved tasks |
+   | B9 exploring | closer | Fewer searches by hand (rich_4075 searched 4 times) |
+   | B13 order | neutral | The new entries come after the ranked ones, marked |
