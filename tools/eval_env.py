@@ -51,9 +51,25 @@ def _host_package_dirs() -> list[str]:
     return [p for p in sys.path if p and ('site-packages' in p or 'dist-packages' in p) and Path(p).is_dir()]
 
 
+def task_python() -> str:
+    """SWE_TASK_PYTHON: the Python of a venv that holds one task's dependencies (tools/swegym.py env --python), for
+    tasks whose code or pinned dependencies do not run on the harness's Python. The sandbox's venv is then made from
+    it, so the skill's scripts and the tests run on the task's Python while the harness stays on its own."""
+    return os.environ.get('SWE_TASK_PYTHON', '')
+
+
+def _task_site_packages() -> list[str]:
+    import json
+    import subprocess
+    out = subprocess.run([task_python(), '-c', 'import json, site; print(json.dumps(site.getsitepackages()))'],
+                         check=True, capture_output=True, text=True).stdout
+    return [p for p in json.loads(out) if Path(p).is_dir()]
+
+
 def _write_pth(work: Path) -> None:
     """workspace_paths.pth in the venv of the subprocess sandbox that owns this workspace (<root>/venv)."""
-    text = '\n'.join(dict.fromkeys(_host_package_dirs() + fast_path_dirs(work))) + '\n'
+    host = _task_site_packages() if task_python() else _host_package_dirs()
+    text = '\n'.join(dict.fromkeys(host + fast_path_dirs(work))) + '\n'
     for sp_dir in (work.parent / 'venv').glob('lib/python*/site-packages'):
         pth = sp_dir / 'workspace_paths.pth'
         try:
@@ -87,7 +103,30 @@ def patch() -> None:
         return original(*args, **kwargs)
 
     sp.build_sanitized_env = build_sanitized_env
+    if task_python():
+        _patch_venv(sp)
     sp._src_layout_patched = True
+
+
+def _patch_venv(sp) -> None:
+    """The sandbox's venv made from SWE_TASK_PYTHON instead of the harness's Python: its _host_env.pth lists the task
+    venv's site-packages (not the harness's: packages built for another Python do not import there). The sandbox runs
+    every command with this venv's python3 first on PATH (skill scripts through the ADK's wrapper, the tests)."""
+    import shutil
+    import subprocess
+
+    original = sp.SubprocessManager.start
+
+    def start(self):
+        sandbox_id = original(self)
+        venv_dir = Path(self._sandboxes[sandbox_id]['venv'])
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        subprocess.run([task_python(), '-m', 'venv', '--without-pip', str(venv_dir)], check=True)
+        for sp_dir in venv_dir.glob('lib/python*/site-packages'):
+            (sp_dir / '_host_env.pth').write_text('\n'.join(_task_site_packages()) + '\n', encoding='utf-8')
+        return sandbox_id
+
+    sp.SubprocessManager.start = start
 
 
 def active() -> bool:

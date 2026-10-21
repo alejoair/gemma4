@@ -251,7 +251,7 @@ def _freeze(python: str) -> str:
     return subprocess.run(['uv', 'pip', 'freeze', '-p', python], check=True, capture_output=True, text=True).stdout
 
 
-def _requirements(path: Path, seen: set | None = None) -> list[str]:
+def _requirements(path: Path, seen: set | None = None, skip: set = KEEP_FROM_BASE) -> list[str]:
     """The requirement lines of a requirements file and the files it includes (-r), without the ones the harness's
     venv provides, other options, or the package itself ('-e .')."""
     seen = set() if seen is None else seen
@@ -263,13 +263,38 @@ def _requirements(path: Path, seen: set | None = None) -> list[str]:
         line = line.split('#', 1)[0].strip()
         m = re.match(r'-r\s*(\S+)$', line)
         if m:
-            out += _requirements(path.parent / m.group(1), seen)
+            out += _requirements(path.parent / m.group(1), seen, skip)
             continue
         if not line or line.startswith(('-', '.')):
             continue
         name = re.split(r'[<>=!~\[; ]', line, maxsplit=1)[0].lower()
-        if name and name not in KEEP_FROM_BASE:
+        if name and name not in skip:
             out.append(line)
+    return out
+
+
+def _pyproject_test_requirements(src: Path, skip: set) -> list[str]:
+    """The test dependencies a pyproject.toml declares: every group whose name says test, among the extras
+    ([project.optional-dependencies]), pdm's dev groups, PEP 735 dependency-groups and poetry's groups (pydantic keeps
+    pytest and dirty-equals in [tool.pdm.dev-dependencies] testing). Requirements from git URLs are left out (no
+    network on the run, and they move)."""
+    try:
+        import tomllib
+        d = tomllib.loads((src / 'pyproject.toml').read_text(encoding='utf-8'))
+    except Exception:  # noqa: BLE001  (no file, or not TOML)
+        return []
+    tool = d.get('tool', {})
+    groups = {**d.get('project', {}).get('optional-dependencies', {}), **tool.get('pdm', {}).get('dev-dependencies', {}),
+              **{k: v for k, v in d.get('dependency-groups', {}).items()}}
+    for k, g in tool.get('poetry', {}).get('group', {}).items():
+        groups[k] = [n if v == '*' else f'{n}{v}' if isinstance(v, str) and v[:1] in '<>=!~' else n
+                     for n, v in g.get('dependencies', {}).items()]
+    out = []
+    for name, reqs in groups.items():
+        if 'test' in name.lower() and isinstance(reqs, list):
+            for q in reqs:
+                if isinstance(q, str) and '@' not in q and 'git+' not in q and _name(q) not in skip and _name(q) != 'python':
+                    out.append(q)
     return out
 
 
@@ -322,10 +347,13 @@ def cmd_env(a) -> None:
     # between versions (moto 4.0's tests import 'sure', 5.0's do not). The version's newest task gives the commit: its
     # dependencies are the closest to what Python 3.13 can install
     t = max(tasks, key=lambda t: t.get('created_at', ''))
-    venv = a.envs / f'{a.repo}-{version}'
+    # --python: the task's own Python for the sandbox (eval_env.py, SWE_TASK_PYTHON), the harness staying on 3.13. The
+    # venv is then the sandbox's whole package set: its own numpy and pytest, no view of the harness, no masks
+    own = bool(a.python)
+    venv = a.envs / (f'{a.repo}-{version}-py{a.python}' if own else f'{a.repo}-{version}')
     if venv.exists():
         shutil.rmtree(venv)
-    subprocess.run(['uv', 'venv', '-q', '-p', 'python3.13', str(venv)], check=True)
+    subprocess.run(['uv', 'venv', '-q', '-p', a.python or 'python3.13', str(venv)], check=True)
     py = str(venv / 'bin' / 'python')
     before = _freeze(base_python)
     # the test requirements of the version's oldest task too: a test helper can drop a dependency within a version
@@ -340,8 +368,12 @@ def cmd_env(a) -> None:
                 checkout(oldest['repo'], oldest['base_commit'], commit_src)
             for name in TEST_REQUIREMENTS[a.repo]:
                 if (commit_src / name).exists():
-                    for line in _requirements(commit_src / name):
+                    for line in _requirements(commit_src / name, skip=set() if own else KEEP_FROM_BASE):
                         reqs.setdefault(re.split(r'[<>=!~\[; ]', line, maxsplit=1)[0].lower(), line)
+            for line in _pyproject_test_requirements(commit_src, set() if own else KEEP_FROM_BASE):
+                reqs.setdefault(_name(line), line)
+        # the harness runs the tests with 'python3 -m pytest'
+        reqs.setdefault('pytest', 'pytest')
         reqs = list(reqs.values())
         # a Rust extension pinned by an older version (pydantic-core 2.18) predates PyO3's support of 3.13: build it
         # against the stable ABI, as PyO3 allows
@@ -352,6 +384,13 @@ def cmd_env(a) -> None:
         if r.returncode:
             print(r.stderr[-3000:])
             sys.exit(f'{a.repo} {version}: install failed')
+    if own:
+        if _freeze(base_python) != before:
+            sys.exit(f"the harness's venv changed while {a.repo}'s was set up: check it with uv pip check -p {base_python}")
+        print(f'{a.repo} {version}: {venv} (Python {a.python}, from {t["instance_id"]}); {len(tasks)} tasks: '
+              f'{",".join(x["instance_id"] for x in tasks)}; run local_eval.py or judge.py with '
+              f'SWE_TASK_PYTHON={py}')
+        return
     # drop what the harness's venv already provides, so its copy is the one imported
     dup = [l.split('==')[0] for l in _freeze(py).splitlines() if l.split('==')[0].lower() in KEEP_FROM_BASE]
     if dup:
@@ -387,6 +426,7 @@ def main() -> None:
     p.add_argument('--data', type=Path, required=True)
     p.add_argument('--repo', required=True)
     p.add_argument('--version', default='newest', help="a SWE-bench version of the repository (default: the newest)")
+    p.add_argument('--python', default='', help="the task's own Python for the sandbox (3.9-3.12; uv installs it)")
     p.add_argument('--envs', type=Path, required=True)
     p.add_argument('--base-python', default='', help="the harness's venv python (default: this one)")
     p = sub.add_parser('ids', help='the task ids of a repository (and version), for --tasks')
