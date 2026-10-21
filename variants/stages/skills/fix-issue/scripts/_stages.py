@@ -610,13 +610,9 @@ def requirements(root, st, args):
             reqs = keep
             for i, r in enumerate(reqs):
                 r['id'] = f'R{i + 1}'
-    if FAST and all(_copied(r) for r in reqs) and not st.get('copy_refused'):
-        # audit 10-20: a lone requirement that only repeats the issue's sentence was saved in 6 of vf5's 30 tasks
-        # (2 resolved); it states no situation and no result for locate and specify to work from. Refused once
-        st['copy_refused'] = True
-        return ('Not saved: what must happen repeats the issue\'s sentence word for word ("' + reqs[0]['what'][:120]
-                + '"), so it states no situation and no result. Send each pair again with what must happen: the '
-                'situation and the expected result, with the exact names. ' + form + '\n\n' + next_call('req.py', 'pairs'))
+    # (10-20 to 10-21 a requirement that only repeated the issue's sentence was refused once; in h15 it fired in 3 of
+    # the first 4 tasks, all title-only issues, and the second send added nothing the title did not say: one model
+    # turn each for no information. Removed)
     st['reqs'] = reqs
     _save_statement(st)
     listed = '\n'.join('  ' + _req_line(r) + (f' [new: {", ".join(r["new"])}]' if r['new'] else '') for r in reqs)
@@ -2418,6 +2414,12 @@ def edit(root, st, args):
         _reset_asks(st, 'edit', p)   # asked again after the new code
         return (f'{_args.clean(items[1])} goes into the plan before {p["handle"]}; {p["handle"]} is edited after it.'
                 f'\n\n{DONE}')
+    if FAST and st.get('stage_now') == 'repair' and first in ('done', 'cannot tell', 'not done', 'yes', 'no'):
+        # h15 (fastapi_15661): a review verdict sent to repair's edit window was refused as code that does not compile
+        p['refused'] = p.get('refused', 0) + 1
+        return (f'This window is the change of {p["handle"]}, not the review: send its code (the whole new definition, '
+                "or ['replace', '<the old lines, as shown>', '<the new lines>']), or one sentence of what must change "
+                "there, or ['no change'].\n\n" + nxt)
     if FAST and st.get('stage_now') == 'repair' and len(items) == 1 and _prose(items[0]):
         # h13 (Haiku, rich_3772): repair specifies and edits; its edit view was answered with a sentence ("Guard the
         # locals traversal in Traceback.extract so ..."), refused as code that does not compile. A sentence sent
@@ -3215,7 +3217,6 @@ def main(stage, argv):
 # lock (_state.lock), so the workers' calls run one at a time while their model calls run at once.
 
 FAST_DONE = 'NEXT: no call: reply with exactly: done'
-CHECK_DONE = 'NEXT: call the tool submit_patch with no arguments, then reply with exactly: done'
 
 REPRO_MIN_S = 150       # reproduce runs beside specify only with this much time left (V22: it took 30-225 s)
 WORK_STAGE = {'repair': None}    # repair specifies and edits, by the state of its place
@@ -3594,6 +3595,12 @@ def main_fast(stage, worker, argv):
                     out = _idle(st, stage, worker)
             else:
                 out = _progress(root, st) + '\n\n' + _view(root, st, stage, worker, target)
+                if check and stage == 'repair' and not st.get('check_told'):
+                    # h15 (Haiku, fastapi_15661): the patch was empty, the review was skipped, and the check agent's
+                    # first window was the edit of a place; it answered with a verdict ('cannot tell')
+                    st['check_told'] = True
+                    out = ('There is nothing to review: ' + ('the patch is empty, so ' if not _patch_files(root) else '')
+                           + 'this place goes back to be finished first.\n\n' + out)
         else:
             cur = st['wcur'][worker]
             handler = cur[2]
@@ -3617,17 +3624,14 @@ def main_fast(stage, worker, argv):
                         _submit(root, st)
                     out = body + '\n\n' + _part_done(st, stage, worker)
         out = _for_worker(out, stage, worker)
-        if check and out.endswith(FAST_DONE):
-            if not st['submitted']:
-                _submit(root, st)
-            out = out[:-len(FAST_DONE)].replace('so nothing more is needed from you', 'so only the submission is '
-                                                'left') + CHECK_DONE
+        if check and out.endswith(FAST_DONE) and not st['submitted']:
+            _submit(root, st)
     except Exception as e:                      # never a traceback for the model
         _state.record({'error': f'{worker} {type(e).__name__}: {e}'})
         import traceback
         _state.record({'trace': traceback.format_exc()[-2000:]})
         _release(st, worker)
-        out = f'The script hit an internal error ({type(e).__name__}).\n\n{CHECK_DONE if check else FAST_DONE}'
+        out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
     _state.save('stages', st)
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]

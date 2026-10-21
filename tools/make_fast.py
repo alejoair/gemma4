@@ -140,11 +140,12 @@ STAGES = {
         forms=[['open'], ['<what changes here, in one sentence>'], ['<the whole new definition>'],
                ['replace', '<the old lines>', '<the new lines>'], ['no change']],
         sampling='sampling_edit.yaml', desc='Specifies and edits the places the review sent back.'),
-    # h14 (Haiku): repair had nothing to do in 22 of 30 tasks and the finish agent spent two model turns on
-    # submit_patch; one agent reviews, repairs what the review sends back, and submits (docs/design_fast.md)
+    # h14 (Haiku): repair had nothing to do in 22 of 30 tasks; one agent reviews and repairs what the review sends
+    # back. h15: submitting from it was undone: when it ended without submit_patch, the harness's nudge ran the whole
+    # pipeline again (fastapi_15661), so the finish agent stays (docs/design_fast.md)
     'check': dict(
-        intro='You check whether the patch does the requirements, finish what is wrong or missing, and submit the '
-              'patch. That is your only task.',
+        intro='You check whether the patch does the requirements and finish what is wrong or missing. That is your '
+              'only task; the next agent submits the patch.',
         steps=[
             "First call {script} with args ['open']: you get the requirements, each place of the fix with its "
             "planned sentence and its diff, and what the existing tests do with the patch.",
@@ -155,14 +156,11 @@ STAGES = {
             "When a place goes back to be finished, the script gives it to you: when the window asks what must "
             "change there, send one sentence (or ['no change']); when it shows the place's numbered code with its "
             "sentence, send the whole new definition, or ['replace', '<the old lines, as shown>', '<the new "
-            "lines>']. The window's NEXT always says which of the two it expects.",
-            "When the script's NEXT says to call submit_patch, call the tool submit_patch with no arguments, then "
-            "reply with exactly: done"],
+            "lines>']. The window's NEXT always says which of the two it expects."],
         forms=[['open'], ['done'], ['not done', '<place>', '<what is missing there>'], ['cannot tell'],
                ['<what changes here, in one sentence>'], ['<the whole new definition>'],
                ['replace', '<the old lines>', '<the new lines>'], ['no change']],
-        tools=['submit_patch'],
-        sampling='sampling_edit.yaml', desc='Reviews the patch, finishes what is missing, and submits it.'),
+        sampling='sampling_edit.yaml', desc='Reviews the patch and finishes what is missing.'),
 }
 
 ENTRY = '''"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)
@@ -241,12 +239,20 @@ def main():
               f'agent_class: ParallelAgent\nname: {stage}_stage\ndescription: The {stage} workers, at the same '
               f'time.\nsub_agents:\n' + ''.join(f'  - config_path: {m}\n' for m in members))
         sub.append(f'sub_agents/{stage}_stage.yaml')
-    # h14: review, repair and finish in one agent ('check', docs/design_fast.md)
+    # h14: review and repair in one agent ('check', docs/design_fast.md); finish submits (h15)
     write('sub_agents/check.md', prompt('check', 'check.py'))
     write('sub_agents/check.yaml', llm_yaml('check', 'check', 'check.py', STAGES['check']['desc'],
                                             STAGES['check']['sampling']))
     write(os.path.join(scripts, 'check.py'), ENTRY.format(stage='check', worker='check'))
     sub.append('sub_agents/check.yaml')
+    write('sub_agents/finish.md', 'The work on the issue is finished and the patch is ready. Call the tool '
+                                  'submit_patch with no arguments, then reply with one sentence.\n')
+    write('sub_agents/finish.yaml', f'name: finish\ndescription: Submits the patch.\nmodel: {MODEL}\n'
+                                    'include_contents: none\ninstruction: !include finish.md\ntools:\n  - submit_patch\n'
+                                    'generate_content_config: !include sampling_finish.yaml\n')
+    write('sub_agents/sampling_finish.yaml', 'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: 512\n'
+                                             'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n')
+    sub.append('sub_agents/finish.yaml')
     write('agent.yaml', 'agent_class: SequentialAgent\nname: issue_fixer\ndescription: Fixes the issue through its '
                         'stages in a fixed order, with the specify workers at the same time (docs/design_fast.md).\n'
                         'sub_agents:\n' + ''.join(f'  - config_path: {s}\n' for s in sub))

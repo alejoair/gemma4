@@ -7,3 +7,4 @@ sub_agents:
   - config_path: sub_agents/specify_stage.yaml
   - config_path: sub_agents/edit1.yaml
   - config_path: sub_agents/check.yaml
+  - config_path: sub_agents/finish.yaml
