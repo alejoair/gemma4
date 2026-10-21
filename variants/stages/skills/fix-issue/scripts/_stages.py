@@ -2701,7 +2701,9 @@ def _after_edit(root, st, p, r, before, names, nxt):
                                                  undo=(p['rel'], before))
     else:
         verdict, detail, failures = 'UNCHECKED', 'the existing tests are not run after each edit', []
-        broken = _import_errors(root, p['rel'], before)
+        # the user's (10-21): no import probe in the fast build either (a python subprocess per edit); the undefined
+        # names below are read from the code itself, without running it
+        broken = [] if FAST else _import_errors(root, p['rel'], before)
         was, now = _undefined(before), _undefined(after)
         new_names = sorted(now - was) if was is not None and now is not None else []
         if new_names and not broken:

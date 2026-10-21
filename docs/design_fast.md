@@ -730,10 +730,9 @@ The reproduce stage was already off (`REPRODUCE = False` in `tools/make_fast.py`
 
 **Checked on two tasks** (requests_7505 and rich_3180, every call from requirements to check). A `sitecustomize` spy logged every subprocess the scripts start. There was no pytest. What runs is:
 - git (status, diff, show);
-- the import probe of a changed module (`python -c`, one per edit, a few seconds);
-- the library-name probe.
+- the library-name probe, once per task.
 
-These are not tests.
+These are not tests. The import probe of a changed module (`python -c`, one per edit, a few seconds) was removed as well, at the user's request (10-21). An edit is still checked, without running it, for names the file neither defines nor imports (`_undefined`, read from the code). On requests_7505's whole replay the spy saw one `python -c` in the task: the library probe.
 
 | Item | Effect | Why |
 |---|---|---|
