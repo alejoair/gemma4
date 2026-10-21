@@ -606,3 +606,28 @@ Rerun of the two tasks with the fix (h13r, `build_f20`): both end with a patch, 
 | The same call sent again | 2 | — | **No** (6 more are review "done" for R1 then R2, which is not a repeat) |
 
 The biggest waste is the idle workers: the stages have a fixed number of workers whatever the number of items. In these 30 tasks, locate2 had nothing to do in 32 of 60 worker runs (one requirement), and specify in 31 of 90.
+
+#### h13: the 25 refused calls, one by one
+
+Each call was checked against the script's own journal (`events.jsonl`), not the ADK trace. The trace pairs answers with the wrong worker when workers run in parallel.
+
+| Cause | Calls | Tasks | Whose fault |
+|---|---|---|---|
+| **The class-place edit put a module-level helper inside the class.** The editor of the place `SupportsRead` (a class) sent the class and, after it at column 0, `def is_supports_read(...)`. `step._apply_definitions` adds a new function sent with a class place as a member (`inner = own.kind == 'class'`), even when the class itself was sent beside it. The import `from ._types import is_supports_read` then failed, and the edits that used it were undone. Each later send of the module-level function was re-indented into the class and answered "the same as the old one". | 4 (plus 3 undone edits) | requests_7505 | **script** |
+| The forcing refused "no change" with an empty patch | 7 | fastapi_15661, rich_3942, rich_3772, rich_4076, fastapi_14419, rich_3480, rich_3934 | By design. In 5 of them the place's sentence is the script's default, the requirement text, which for a title-only issue says nothing concrete ("Live handles an empty live display as the issue describes: empty live") |
+| "missing" used to explain "I cannot write this" | 4 | fastapi_15661, rich_3942, rich_3772, rich_3934 | **Design.** All came after the refusal above, on a default sentence. The editor has no form to say that the sentence names no change, so it repurposes "missing" (B16) |
+| The old code sent back unchanged, a "no change" in disguise | 2 | rich_3480, rich_3934 | **Design.** The same cause, after the refusal |
+| Replace with old lines that the window does not show | 2 | fastapi_13713 | **script.** For a long place the view hides the 750-line signature ("lines 65-820 not shown"). The sentence asks for a parameter beside `openapi_tags`, so the editor guessed lines it never saw (`openapi_tags: Optional[...]`; the file has `Annotated[...]`) |
+| Replace with part of a line | 1 | rich_3278 | **script.** The editor sent a fragment of line 13 of the regex, `(?:\x1b([(@-Z\\-_]|`; only whole lines are matched |
+| A sentence sent where code was expected | 2 | rich_3772 (repair), requests_7505 | Partly script. Repair both specifies and edits, and its edit view was answered with a sentence |
+| `**kwargs` repair missing | 2 | fastapi_13713 | **script**, fixed in 639085a |
+| "missing" naming a new helper (`_is_supports_read`) that does not exist yet | 1 | requests_7505 | **script.** "missing" accepts existing code or `Class.new_member`, but not a new module-level function `path.py::new_name` |
+
+**Script faults to fix** (all generic):
+1. A function sent together with its class stays at module level. Only a function sent alone with a class place is a member.
+2. The long-place view shows the lines that hold the names in the sentence (`openapi_tags`, `self.openapi_tags`), instead of hiding them.
+3. Replace accepts old text that is a unique part of a line.
+4. "missing" accepts `path.py::new_name` for a new module-level function.
+5. In repair, a sentence sent to an edit view becomes the place's new sentence, and the edit view follows.
+
+**Not a script fault:** 13 of the 25 calls are the model unable to write a change from a sentence that names none (title-only issues). The forcing turns those into an attempt and a repair. It cannot create the missing information.
