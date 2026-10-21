@@ -45,8 +45,8 @@ FIELDS = ('instance_id', 'repo', 'base_commit', 'problem_statement', 'patch', 't
           'FAIL_TO_PASS', 'PASS_TO_PASS', 'environment_setup_commit')
 
 # What each repository's tests need besides the package's own dependencies (its test requirements at the commit are
-# read too, when the file exists). Repositories that need a compiler or a large build (pandas, modin, bokeh) or a JVM
-# (hydra's grammar) are not set up: their tasks stay in tasks.jsonl and the screen leaves them out.
+# read too, when the file exists). Repositories that need a compiler or a large build (pandas, modin, bokeh) are not set
+# up: their tasks stay in tasks.jsonl and the screen leaves them out. hydra's grammar is generated with a JVM at install.
 TEST_REQUIREMENTS = {
     'moto': ['requirements-tests.txt', 'requirements-dev.txt'],
     'mypy': ['test-requirements.txt'],
@@ -55,6 +55,7 @@ TEST_REQUIREMENTS = {
     'pydantic': [],
     'dask': [],
     'conan': ['conans/requirements.txt', 'conans/requirements_server.txt', 'conans/requirements_dev.txt'],
+    'hydra': ['requirements/dev.txt'],
 }
 EXTRAS = {
     'moto': '[all,server]',
@@ -234,12 +235,23 @@ def cmd_env(a) -> None:
         # but some code reads its installed version), then the test requirements
         # uv's cache hardlinks the files into each venv, so the versions of a repository share the disk
         cmd = ['uv', 'pip', 'install', '-q', '-p', py, f'{src}{EXTRAS.get(a.repo, "")}', *reqs]
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        # a Rust extension pinned by an older version (pydantic-core 2.18) predates PyO3's support of 3.13: build it
+        # against the stable ABI, as PyO3 allows
+        env = dict(os.environ, PYO3_USE_ABI3_FORWARD_COMPATIBILITY='1')
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        if r.returncode:
+            # the checkout has no tags, so a version read from git is '0+untagged' and a pin on it fails (dask[complete]
+            # needs distributed of dask's own version): the release of this version from PyPI brings the same
+            # dependencies; the tests import the workspace's code anyway (eval_env.py)
+            release = f'{a.repo.lower()}{EXTRAS.get(a.repo, "")}=={version}.*'
+            print(f'{a.repo} {version}: the checkout did not install, trying the release {release}')
+            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, release, *reqs], capture_output=True, text=True,
+                               env=env)
         if r.returncode and reqs:
-            # the package does not build on 3.13 (mypy's own build): its test requirements alone, which list its
-            # runtime dependencies too in these repositories; the tests import the workspace's code anyway
-            print(f'{a.repo} {version}: the package did not build, installing its test requirements only')
-            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, *reqs], capture_output=True, text=True)
+            # no release installs on 3.13 either (mypy's own build): the test requirements alone, which list the
+            # runtime dependencies too in these repositories
+            print(f'{a.repo} {version}: installing its test requirements only')
+            r = subprocess.run(['uv', 'pip', 'install', '-q', '-p', py, *reqs], capture_output=True, text=True, env=env)
         if r.returncode:
             print(r.stderr[-3000:])
             sys.exit(f'{a.repo} {version}: install failed')
