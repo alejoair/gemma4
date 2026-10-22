@@ -13,8 +13,13 @@ MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
 # h13 (Haiku): locate2 had nothing to do in 32 of 60 runs and edit2 in 9; with Gemma (vf5) one worker costs about 8 s in
 # locate and 2 s in edit, while specify alone would cost about 53 s (docs/design_fast.md). Parallel workers also lose
 # answers in the harness's trace. One worker for locate and edit. Specify: two (h14: 12 of 30 tasks used one
-# specifier, 11 two, 7 three; the third was idle in 23 tasks, at 2 model turns each)
-WORKERS = {'locate': 1, 'specify': 2, 'edit': 1}
+# specifier, 11 two, 7 three; the third was idle in 23 tasks, at 2 model turns each).
+# 10-22: one specifier too, so no ParallelAgent is left. S10 (two specifiers in a ParallelAgent) failed on Kaggle with
+# "Your notebook hit an unhandled error"; the code of every stage runs in the sandbox and catches its errors, and the one
+# way found into the harness's process is its timeout 'break' inside runner.run_async, which leaves the generator open
+# with a ParallelAgent's branch tasks still running (an error there can surface as a BaseExceptionGroup, which the
+# harness's 'except Exception' does not catch). Not proven to be S10's cause; it is the only path found
+WORKERS = {'locate': 1, 'specify': 1, 'edit': 1}
 # vf1 (Gemma, Kaggle): the reproduce branch kept the specify stage open after the specifiers ended (a ParallelAgent
 # waits for every branch): its agent sent its kept test 8 more times in rich_3905, and 8 of 30 tasks never reached
 # edit; off until it can end on its own
@@ -90,7 +95,7 @@ STAGES = {
     'specify': dict(
         intro='You write what must change in one place of the code so that its requirements hold. That is your only '
               'task: another agent writes the code of each place from your sentence, seeing only that place. '
-              + SHARED.format(what='places'),
+              + (SHARED if WORKERS['specify'] > 1 else ALONE).format(what='places'),
         steps=[
             "First call {script} with args ['open']: you get a place's code, the requirements it serves, the code it "
             "uses and the other places of the fix with their sentences.",
@@ -254,7 +259,7 @@ def main():
                                              'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n')
     sub.append('sub_agents/finish.yaml')
     write('agent.yaml', 'agent_class: SequentialAgent\nname: issue_fixer\ndescription: Fixes the issue through its '
-                        'stages in a fixed order, with the specify workers at the same time (docs/design_fast.md).\n'
+                        'stages in a fixed order, one agent at a time (docs/design_fast.md).\n'
                         'sub_agents:\n' + ''.join(f'  - config_path: {s}\n' for s in sub))
     write('skills/fix-issue/SKILL.md', '---\nname: fix-issue\ndescription: The scripts that fix the issue in the Python '
                                        'repository at /workspace. Each agent calls the one script its instructions '

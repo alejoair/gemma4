@@ -792,3 +792,25 @@ SWE-Gym (Pan et al., ICML 2025; `docs/literature.md`) counts an agent as "stuck 
 | P6 the goal at both ends | neutral | The answer ends with the finish line as every other final answer |
 
 Generic: it counts the worker's own identical calls on the same item; nothing depends on the repository, the issue or a name. Checked by replaying the 30 h17 traces with `build_f29` (no problems; no h17 worker repeated a call three times, so the rule did not fire there).
+
+### One specifier, no ParallelAgent (10-22, after S10 failed on Kaggle)
+
+S10 failed on Kaggle with "Your notebook hit an unhandled error while rerunning your code" (the submission's `error_description`). That is an exception escaping the scorer's stage 1, not its time limit.
+
+**Every stage's code was read for a way into the harness's process; none was found.** The modules that changed since S9 are `_stages.py`, `step.py` and `_edit.py`; the other 11 are byte-identical to S9's, which ran.
+- The scripts run inside the sandbox, through the ADK's wrapper, in a thread (`asyncio.to_thread`).
+- `main_fast` catches every `Exception` and answers "internal error".
+- Files the scripts write are filtered by `changed_files` and `worktree_diff`, which skip hidden files. So the ADK's `/workspace/.adk_exec_*.py` runner never enters the patch.
+- git is read-only (`show`, `diff`, `status`, `rev-parse`), apart from `checkout -- <file>` to undo an edit.
+
+**The one path found** is in the harness (`swegemma/harness/agent_runner.py`). When the time is up after an event, it `break`s out of `async for ... runner.run_async(...)` and leaves the ADK's generator open. Inside a `ParallelAgent`, the branch tasks keep running. An error there can surface as a `BaseExceptionGroup`, which the harness's `except Exception` does not catch.
+
+S9 had three parallel stages and ran, so this is not proven to be S10's cause. It is the only path found, and removing it costs one specifier. With `WORKERS = {'locate': 1, 'specify': 1, 'edit': 1}`, the build has no `ParallelAgent`.
+
+| Item | Effect | Why |
+|---|---|---|
+| F7 repetition, B10 time | neutral | The specify stage keeps its end (`STAGE_END`) and the chain limit; one worker takes the places one after another |
+| P8 the goal at each step | neutral | The specifier's prompt says the places come one at a time (`ALONE`), as locate's and edit's do |
+| B5 no idle agents | closer | No second specifier waiting with nothing to do (h14: idle in many tasks) |
+
+Generic: it removes a harness-level mechanism; nothing depends on a repository or an issue.
