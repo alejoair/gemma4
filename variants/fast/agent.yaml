@@ -1,0 +1,10 @@
+agent_class: SequentialAgent
+name: issue_fixer
+description: Fixes the issue through its stages in a fixed order, one agent at a time (docs/design_fast.md).
+sub_agents:
+  - config_path: sub_agents/requirements.yaml
+  - config_path: sub_agents/locate1.yaml
+  - config_path: sub_agents/specify1.yaml
+  - config_path: sub_agents/edit1.yaml
+  - config_path: sub_agents/check.yaml
+  - config_path: sub_agents/finish.yaml

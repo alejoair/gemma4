@@ -21,6 +21,10 @@ support supports update updates updated change changes changed current currently
 examples case cases thing things something anything everything work works working worked expect expected actual
 actually problem problems happen happens happened right wrong true false none self cls def return import class pass
 raise lambda yield async await print'''.split())
+# What code itself never names as a target: the words of the language. The terms of the highest weight (code in
+# backticks, a traceback's frames, the parts of a dotted name, the model's own names) drop only these: audit 10-18 #9,
+# `Cache.update` kept only Cache, and a method named update, add or get could not be found
+CODE_STOP = {k.lower() for k in keyword.kwlist} | {'self', 'cls'}
 DROP_SECTIONS = re.compile(r'(?im)^#+\s*(ai disclaimer|checklist|ai transcript)\b.*?(?=^#+\s|\Z)', re.S)
 
 
@@ -79,18 +83,18 @@ def terms(text):
     capitalised words 2, other words of 5+ letters 1. Stop words are dropped."""
     out = {}
 
-    def add(term, weight):
-        if term and term.lower() not in STOP and len(term) > 1 and not term.isdigit():
+    def add(term, weight, code=False):
+        if term and term.lower() not in (CODE_STOP if code else STOP) and len(term) > 1 and not term.isdigit():
             out[term] = max(out.get(term, 0), weight)
 
     for m in re.finditer(r'File "([^"]+)", line \d+, in (' + IDENT + ')', text):
-        add(m.group(2), 5)
+        add(m.group(2), 5, code=True)
     for m in re.finditer(r'`([^`\n]+)`', text):
         for ident in re.findall(IDENT, m.group(1)):
-            add(ident, 5)
+            add(ident, 5, code=True)
     for m in re.finditer(IDENT + r'(?:\.' + IDENT + r')+', text):
         for part in m.group(0).split('.'):
-            add(part, max(3, _shape(part)))
+            add(part, max(3, _shape(part)), code=True)
     for m in re.finditer(r'\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b', text):
         word = m.group(0)
         add(word.replace('-', '_').lower(), 3)
@@ -121,8 +125,8 @@ def model_terms(items):
     paths, and their file name a term."""
     out, found = {}, []
 
-    def add(term, weight):
-        if term and term.lower() not in STOP and len(term) > 1 and not term.isdigit():
+    def add(term, weight, code=False):
+        if term and term.lower() not in (CODE_STOP if code else STOP) and len(term) > 1 and not term.isdigit():
             out[term] = max(out.get(term, 0), weight)
 
     items = list(items)
@@ -144,7 +148,7 @@ def model_terms(items):
         words = re.findall(IDENT, item)
         if re.fullmatch(IDENT + r'(\.' + IDENT + r')*(\(\))?', item):      # a name, dotted or called
             for w in words:
-                add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else 5 if _shape(w) or w[0].isupper() else 3)
+                add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else 5 if _shape(w) or w[0].isupper() else 3, code=True)
             continue
         for w in words:
             add(w, LIBRARY_WEIGHT if w in LIBRARY_NAMES else max(2, _shape(w)))

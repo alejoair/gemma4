@@ -13,29 +13,42 @@ COLLAPSE_AT = 6  # a string literal longer than this many lines is shown as one 
 
 
 def parse(text):
+    """The module's AST, or None when it does not parse. A text holding undecodable bytes (read with surrogateescape)
+    is parsed as its bytes, so that its coding cookie is honoured (audit 10-18 #6); a generated file too deeply nested
+    for the parser is unparsed, not an error of every call (audit 10-18 #7)."""
+    if isinstance(text, str) and text.startswith('\ufeff'):
+        text = text[1:]                 # a UTF-8 byte order mark, kept by the reads so that writes keep it
     try:
-        return ast.parse(text)
-    except (SyntaxError, ValueError):
+        try:
+            return ast.parse(text)
+        except ValueError:
+            if not isinstance(text, str):
+                raise
+            return ast.parse(text.encode('utf-8', errors='surrogateescape'))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
 
 
 def symbols(tree):
     """Every function and class, with its qualified name (Class.method), outermost first."""
     out = []
-
-    def walk(node, prefix):
+    # (iterative, and only through statements, where a def or class can be: a recursive walk of every node raised
+    # RecursionError on one generated file with a long expression, in every call; audit 10-18 #7)
+    stack = [(tree, '', None)] if tree is not None else []
+    while stack:
+        node, prefix, sym = stack.pop()
+        if sym is not None:
+            out.append(sym)
+        kids = []
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 name = prefix + child.name
                 start = min([child.lineno] + [d.lineno for d in child.decorator_list])
                 kind = 'class' if isinstance(child, ast.ClassDef) else 'def'
-                out.append(Sym(name, kind, start, child.lineno, child.end_lineno, child))
-                walk(child, name + '.')
-            else:
-                walk(child, prefix)
-
-    if tree is not None:
-        walk(tree, '')
+                kids.append((child, name + '.', Sym(name, kind, start, child.lineno, child.end_lineno, child)))
+            elif isinstance(child, (ast.stmt, ast.excepthandler, ast.match_case)):
+                kids.append((child, prefix, None))
+        stack.extend(reversed(kids))         # depth first, in source order, as the recursive walk listed them
     return out
 
 

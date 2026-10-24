@@ -6,6 +6,7 @@ import builtins
 import re
 from collections import namedtuple
 
+import _code
 import _repo
 
 if __name__ == '__main__':
@@ -50,8 +51,12 @@ def _unescape(new):
 
 def _compiles(lines):
     try:
-        ast.parse(''.join(lines))
+        # the bytes as they will be written, so that the parser honours the file's coding cookie: a str holding the
+        # surrogates of undecodable bytes never parsed, and every edit of a latin-1 file was refused (audit 10-18 #6)
+        ast.parse(_repo.encode_source(''.join(lines)))
         return None
+    except (RecursionError, MemoryError):
+        return 'the file is nested too deeply for Python to parse it'
     except SyntaxError as e:
         # the text of the offending line, not its number: the model finds an error once told where it is in its own
         # words (Tyen et al.: +18 to +44 points), and a file line number means nothing to it
@@ -86,9 +91,8 @@ def _bound_names(tree):
 
 def unknown_names(lines, start, end):
     """Names read on lines start..end that nothing in the file defines or imports (a missing import or a typo)."""
-    try:
-        tree = ast.parse(''.join(lines))
-    except (SyntaxError, ValueError):
+    tree = _code.parse(''.join(lines))
+    if tree is None:
         return []
     bound = _bound_names(tree)
     out = []
@@ -103,6 +107,36 @@ def _removed_defs(old, new):
     names = re.findall(r'^\s*(?:async\s+)?(?:def|class)\s+(\w+)', ''.join(old), re.M)
     text = ''.join(new)
     return [n for n in names if not re.search(rf'\b(def|class)\s+{re.escape(n)}\b', text)]
+
+
+VAR_KW = re.compile(r'^\s*\*\*\w+')
+DEF_LINE = re.compile(r'^\s*(async\s+)?def\s')
+
+
+def _params_before_var_kw(lines, start, stop, cand):
+    """The file with the lines an edit inserted after a '**kwargs' parameter moved before it, or None. h12 and h13
+    (Haiku, fastapi_13713): a new parameter added at the end of FastAPI.__init__'s 750-line signature landed after
+    '**extra: Annotated[...]' (several lines) and the edit was refused six times ("arguments cannot follow
+    var-keyword argument"); Python allows no parameter there, so the only reading of the edit is the parameter
+    before '**kwargs'. Only lines the edit inserted are moved, to just before the '**' line above the edit."""
+    import difflib
+    old = lines[start - 1:stop]
+    ops = [op for op in difflib.SequenceMatcher(None, old, cand, autojunk=False).get_opcodes() if op[0] != 'equal']
+    if len(ops) != 1 or ops[0][0] != 'insert':
+        return None
+    _, i1, _, j1, j2 = ops[0]
+    block = cand[j1:j2]
+    k = next((i for i in range(start - 2, max(-1, start - 2 - 1200), -1)
+              if VAR_KW.match(lines[i]) or DEF_LINE.match(lines[i])), None)
+    if k is None or not VAR_KW.match(lines[k]):
+        return None
+    nl = _repo.newline_of(lines)
+    last = max(i for i, l in enumerate(block) if l.strip()) if any(l.strip() for l in block) else None
+    if last is None:
+        return None
+    if not block[last].rstrip().endswith(','):
+        block[last] = block[last].rstrip('\r\n').rstrip() + ',' + nl
+    return lines[:k] + block + lines[k:start - 1] + old + lines[stop:], k + 1
 
 
 def apply(root, rel, start, end, text):
@@ -163,17 +197,23 @@ def apply(root, rel, start, end, text):
             continue
         result = lines[:start - 1] + cand + lines[stop:]
         err = _compiles(result)
+        first_line = start
+        if err and err.startswith('arguments cannot follow var-keyword argument'):
+            moved = _params_before_var_kw(lines, start, stop, cand)
+            if moved is not None and _compiles(moved[0]) is None:
+                result, err, extra = moved[0], None, extra + ['moved the parameters written after **kwargs before it']
+                first_line = moved[1]       # the moved lines are part of the change
         if err is None:
             _repo.write_lines(root, rel, result)
             new_end = start + len(cand) - 1
             warnings = []
-            unknown = unknown_names(result, start, max(start, new_end))
+            unknown = unknown_names(result, first_line, max(first_line, new_end))
             if unknown:
                 warnings.append('nothing in the file defines or imports: ' + ', '.join(unknown))
             removed = _removed_defs(lines[start - 1:stop], cand)
             if removed:
                 warnings.append('the edit removed the definition of: ' + ', '.join(removed))
-            return Result(True, start, new_end, None, repairs + extra, warnings)
+            return Result(True, first_line, new_end, None, repairs + extra, warnings)
         first_error = first_error or err
     if same_as_old and first_error is None:
         return Result(False, start, end, 'the new lines are the same as the old ones once indented: nothing changes',

@@ -1,0 +1,40 @@
+{
+ "task": "fastapi_14361",
+ "note": "resolved in vf4 (control); the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "Avoid accessing non-existing \"$ref\" key for Pydantic v2 compat remapping",
+      "The Pydantic v2 compat remapping does not access the \"$ref\" key of a schema that has none."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "_remap_definitions_and_field_mappings"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

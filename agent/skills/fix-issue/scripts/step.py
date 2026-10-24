@@ -21,6 +21,8 @@ import os
 import re
 import sys
 import textwrap
+import time
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -50,12 +52,15 @@ EDIT_LINES = 32         # the edit window: a place up to EDIT_LINES + 30 lines i
                         # as its head and the part the requirements are about
 CLASS_OUTLINE_AT = 90   # a chosen class longer than this is shown as an outline of its members
 MODULE = '<module>'
+# The task's time (eval_config.yaml, 5 min since 10-15), counted from the journal's start: the tests a call runs end
+# before it (audit 10-18 #10)
+TASK_S = int(os.environ.get('SWE_TASK_BUDGET', '300'))
 MAX_CHARS = 7000        # a cap on one answer (about 2,000 tokens) against context growth; the end with NEXT is kept
 
 
 # ---------------------------------------------------------------------------------------------------------- views
 
-def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=None):
+def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=None, names=None):
     """Numbered lines start..end of rel, long strings collapsed. Over the limit: the head of the place (its def and
     first lines) and the part where the focus terms occur most. Sizes count the lines shown (a collapsed text is one
     line) and text lines score nothing: in V13b (fastapi_14851) raw counts and scored Doc texts that name "FastAPI" hid
@@ -83,18 +88,38 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     if size(start, end) <= limit + 20:         # hiding a few lines saves little and hides code
         return _code.numbered(lines, start, end, collapse=collapse)
     head = min(end, start + 14)
-    sig_end = None
+    sig_end, kw_line = None, None
     for node in ast.walk(tree) if tree is not None else ():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.body and \
                 min([node.lineno] + [d.lineno for d in node.decorator_list]) == start:
             sig_end = node.body[0].lineno - 1
+            kw_line = node.args.kwarg.lineno if node.args.kwarg is not None else None
             break
     if sig_end is not None and sig_end - start + 1 > 8 and not (show and show[0] <= sig_end):
         # a long signature (FastAPI's Annotated[..., Doc(...)] parameters): its first line, then the body, so that
         # the window shows the code that runs (V10 audit #8: windows showed Doc texts and hid the body)
-        out = [_code.numbered(lines, start, start, collapse=collapse),
-               f'      ... (the parameters, lines {start + 1}-{sig_end}, not shown) ...']
-        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2, show=show)
+        # vf3 audit (fastapi_13713): the hidden parameters were what the change needed (a new parameter), and the
+        # editor guessed the lines; the signature's last lines (where a parameter is added) and the hidden lines that
+        # hold the requirement's terms are shown
+        # h13 (Haiku, fastapi_13713): the terms matched dozens of 'openapi_*' lines and the sentence's own
+        # `openapi_tags` was not among the six shown; the '**extra: Annotated[...]' parameter (8 lines) was hidden, so
+        # the new parameter went after it. The names the sentence gives come first, and the '**kwargs' parameter is
+        # shown whole, with the lines after it
+        terms = [t for t in (focus_terms or {}) if len(t) > 3]
+        named = [i for i in range(start + 1, sig_end - 1)
+                 if names and any(re.search(rf'(?<![\w.]){re.escape(n)}\b', lines[i - 1]) for n in names)][:6]
+        termed = [i for i in range(start + 1, sig_end - 1)
+                  if terms and any(t in lines[i - 1].lower() for t in terms) and i not in named][:max(0, 6 - len(named))]
+        tail = list(range(kw_line if kw_line and start < kw_line <= sig_end else max(start + 1, sig_end - 1),
+                          sig_end + 1))
+        keep = sorted(set(named + termed + tail))
+        out, prev = [_code.numbered(lines, start, start, collapse=collapse)], start
+        for i in keep:
+            if i > prev + 1:
+                out.append(f'      ... ({i - prev - 1} parameter lines not shown) ...')
+            out.append(_code.numbered(lines, i, i, collapse=collapse))
+            prev = i
+        body = _code_view(root, rel, sig_end + 1, end, focus_terms, limit=limit - 2 - len(keep), show=show, names=names)
         return '\n'.join(out + [body])
     width = limit - size(start, head)
     toks = focus_terms or {}
@@ -102,6 +127,8 @@ def _code_view(root, rel, start, end, focus_terms=None, limit=CODE_LINES, show=N
     for i in range(head + 1, end + 1):
         if toks and i not in prose and not lines[i - 1].lstrip().startswith('#'):
             score[i] = sum(toks.get(t, 0) for w in re.findall(r'[A-Za-z_]\w*', lines[i - 1]) for t in _rank.tokens(w))
+        if names and i not in prose and any(re.search(rf'(?<![\w]){re.escape(n)}\b', lines[i - 1]) for n in names):
+            score[i] += 20          # a line the place's sentence names (h13, fastapi_13713: self.openapi_tags = ...)
     total = [0] * (end + 2)
     for i in range(head + 1, end + 1):
         total[i] = total[i - 1] + score[i]
@@ -490,6 +517,94 @@ PLAN_PLACE_LINES = 25    # a planned place up to this many lines is shown as cod
 SPEC_USES = 4            # the specifier: the definitions each place uses, and its callers
 SPEC_USES_CHARS = 1500
 SPEC_CALLERS = 3
+# vf4 lab (fastapi_14419): Dependant.computed_scope (7 lines) was shown as a signature and the specifier named it
+# with 'missing' to read it
+SPEC_SHORT_MEMBER = 10
+
+
+def class_attributes(node):
+    """{attribute: line} of the attributes a class declares: its class-level assignments (dataclass fields, class
+    attributes) and the self.<attribute> its methods assign (the first assignment of each)."""
+    out = {}
+    for st in node.body:
+        if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+            out.setdefault(st.target.id, st.lineno)
+        elif isinstance(st, ast.Assign):
+            for t in st.targets:
+                if isinstance(t, ast.Name):
+                    out.setdefault(t.id, st.lineno)
+    for n in ast.walk(node):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == 'self':
+                    out.setdefault(t.attr, n.lineno)
+    return out
+
+
+def _keyword_sites(root, table, callee, keyword, trees, limit=2):
+    """[(rel, caller, line number, line text, value node)] of calls of callee (a short name) that pass keyword=."""
+    out = []
+    for r, c, n in table.calls.get(callee, []):
+        if _repo.is_test_path(r) or _repo.is_doc_path(r):
+            continue
+        if r not in trees:
+            trees[r] = _code.parse(_repo.read_text(root, r))
+        tree = trees[r]
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and node.lineno == n:
+                f = node.func
+                if (f.attr if isinstance(f, ast.Attribute) else getattr(f, 'id', None)) != callee:
+                    continue
+                for kw in node.keywords:
+                    if kw.arg == keyword:
+                        out.append((r, c, kw.value.lineno, _repo.read_lines(root, r)[kw.value.lineno - 1].strip(),
+                                    kw.value))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+ATTRS = 4               # attributes of the place's class shown with where they are declared and set
+ATTRS_CHARS = 1200
+
+
+def _attributes_view(root, table, p, cls, used, defined):
+    """The attributes of its own class the place reads that are data, not methods: the line that declares each and
+    the calls that set it (the class built with attribute=..., one step further when the value is a parameter of
+    the function that builds it). vf4 lab (fastapi_14419, the 31B): Dependant.cache_key reads
+    self.security_scopes; the window showed neither the field nor get_dependant, which sets it, and the
+    specifier asked for them three times through 'missing' (checklist W3, B16)."""
+    cls_sym = next((x for x in table.syms.get(p['rel'], []) if x.name == cls and x.kind == 'class'), None)
+    if cls_sym is None or getattr(cls_sym, 'node', None) is None:
+        return ''
+    decl = class_attributes(cls_sym.node)
+    lines = _repo.read_lines(root, p['rel'])
+    names = [n for n in dict.fromkeys(n for _, n, h in sorted(used) if h == 'self') if n in decl and n not in defined]
+    trees, rows, chars = {}, [], 0
+    short_cls = cls.split('.')[-1]
+    for name in names[:ATTRS]:
+        row = [f'  self.{name}: declared in {cls} ({p["rel"]}:{decl[name]}): {lines[decl[name] - 1].strip()[:100]}']
+        for r, c, n, text, value in _keyword_sites(root, table, short_cls, name, trees):
+            row.append(f'      set at {r}:{n} in {c}: {text[:90]}')
+            fn = next((x for x in table.syms.get(r, []) if x.name == c), None)
+            params = {a.arg for a in fn.node.args.args + fn.node.args.kwonlyargs} \
+                if fn is not None and isinstance(fn.node, (ast.FunctionDef, ast.AsyncFunctionDef)) else set()
+            if isinstance(value, ast.Name) and value.id in params:
+                for r2, c2, n2, text2, _ in _keyword_sites(root, table, c.split('.')[-1], value.id, trees, limit=1):
+                    row.append(f'        {c.split(".")[-1]} gets {value.id}= at {r2}:{n2} in {c2}: {text2[:80]}')
+        text = '\n'.join(row)
+        if chars + len(text) > ATTRS_CHARS:
+            break
+        rows.append(text)
+        chars += len(text)
+    rest = [n for n in decl if n not in names and n not in defined and not n.startswith('__')]
+    if rows and rest:
+        # the requirement may turn on a field the place does not read yet (fastapi_14419: 'sub-dependencies' is the
+        # field dependencies): its other fields by name, one line
+        rows.append(f'  {cls} also declares: ' + ', '.join(rest[:30]))
+    return ('Attributes it reads (where each is declared and where it is set):\n' + '\n'.join(rows)) if rows else ''
 
 
 def _context_view(root, p, focus=None):
@@ -547,8 +662,7 @@ def _context_view(root, p, focus=None):
         assigned_self[cls] = assigned_self.get(cls.split('.')[-1], set())
 
     def module_of(rel):
-        mod = rel[:-3].replace('/', '.')
-        return mod[4:] if mod.startswith('src.') else mod
+        return _repo.module_name(root, rel)
 
     def resolve(name, how):
         found = table.find(name)
@@ -606,7 +720,7 @@ def _context_view(root, p, focus=None):
             if (r, x.name) in seen:
                 continue
             seen.add((r, x.name))
-            if mine and x.end - x.start + 1 <= (SHORT_MEMBER if ROLE == 'editor' else 6):
+            if mine and x.end - x.start + 1 <= (SHORT_MEMBER if ROLE == 'editor' else SPEC_SHORT_MEMBER):
                 # a short member of the same class (a property, a helper): its code, since its name says little
                 text = f'  {x.name} ({r}):\n' + _code.numbered(_repo.read_lines(root, r), x.start, x.end, collapse=[])
             else:
@@ -624,6 +738,7 @@ def _context_view(root, p, focus=None):
             chars += len(text)
         if len(uses) >= n_uses:
             break
+    siblings = []
     if cls and own != cls and focus:
         # p3 (rich_3296): the fix was Syntax._get_base_style (which applies the background_color override), a member of
         # the place's own class that the place does not call. Members that use what the place uses (the same calls and
@@ -644,18 +759,22 @@ def _context_view(root, p, focus=None):
             node_names = {n.attr for n in ast.walk(x.node) if isinstance(n, ast.Attribute)} if getattr(x, 'node', None) \
                 else set(re.findall(r'\.(\w+)', body))
             shared = len(mine_used & node_names)
-            if shared >= 1 and shared + len(hit) >= 2:
+            # vf4 lab (fastapi_14419): is_gen_callable and is_async_gen_callable shared only self.call with
+            # cache_key and were shown in every window (P7); rich_3296's _get_base_style shares two names
+            if shared >= 2:
                 scored.append((-shared, -len(hit), x.end - x.start, x.start, x))
         for *_, x in sorted(scored, key=lambda t: t[:4])[:2]:
             if x.end - x.start + 1 <= 12:
-                text = (f'  {x.name} ({p["rel"]}), a member of the same class:\n'
+                text = (f'  {x.name} ({p["rel"]}):\n'
                         + _code.numbered(lines_, x.start, x.end, collapse=[]))
             else:
-                text = f'  {x.name} ({p["rel"]}:{x.start}), a member of the same class: {_short_signature(x)[:70]}'
+                text = f'  {x.name} ({p["rel"]}:{x.start}): {_short_signature(x)[:70]}'
             if chars + len(text) > uses_chars + 600:
                 break
             seen.add((p['rel'], x.name))
-            uses.append(text)
+            # gk12: listed under 'Code that on_event uses', include_router and add_api_route read as code the place
+            # calls (checklist B11, B12); they are siblings that use the same code, under their own heading
+            siblings.append(text)
             chars += len(text)
     lib = _library_uses(root, p, tree, used, imported, modules, table, cls)
     room = uses_chars - chars
@@ -676,6 +795,14 @@ def _context_view(root, p, focus=None):
     out = []
     if uses:
         out.append(f'Code that {short} uses:\n' + '\n'.join(uses))
+    if cls and own != cls:
+        defined = {x.name.split('.')[-1] for x in table.syms.get(p['rel'], []) if x.name.startswith(cls + '.')}
+        attrs = _attributes_view(root, table, p, cls, used, defined)
+        if attrs:
+            out.append(attrs)
+    if siblings:
+        out.append(f'Other members of its class that use the same code ({short} does not call them):\n'
+                   + '\n'.join(siblings))
     if calls:
         more = f' ({len(callers)} calls, first {n_callers})' if len(callers) > n_callers else ''
         out.append(f'Code that calls {short}{more}:\n' + '\n'.join(calls))
@@ -1229,6 +1356,10 @@ def _resolve(root, names):
         found = table.find(name) if name else []
         if not found and name and not rel:
             found = _dotted_or_case(table, name)
+        if not found and name and '.' in name:
+            # vf4 lab (fastapi_14419): 'Dependant.security_scopes' (a dataclass field) and 'Dependant.__init__' (made
+            # by @dataclass) were answered as new code; they are the class's own code (checklist B11)
+            found = _attribute_owner(table, name)
         if not found and name and re.fullmatch(r'[A-Za-z_]\w*', name):
             found = _import_alias(root, table, name)
         if rel:
@@ -1236,6 +1367,13 @@ def _resolve(root, names):
         found.sort(key=lambda x: (_repo.is_doc_path(x[0]), x[0]))
         for r, s in found[:1]:
             out.append({'rel': r, 'name': s.name, 'start': s.start, 'end': s.end, 'line': ''})
+        if not found and name and re.fullmatch(r'[A-Za-z_]\w*', name):
+            # hk30 (rich_3043): the template CONSOLE_HTML_FORMAT, a module-level constant, was "not found in the
+            # repository"; a top-level assignment is a place of its own (the file named first, then any file)
+            hit = assignment(root, table, name, rel)
+            if hit:
+                out.append(hit)
+                continue
         if not found and len(raw) >= 4 and not rel and not re.fullmatch(r'[A-Za-z_][\w.]*', raw):
             # a code fragment (not a bare name the repository does not define, such as a library's): the function or
             # class that contains it
@@ -1243,6 +1381,30 @@ def _resolve(root, names):
             if hit:
                 out.append(hit)
     return out
+
+
+def assignment_span(text, name):
+    """(first, last) line of the top-level assignment of name in a module's text ('NAME = ...', 'NAME: T = ...'), or
+    None."""
+    if not re.search(rf'(?m)^{re.escape(name)}\s*(?::[^=\n]*)?=(?!=)', text or ''):
+        return None
+    tree = _code.parse(text)
+    for node in tree.body if tree is not None else ():
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) and node.value is not None else [])
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            return node.lineno, node.end_lineno
+    return None
+
+
+def assignment(root, table, name, rel=''):
+    """A place for the top-level assignment of name: in the file rel names when it has one, else package code first."""
+    files = sorted(table.syms, key=lambda r: (not (rel and _rank.names_file(rel, r)), _repo.is_doc_path(r), r))
+    for r in files:
+        span = assignment_span(_repo.read_text(root, r), name)
+        if span:
+            return {'rel': r, 'name': name, 'start': span[0], 'end': span[1], 'line': ''}
+    return None
 
 
 def _import_alias(root, table, name):
@@ -1747,9 +1909,11 @@ def _target(syms, p, name):
     cls = pname.rsplit('.', 1)[0] if '.' in pname else ''
     for q in (pname if pname.split('.')[-1] == name else '', f'{pname}.{name}' if pname else '',
               f'{cls}.{name}' if cls else '', name):
-        hit = next((x for x in syms if q and x.name == q), None)
-        if hit:
-            return hit
+        hits = [x for x in syms if q and x.name == q]
+        if hits:
+            # h14 (requests_7505): with @overload stubs the name has several definitions; the last one is the
+            # implementation, the one a new definition without @overload replaces
+            return hits[-1]
     same = [x for x in syms if x.name.split('.')[-1] == name]
     return same[0] if len(same) == 1 else None
 
@@ -1810,6 +1974,19 @@ def _whole_edit(root, p, text):
                     # the new copy; the answer lists the code that still uses the old name
                     t = own
                     repairs.append(f'{p["name"].split(".")[-1]} renamed to {d.name}')
+        if t is not None and not re.search(r'@(typing\.)?overload\b', piece):
+            # h14 (Haiku, requests_7505): the place _encode_params spans its four @overload stubs and the
+            # implementation; the implementation alone was sent and the stubs were deleted. Without @overload in the
+            # new code, only the implementation (the last def of the name, with its own decorators) is replaced
+            old = lines[t.start - 1:t.end]
+            if any(re.match(r'\s*@(typing\.)?overload\b', l) for l in old):
+                defs_at = [i for i, l in enumerate(old) if re.match(rf'\s*(async\s+)?def\s+{re.escape(d.name)}\b', l)]
+                if len(defs_at) > 1:
+                    k = defs_at[-1]
+                    while k > 0 and old[k - 1].lstrip().startswith('@') and \
+                            not re.match(r'\s*@(typing\.)?overload\b', old[k - 1]):
+                        k -= 1
+                    t = types.SimpleNamespace(start=t.start + k, end=t.end)
         if t is not None:
             pad = _indent_of(lines[t.start - 1])
             r = _edit.apply(root, rel, t.start, t.end, textwrap.indent(piece, pad))
@@ -1821,7 +1998,11 @@ def _whole_edit(root, p, text):
             own = next((x for x in syms if x.name == p['name']), None)
             if own is not None:
                 anchor = own.end
-                inner = own.kind == 'class' and not isinstance(d, ast.ClassDef)
+                # h13 (Haiku, requests_7505): the class SupportsRead and, after it at column 0, a module-level
+                # def is_supports_read were sent together; the def went into the class and the module's import of it
+                # failed. A def sent beside its class is a sibling; only a def sent alone with a class is a member
+                sent_with_class = any(isinstance(x, ast.ClassDef) and x.name == p['name'].split('.')[-1] for x in defs)
+                inner = own.kind == 'class' and not isinstance(d, ast.ClassDef) and not sent_with_class
                 pad = _indent_of(lines[own.def_line - 1]) + ('    ' if inner else '')
             else:
                 anchor, pad = len(lines), ''
@@ -2000,20 +2181,60 @@ def _import_bindings(root, first, prefer=None):
     return list(dict.fromkeys(out))
 
 
+def _module_source(module):
+    """(source file, whether it is a package) of a module, found without importing anything (audit 10-18 #16:
+    find_spec of a submodule imports its parent packages, in the script's own process and without a time limit): the
+    top-level module through the import system's finders, its submodules in the package's directories."""
+    import importlib.util
+    loaded = sys.modules.get(module)
+    if loaded is not None:
+        spec = getattr(loaded, '__spec__', None)
+        origin = getattr(spec, 'origin', None) or getattr(loaded, '__file__', None)
+        return (origin, bool(getattr(spec, 'submodule_search_locations', None))) if origin else None
+    head, *rest = module.split('.')
+    try:
+        spec = importlib.util.find_spec(head)
+    except (ImportError, ValueError, AttributeError):
+        return None
+    if spec is None:
+        return None
+    origin, dirs = spec.origin, list(spec.submodule_search_locations or [])
+    for part in rest:
+        if not dirs:
+            return None
+        found = None
+        for d in dirs:
+            if os.path.isfile(os.path.join(d, part, '__init__.py')):
+                found = (os.path.join(d, part, '__init__.py'), [os.path.join(d, part)])
+            elif os.path.isfile(os.path.join(d, part + '.py')):
+                found = (os.path.join(d, part + '.py'), [])
+            elif os.path.isdir(os.path.join(d, part)):
+                found = (None, [os.path.join(d, part)])        # a namespace package
+            if found is not None:
+                break
+        if found is None:
+            return None
+        origin, dirs = found
+    return (origin, bool(dirs)) if origin else None
+
+
 def _library_def(root, dotted, depth=0):
     """(file, start, end, qualified name) of a library definition from its dotted path, following re-exports; None
-    when it is not found or lives in the repository."""
-    import importlib.util
+    when it is not found or lives in the repository. A name of the repository's own packages is never library code,
+    even when a copy of the package is installed (audit 10-18 #8: the installed copy was shown as 'library, read
+    only')."""
     parts = dotted.split('.')
+    if parts[0] in _repo.own_names(root):
+        return None
     for k in range(len(parts) - 1, 0, -1):
         module, attrs = '.'.join(parts[:k]), parts[k:]
         try:
-            spec = importlib.util.find_spec(module)
-        except (ImportError, ValueError, AttributeError):
-            spec = None
-        if spec is None or not spec.origin or not spec.origin.endswith('.py'):
+            found = _module_source(module)
+        except (OSError, ValueError):
+            found = None
+        if found is None or not found[0] or not found[0].endswith('.py'):
             continue
-        path = os.path.realpath(spec.origin)
+        path = os.path.realpath(found[0])
         if path.startswith(os.path.realpath(root) + os.sep):
             return None                 # the repository's own code: it is reached by name, not as a library
         tree = _code.parse(_repo.read_text('/', path))
@@ -2030,7 +2251,7 @@ def _library_def(root, dotted, depth=0):
                         if isinstance(n, ast.ImportFrom):
                             for al in n.names:
                                 if (al.asname or al.name) == name:
-                                    base = module if spec.submodule_search_locations else module.rsplit('.', 1)[0]
+                                    base = module if found[1] else module.rsplit('.', 1)[0]
                                     src = n.module or ''
                                     if n.level:
                                         up = base.split('.')
@@ -3066,6 +3287,20 @@ def _new_names_note(root, state):
             f'too: send its name ({named}) with its sentence, and it is added at the end of that class or file.\n')
 
 
+def _attribute_owner(table, name):
+    """[(rel, class Sym)] for 'Class.attribute' when the class declares or assigns that attribute, or for
+    'Class.__init__' when the class has no __init__ of its own; else []."""
+    cls, _, attr = name.rpartition('.')
+    for r, s in table.find(cls):
+        if s.kind != 'class' or getattr(s, 'node', None) is None:
+            continue
+        own_init = any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == '__init__'
+                       for n in s.node.body)
+        if (attr == '__init__' and not own_init) or attr in class_attributes(s.node):
+            return [(r, s)]
+    return []
+
+
 def _new_definition_owner(root, name):
     """(place dict, new short name) for a definition that does not exist yet: 'Class.new' (an existing class) or
     'path.py::new' (an existing file's top level); else None."""
@@ -3701,6 +3936,8 @@ def main(argv, role=None, opening=False):
               'other has answered.')
         return
     state = _state.load('journal') or _journal.new()
+    # the tests and probes this call runs end before the task's time does (audit 10-18 #10; eval_config.yaml)
+    _tests.DEADLINE = max(time.time() + 5, state.get('t0', time.time()) + TASK_S - 10)
     if state['step'] == 'D2':
         _journal.back(state)        # (D2 is only left by a crash between choosing and planning: choose again)
     _SEEN['state'] = state

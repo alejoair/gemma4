@@ -1,0 +1,40 @@
+{
+ "task": "fastapi_11194",
+ "note": "resolved in vf4 (control); the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "When declaring an endpoint which accepts a `File` but also a `Form` parameter, the `File` parameter must be declared first or the endpoint would respond with error 422.",
+      "An endpoint accepting both `File` and `Form` parameters does not respond with error 422 when `File` is declared after `Form`."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "_extract_form_body"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

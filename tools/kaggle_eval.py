@@ -28,6 +28,7 @@ import random
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
@@ -307,6 +308,49 @@ def start_watchdog(server, probe_every: int = 30, misses: int = 3):
     threading.Thread(target=loop, daemon=True).start()
 
 
+def bench_concurrency(port=8000, levels=(1, 2, 4), max_tokens=300):
+    """Aggregate generation speed with 1, 2 and 4 requests at once (docs/time_proposals: parallel agents pay off only
+    if vLLM batches them on the 4xL4). Each request asks for max_tokens tokens without thinking."""
+    import json as _json
+    import threading
+    import urllib.request
+
+    base = f'http://127.0.0.1:{port}/v1'
+    try:
+        model = _json.loads(urllib.request.urlopen(base + '/models', timeout=30).read())['data'][0]['id']
+    except Exception as e:                        # never stop the evaluation for the benchmark
+        print(f'bench: no model list ({e})')
+        return
+
+    def one(i, out):
+        body = {'model': model, 'max_tokens': max_tokens, 'temperature': 0.0, 'ignore_eos': True,
+                'chat_template_kwargs': {'enable_thinking': False},
+                'messages': [{'role': 'user', 'content': f'Write a long story about a lighthouse keeper number {i}.'}]}
+        req = urllib.request.Request(base + '/chat/completions', data=_json.dumps(body).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        try:
+            r = _json.loads(urllib.request.urlopen(req, timeout=600).read())
+            out.append(r['usage']['completion_tokens'])
+        except Exception as e:
+            print(f'bench: request failed ({e})')
+
+    one(0, [])                                    # warm-up
+    for k in levels:
+        threads = []
+        res = []
+        t0 = time.time()
+        for i in range(k):
+            th = threading.Thread(target=one, args=(i, res))
+            th.start()
+            threads.append(th)
+        for th in threads:
+            th.join()
+        dt = time.time() - t0
+        tok = sum(res)
+        print(f'BENCH concurrency={k}: {tok} tokens in {dt:.1f}s = {tok / dt:.1f} tok/s aggregate, '
+              f'{tok / dt / max(1, k):.1f} tok/s per request', flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--submission', type=Path, required=True)
@@ -315,6 +359,13 @@ def main() -> None:
     ap.add_argument('--tasks', default='', help='comma-separated instance ids (overrides --n/--seed)')
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--skip-install', action='store_true')
+    ap.add_argument('--concurrency', type=int, default=1, help='tasks run at once')
+    ap.add_argument('--bench-concurrency', action='store_true', help='measure vLLM with 1, 2, 4 requests at once first')
+    ap.add_argument('--exclude', default='', help='comma-separated instance ids never chosen (with --screen)')
+    ap.add_argument('--screen', type=int, default=0,
+                    help='choose this many tasks that can be scored here (judge.screen), from every task not excluded')
+    ap.add_argument('--screen-seed', type=int, default=1)
+    ap.add_argument('--screen-workers', type=int, default=6)
     args = ap.parse_args()
 
     logfh = open(WORK / 'eval_log.txt', 'a', encoding='utf-8')
@@ -338,6 +389,7 @@ def main() -> None:
     from swegemma.models import load_tasks
     sys.path.insert(0, str(Path(__file__).resolve().parent))     # judge.py and eval_env.py ship next to this file
     import eval_env
+    import journals
     import judge
     eval_env.patch()            # the tests import the task's src/ code (see eval_env.py for what is known of the scorer)
     judge.install_capture()     # per-test outcomes from the JUnit report of every verify_task run
@@ -383,6 +435,8 @@ def main() -> None:
     start_watchdog(server)
     print(f'vLLM ready after {time.time() - t0:.0f}s; log file: {server.log_path}')
     print(sh(f'tail -n 25 {server.log_path}'))
+    if args.bench_concurrency:
+        bench_concurrency()
     models = server.create_model_registry(aliases=[declared, MODEL], model_prefix='openai/', api_key='EMPTY')
     vllm_offset = len(Path(server.log_path).read_text(encoding='utf-8', errors='replace'))
 
@@ -407,27 +461,44 @@ def main() -> None:
         max_turns=int(ev['max_turns']) if ev.get('max_turns') is not None else None,
         limits=limits, generation_constraints=constraints, adapter_manifest=adapters,
         context_cache_config=ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10),
-        events_compaction_config=EventsCompactionConfig(compaction_interval=15, overlap_size=2, token_threshold=COMPACTION_THRESHOLD, event_retention_size=5),
+        events_compaction_config=EventsCompactionConfig(compaction_interval=5, overlap_size=2, token_threshold=COMPACTION_THRESHOLD, event_retention_size=5),
         graph_dir=str(DATA_DIR / 'graphs'), embeddings_dir=str(DATA_DIR / 'embeddings'), wheels_dir=DATA_DIR / 'wheels', verbose=True,
     )
     evaluator = Evaluator(config)
     log_sandbox_packages(evaluator, judge)
+    judge_cache = WORK / 'judge_cache'
+    if args.screen:
+        # only tasks this environment can score: the reference runs and passes the harness's whole-file check and some
+        # test fails without it (V25-30: 8 of 30 had no score here). The runs are cached for the judge.
+        banner(f'SCREEN {args.screen} tasks')
+        excluded = {x.strip() for x in args.exclude.split(',') if x.strip()}
+        cands = judge.screen_order([t for t in all_tasks if t.instance_id not in excluded], args.screen_seed)
+        tasks, srows = judge.screen(evaluator, cands, args.screen, judge_cache, workers=args.screen_workers)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out.parent / 'screen.csv', 'w', newline='') as sf:
+            sw = csv.DictWriter(sf, list(srows[0]) if srows else ['task_id'])
+            sw.writeheader()
+            sw.writerows(srows)
+        print(f'screened {len(srows)} candidates in {(time.time() - t_start) / 60:.1f} min; tasks:',
+              ','.join(t.instance_id for t in tasks), flush=True)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fields = ['task_id', 'repo', 'resolved', 'judged', 'official_feasible', 'f2p', 'f2p_failing', 'p2p_broken',
               'required_failing', 'flaky', 'judge_note', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls',
               'duration_s', 'error']
-    judge_cache = WORK / 'judge_cache'
     rows = []
     with open(args.out, 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
         wr.writeheader()
         t0 = time.time()
-        for i, task in enumerate(tasks, 1):
-            banner(f'TASK {i}/{len(tasks)} {task.instance_id} ({task.repo})  elapsed {(time.time() - t0) / 60:.1f} min')
+        lock = threading.Lock()
+        state = {'vllm_offset': vllm_offset}
+
+        def run_one(i, task, r=None, err=None, mark=None):
+            """Everything after the agent's run: the row, the logs, the judge (r is the harness's result)."""
             try:
-                mark = judge.capture_mark()
-                r = run_sync(evaluator.evaluate_task, task=task, task_index=i, total_tasks=len(tasks))
+                if err is not None:
+                    raise err
                 row = dict(task_id=task.instance_id, repo=task.repo, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                            patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
                            duration_s=round(r.duration_seconds, 1), error=(r.error_message or '')[:300])
@@ -467,13 +538,45 @@ def main() -> None:
                 summarize_trace(task.instance_id, results_dir)
             except Exception as e:  # noqa: BLE001
                 print(f'(trace summary failed: {type(e).__name__}: {e})')
-            vllm_offset = vllm_new_lines(server, vllm_offset)
-            rows.append(row)
-            wr.writerow(row)
-            fh.flush()
+            try:
+                # the skill's journal: every call and its whole answer (the trace loses parallel workers' answers, h13)
+                journals.copy(results_dir / 'traces' / f'trace_{task.instance_id}.json',
+                              WORK / f'journal_{task.instance_id}.jsonl',
+                              since=time.time() - float(getattr(r, 'duration_seconds', 0) or 0) - 120)
+            except Exception as e:  # noqa: BLE001
+                print(f'(journal not copied: {type(e).__name__}: {e})')
+            with lock:
+                state['vllm_offset'] = vllm_new_lines(server, state['vllm_offset'])
+                rows.append(row)
+                wr.writerow(row)
+                fh.flush()
             print(f"\n[{i}/{len(tasks)}] {row['task_id']} resolved={row['resolved']} patch={row['patch_chars']} "
                   f"tools={row['tool_calls']} llm={row['llm_calls']} {row['duration_s']}s error={row['error'][:120]!r} "
                   f"(elapsed {(time.time() - t0) / 60:.1f} min)", flush=True)
+
+        # several tasks at once (--concurrency): vLLM on the 4xL4 gives 3.6x the throughput with 4 requests (V25's
+        # bench), each about 10% slower than alone; the harness's own CLI runs tasks concurrently the same way
+        # in one event loop, as the harness's CLI does it; what follows the agent (judge, logs) runs in a thread
+        async def run_all():
+            sem = asyncio.Semaphore(max(1, args.concurrency))
+
+            async def worker(i, task):
+                async with sem:
+                    banner(f'TASK {i}/{len(tasks)} {task.instance_id} ({task.repo})  elapsed '
+                           f'{(time.time() - t0) / 60:.1f} min')
+                    mark = judge.capture_mark()
+                    try:
+                        r, err = await evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)), None
+                    except Exception as e:  # noqa: BLE001
+                        r, err = None, e
+                    # the judge runs verify_task with asyncio.run, which cannot run inside this loop: always in a
+                    # thread (vf1, one task at a time: every judgement failed with 'asyncio.run() cannot be called
+                    # from a running event loop')
+                    await asyncio.to_thread(run_one, i, task, r, err, mark)
+
+            await asyncio.gather(*(worker(i, task) for i, task in enumerate(tasks, 1)))
+
+        asyncio.run(run_all())
 
     banner('SUMMARY')
     solved = sum(r['resolved'] for r in rows)
