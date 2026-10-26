@@ -16,7 +16,6 @@ The model names code by its name; the ids (C2, P1, R1) stay inside the journal a
 import ast
 import collections
 import difflib
-import itertools
 import json
 import os
 import re
@@ -788,11 +787,11 @@ def _context_view(root, p, focus=None):
         uses.append(text)
         room -= len(text)
     short = own.split('.')[-1]
-    callers = () if short.startswith('__') else (
+    callers = [] if short.startswith('__') else [
         (r, c, n) for r, c, n in table.calls.iter(short, order=lambda r: (r != p['rel'], r)) if c and (r, c) != (
-            p['rel'], own) and not _repo.is_doc_path(r))
+            p['rel'], own) and not _repo.is_doc_path(r)]
     calls = []
-    for r, c, n in itertools.islice(callers, n_callers):    # (read only as far as the callers shown)
+    for r, c, n in callers[:n_callers]:
         text = _repo.read_lines(root, r)[n - 1].strip()
         calls.append(f'  {r}:{n} in {c}: {text[:80]}')
     out = []

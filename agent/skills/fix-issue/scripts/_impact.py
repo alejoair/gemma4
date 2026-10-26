@@ -7,7 +7,6 @@ import os
 import re
 from collections import namedtuple
 
-import _code
 import _map
 import _repo
 

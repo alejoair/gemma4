@@ -833,9 +833,9 @@ Generic: it removes a harness-level mechanism; nothing depends on a repository o
 | Impact table and `Index.names`/`owner_class`: the same answers for ~150 sampled names per repository (find, calls, reads, uses, exports, subclasses, bases, related) | — | **0 differences** in 2,416 (rich), 2,354 (fastapi) and 2,500 (moto) answers |
 | `tools/bench_locate.py`, 129 dev tasks: hit@1 / @3 / @5 / @10 | 31% / 55% / 65% / 70% | 34% / 55% / 64% / 71%; the same first rank in 100 tasks, the gold place enters the top 10 in 4 and leaves it in 3 |
 | bench_locate seconds per task | ~60 (whole index) | 1.0 |
-| Replay of moto_5865's Haiku journal (12 calls, cold state) | 130.5 s | 8.0 s |
-| Replay of a django task (2,900 files, 10 calls) | 95.9 s | 10.9 s |
-| Replay of the 30 h17 journals (fastapi, rich, requests) | 5-23 s per task | 2-11 s per task, no traceback; answers differ from the first candidate list on (the order of some candidates) |
+| Replay of moto_5865's Haiku journal (12 calls, cold state) | 130.5 s | 8.2 s |
+| Replay of a django task (2,900 files, 10 calls) | 95.9 s | 11.5 s |
+| Replay of the 30 h17 journals (fastapi, rich, requests) | 5-23 s per task | 1.8-7.6 s per task, no traceback and no internal error; answers differ from the first candidate list on (the order of some candidates) |
 
 | Item | Effect | Why |
 |---|---|---|
