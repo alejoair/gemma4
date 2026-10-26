@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import _boot  # noqa: E402,F401  (bytecode reused between calls)
 import _stages  # noqa: E402
 
 if __name__ == '__main__':

@@ -126,6 +126,10 @@ characters (the specifier's view at about 27,000).
   requirements quoted from the statement (never by a reproduction test, which is optional evidence), agents
   requirements / reproduce / locate / scope / specify / edit / review, the coordinator only routes. Designed, not built
   yet.
+- 10-26 (the user's): **a lazy repository map** (`_map.py`, `docs/design_fast.md`): every call rebuilt the index and
+  the impact table from all files (moto_5865: 130 s of script time per task; django 96 s). Now git grep names the files
+  a question needs, each file's record is kept on disk by its content, BM25's statistics are estimated, and the
+  scripts' bytecode is reused (`_boot.py`): moto 8 s, django 11 s, the impact table's answers identical.
 
 ## Results so far
 

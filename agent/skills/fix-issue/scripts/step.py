@@ -16,6 +16,7 @@ The model names code by its name; the ids (C2, P1, R1) stay inside the journal a
 import ast
 import collections
 import difflib
+import itertools
 import json
 import os
 import re
@@ -26,12 +27,14 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import _boot  # noqa: E402,F401  (bytecode reused between calls)
 import _args  # noqa: E402
 import _code  # noqa: E402
 import _edit  # noqa: E402
 import _example  # noqa: E402
 import _impact  # noqa: E402
 import _journal  # noqa: E402
+import _map  # noqa: E402
 import _rank  # noqa: E402
 import _repo  # noqa: E402
 import _state  # noqa: E402
@@ -544,7 +547,7 @@ def class_attributes(node):
 def _keyword_sites(root, table, callee, keyword, trees, limit=2):
     """[(rel, caller, line number, line text, value node)] of calls of callee (a short name) that pass keyword=."""
     out = []
-    for r, c, n in table.calls.get(callee, []):
+    for r, c, n in table.calls.iter(callee):        # (files read only until limit sites are found)
         if _repo.is_test_path(r) or _repo.is_doc_path(r):
             continue
         if r not in trees:
@@ -705,6 +708,7 @@ def _context_view(root, p, focus=None):
     # code that shares words with the requirements first; at most 2 that share none (near-miss context costs more than
     # it gives: Chroma, P7)
     order = sorted(dict.fromkeys((n, h) for _, n, h in sorted(used)), key=lambda it: -weight(it))
+    table.prefetch([n for n, _ in order] + [orig for _, orig in imported.values()])
     plain = 0
     for name, how in order:
         defs = [(r, x) for r, x in resolve(name, how)
@@ -784,12 +788,11 @@ def _context_view(root, p, focus=None):
         uses.append(text)
         room -= len(text)
     short = own.split('.')[-1]
-    callers = [] if short.startswith('__') else [
-        (r, c, n) for r, c, n in table.calls.get(short, []) if c and (r, c) != (p['rel'], own)
-        and not _repo.is_doc_path(r)]
-    callers.sort(key=lambda c: (c[0] != p['rel'], c[0], c[2]))
+    callers = () if short.startswith('__') else (
+        (r, c, n) for r, c, n in table.calls.iter(short, order=lambda r: (r != p['rel'], r)) if c and (r, c) != (
+            p['rel'], own) and not _repo.is_doc_path(r))
     calls = []
-    for r, c, n in callers[:n_callers]:
+    for r, c, n in itertools.islice(callers, n_callers):    # (read only as far as the callers shown)
         text = _repo.read_lines(root, r)[n - 1].strip()
         calls.append(f'  {r}:{n} in {c}: {text[:80]}')
     out = []
@@ -995,12 +998,12 @@ def _rank_candidates(root, text, extra_items, requirements, n=N_CANDIDATES, only
             var, new = name.rsplit('.', 1)
             owner = _rank.owner_class(index, var.split('.')[-1])
             if owner and owner not in seen:
-                doc = next((d for d in index.docs if (d.rel, d.name) == owner), None)
+                doc = index.doc(*owner)
                 if doc:
                     seen.add(owner)
                     out.append(_candidate(index, doc, [], note=f'where the new `{new}` would go', root=root,
                                           literals=literals, toks=toks))
-    ranked = index.rank(terms, _statement.paths(text), n=len(index.docs), guessed=mpaths)
+    ranked = index.rank(terms, _statement.paths(text), n=None, guessed=mpaths)
     per_file, more = {}, {}
     for _, doc, matched in ranked:
         if only_rel and doc.rel != only_rel or within and not doc.name.startswith(within + '.'):
@@ -1164,8 +1167,10 @@ def _search(root, text, n=N_CANDIDATES, near=(), only=None):
     work is on) come first; only, a file, limits the search to it."""
     pat = _search_pattern(text)
     groups, tests, total = collections.OrderedDict(), [], 0
+    # only the files that hold the text's longest word are read (_map: git grep; audit 10-26)
+    holding = _map.having(root, max(text.split(), key=len), word=False) if text.split() else set()
     for rel in _repo.iter_py(root, tests=True, docs=True):
-        if only and rel != only:
+        if only and rel != only or rel not in holding:
             continue
         lines = _repo.read_lines(root, rel)
         hits = [i for i, l in enumerate(lines, 1) if pat.search(l)]
@@ -1183,12 +1188,11 @@ def _search(root, text, n=N_CANDIDATES, near=(), only=None):
     if not groups:
         return [], tests, total
     index = _rank.Index(root)
-    docs = {(d.rel, d.name): d for d in index.docs}
     order = sorted(groups, key=lambda k: (_repo.is_doc_path(k[0]), k[0] not in near, -len(groups[k]), k[0],
                                           groups[k][0]))
     out = []
     for key in order:
-        doc = docs.get(key)
+        doc = index.doc(*key)
         if doc is None or len(out) >= n:
             continue
         c = _candidate(index, doc, [])
@@ -1310,7 +1314,6 @@ def _owner_candidates(root, state, rel, a, b):
         if k not in keys:
             keys.append(k)
     index = _rank.Index(root)
-    docs = {(d.rel, d.name): d for d in index.docs}
     literals = [x for x in dict.fromkeys(re.findall(r'`([^`\n]{4,60})`', text)) if len(x) >= 4]
     toks = {}
     for term in _statement.terms(text):
@@ -1318,8 +1321,8 @@ def _owner_candidates(root, state, rel, a, b):
             for t in _rank.tokens(ident):
                 if len(t) >= 4 and t not in _statement.STOP:
                     toks[t] = 1
-    out = [_candidate(index, docs[k], [], root=root, literals=literals, toks=toks) for k in keys[:N_CANDIDATES]
-           if k in docs]
+    out = [_candidate(index, index.doc(*k), [], root=root, literals=literals, toks=toks) for k in keys[:N_CANDIDATES]
+           if index.doc(*k) is not None]
     for i, c in enumerate(out, 1):
         c['id'] = f'C{i}'
     _set_handles(out)
@@ -1334,8 +1337,9 @@ def _resolve(root, names):
         raw = _args.clean(raw)
         top = re.fullmatch(r'(?:[\w./-]+::)?([\w./-]+\.py) top level', raw.strip())
         if top:                             # a file's top-level code by its handle, also for a big file
-            doc = next((d for d in _rank.Index(root).docs if d.sym is None and _rank.names_file(top.group(1), d.rel)),
-                       None)
+            index = _rank.Index(root)
+            doc = next((index.doc(r, None) for r in index.files if _rank.names_file(top.group(1), r)
+                        and index.doc(r, None) is not None), None)
             if doc is not None:
                 out.append({'rel': doc.rel, 'name': MODULE, 'start': doc.start, 'end': doc.end, 'line': ''})
             continue
@@ -1399,7 +1403,7 @@ def assignment_span(text, name):
 
 def assignment(root, table, name, rel=''):
     """A place for the top-level assignment of name: in the file rel names when it has one, else package code first."""
-    files = sorted(table.syms, key=lambda r: (not (rel and _rank.names_file(rel, r)), _repo.is_doc_path(r), r))
+    files = sorted(table.where(name), key=lambda r: (not (rel and _rank.names_file(rel, r)), _repo.is_doc_path(r), r))
     for r in files:
         span = assignment_span(_repo.read_text(root, r), name)
         if span:
@@ -1412,7 +1416,7 @@ def _import_alias(root, table, name):
     `from ._types import SupportsRead as _SupportsRead`): the definition it stands for (requests_7502, local run p1:
     the specifier asked for _SupportsRead and was told no pair was read)."""
     out = []
-    for rel in table.syms:
+    for rel in table.where(name):
         text = _repo.read_text(root, rel)
         if f'as {name}' not in text:
             continue
@@ -1446,14 +1450,18 @@ def _dotted_or_case(table, name):
                 if sym is not None:
                     return [(rel, sym)]
     low = name.lower()
-    hits = [(rel, s) for rel, syms in table.syms.items() for s in syms if s.name.lower() == low]
+    holding = _map.having(table.root, name.split('.')[-1], ignore_case=True) if _map.IDENT.match(
+        name.split('.')[-1]) else set()
+    hits = [(rel, s) for rel in table.files() if rel in holding for s in table.syms.get(rel, [])
+            if s.name.lower() == low]
     return hits[:1]
 
 
 def _find_text(root, table, text):
     """The innermost function or class whose lines contain text literally (package code before docs and scripts)."""
     needle = re.sub(r'\s+', ' ', text.strip())
-    for rel in sorted(table.syms, key=lambda r: (_repo.is_doc_path(r), r)):
+    holding = _map.having(table.root, max(needle.split(' '), key=len), word=False) if needle else set()
+    for rel in sorted((r for r in table.syms if r in holding), key=lambda r: (_repo.is_doc_path(r), r)):
         lines = _repo.read_lines(root, rel)
         for i, line in enumerate(lines, 1):
             if needle in re.sub(r'\s+', ' ', line):
@@ -2164,7 +2172,8 @@ def _range_request(root, state, args):
 def _import_bindings(root, first, prefer=None):
     """The dotted import paths the repository binds the name first to (from M import X as first; import M as first),
     those of the file prefer first, then package code, tests last."""
-    rels = sorted(_repo.iter_py(root, tests=True, docs=False),
+    holding = _map.having(root, first, word=False)
+    rels = sorted((r for r in _repo.iter_py(root, tests=True, docs=False) if r in holding),
                   key=lambda r: (r != prefer, _repo.is_test_path(r), r))
     out = []
     for rel in rels:
@@ -2636,7 +2645,9 @@ def _old_name_uses(root, before, after, rel=''):
         pat = re.compile(r'\.' + re.escape(name) + r'\b|(?<![\w.])' + re.escape(name) + r'\s*\(')
         hits = []
         home = rel.split('/')[:-1]
-        for f in sorted(_repo.iter_py(root, docs=False), key=lambda f: f.split('/')[:-1] != home):
+        holding = _map.having(root, name)
+        for f in sorted((f for f in _repo.iter_py(root, docs=False) if f in holding),
+                        key=lambda f: f.split('/')[:-1] != home):
             lines = _repo.read_lines(root, f)
             owner = None
             for n, line in enumerate(lines, 1):

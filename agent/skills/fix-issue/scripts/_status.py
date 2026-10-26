@@ -6,6 +6,7 @@ import difflib
 import re
 
 import _code
+import _map
 import _repo
 
 if __name__ == '__main__':
@@ -114,7 +115,10 @@ def defined(root, name):
     """Where code defines name (its last part): 'file :: Qual.name' for functions, classes and assignments at the top
     of a module or class, '' when nothing does."""
     short = name.split('.')[-1]
+    holding = _map.having(root, short, word=False)     # only the files that hold it are read (audit 10-26)
     for rel in _repo.iter_py(root, docs=False):
+        if rel not in holding:
+            continue
         text = _repo.read_text(root, rel)
         if short not in text:
             continue

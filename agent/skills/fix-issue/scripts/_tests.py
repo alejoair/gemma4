@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 
+import _map
 import _repo
 import _state
 
@@ -171,8 +172,9 @@ def example(root, rel, name, max_lines=6):
     stem = os.path.basename(rel)[:-3].lstrip('_')
     own = {f'test_{stem}.py', f'{stem}_test.py'}
     files = []
+    holding = _map.having(root, short)          # only the test files that name it are read (audit 10-26)
     for r in _repo.iter_py(root, tests=True):
-        if not _repo.is_test_path(r) or os.path.basename(r) == 'conftest.py':
+        if not _repo.is_test_path(r) or os.path.basename(r) == 'conftest.py' or r not in holding:
             continue
         text = _repo.read_text(root, r)
         if pattern.search(text):
@@ -386,10 +388,10 @@ def _test_imports(root):
     for email_validator, which pydantic imports, made pydantic fail on its missing metadata and every fastapi test file
     with it)."""
     found = set()
-    for rel in _repo.iter_py(root, tests=True):
+    for rel, lines in _map.import_lines(root).items():
         if not _repo.is_test_path(rel):
             continue
-        for m in re.findall(r'(?m)^\s*(?:from|import)\s+([A-Za-z_]\w*)', _repo.read_text(root, rel)):
+        for m in re.findall(r'(?m)^\s*(?:from|import)\s+([A-Za-z_]\w*)', '\n'.join(lines)):
             found.add(m)
     return found
 

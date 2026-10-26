@@ -18,6 +18,7 @@ its own script; the answer of every call ends with NEXT. The state is one JSON d
 existing helpers of step.py (ranking, search, views, whole-definition edits) and _tests.py (checks) are reused."""
 import ast
 import difflib
+import itertools
 import json
 import os
 import re
@@ -28,6 +29,7 @@ import time
 import _args
 import _code
 import _impact
+import _map
 import _rank
 import _repo
 import _state
@@ -420,13 +422,16 @@ def _library_modules(root, top=8):
     import collections
     own = _repo.own_names(root)
     count = collections.Counter()
-    for rel in _repo.iter_py(root, docs=False):
-        tree = _code.parse(_repo.read_text(root, rel))
-        for node in ast.walk(tree) if tree is not None else ():
-            mods = [a.name for a in node.names] if isinstance(node, ast.Import) else (
-                [node.module] if isinstance(node, ast.ImportFrom) and node.module and not node.level else [])
-            for m in mods:
-                head = m.split('.')[0]
+    code = set(_repo.iter_py(root, docs=False))
+    for rel, lines in _map.import_lines(root).items():     # git grep's import lines: no file is read (audit 10-26)
+        if rel not in code:
+            continue
+        for line in lines:
+            m = re.match(r'\s*from\s+([A-Za-z_][\w.]*)\s+import\b', line)
+            mods = [m.group(1)] if m else [] if line.lstrip().startswith('from') else [
+                x.split()[0] for x in re.sub(r'^\s*import\s+', '', line).split(',') if x.strip()]
+            for mod in mods:
+                head = mod.split('.')[0]
                 if head not in own and head not in sys.stdlib_module_names and not head.startswith('_'):
                     count[head] += 1
     out = [m for m, _ in count.most_common(top)]
@@ -648,17 +653,14 @@ def _param_owners(table, name):
     if not re.fullmatch(r'[A-Za-z_]\w*', name or ''):
         return []
     out = []
-    for rel, syms in table.syms.items():
-        for sym in syms:
-            if sym.kind == 'class' or not hasattr(sym.node, 'args'):
-                continue
-            a = sym.node.args
-            params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | {x.arg for x in (a.vararg, a.kwarg) if x}
-            if name in params:
+    for rel in table.where(name):           # the files that hold the name (audit 10-26: not every file's code)
+        for sym in table.syms.get(rel, []):
+            if sym.kind != 'class' and name in table.params(rel, sym.name):
                 out.append((rel, sym.name))
     # the most called first (the public entry points an issue talks about): rich's 'end' is in 16 functions
+    called = table.call_estimates([q.split('.')[-1] for _, q in out])
     out.sort(key=lambda x: (any(part.startswith('_') and not part.startswith('__') for part in x[1].split('.')),
-                            _repo.is_doc_path(x[0]), -len(table.calls.get(x[1].split('.')[-1], [])), x[0], x[1]))
+                            _repo.is_doc_path(x[0]), -called.get(x[1].split('.')[-1], 0), x[0], x[1]))
     return out
 
 
@@ -728,8 +730,9 @@ def _word_template(root, text, max_lines=14):
     if not words:
         return None
     best = None
+    holding = _map.having_any(root, words, word=False, ignore_case=True)
     for rel in _repo.iter_py(root, tests=True):
-        if not _repo.is_test_path(rel) or os.path.basename(rel) == 'conftest.py':
+        if not _repo.is_test_path(rel) or os.path.basename(rel) == 'conftest.py' or rel not in holding:
             continue
         src = _repo.read_text(root, rel)
         low = src.lower()
@@ -1022,14 +1025,16 @@ def _candidates(root, st, r, n=8):
         index = _rank.Index(root)
         q = index.query({**_statement.terms(text), **{x: 3 for x in r['names']}})
         extra = []
-        for d in index.docs:
-            if f'{d.rel}::{d.name}' in called and not any(_key(c) == f'{d.rel}::{d.name}' for c in cands):
+        for k in sorted(called):
+            rel, _, name = k.partition('::')
+            d = index.doc(rel, name)
+            if d is not None and not any(_key(c) == k for c in cands):
                 s, m = index.score(d, q)
                 if s > 0:
                     extra.append((s, d, m))
-        extra.sort(key=lambda x: -x[0])
-        top = max([index.score(d, q)[0] for d in index.docs if any(_key(c) == f'{d.rel}::{d.name}' for c in cands)]
-                  or [0])
+        extra.sort(key=lambda x: (-x[0], x[1].rel, x[1].start))
+        top = max([index.score(d, q)[0] for d in (index.doc(c['rel'], c['name']) for c in cands if c.get('name'))
+                   if d is not None] or [0])
         extra = [x for x in extra if x[0] >= 0.5 * top]     # the test's own setup (Console.__init__) says little
         for _, d, m in extra[:3]:
             c = step._candidate(index, d, m, note='the reproduction test runs it', root=root)
@@ -1064,7 +1069,6 @@ def _with_callees(root, cands, text, names, top=3, limit=3):
     table = _impact.Table(root, docs=False)
     index = _rank.Index(root)
     q = index.query({**_statement.terms(text), **{x: 3 for x in names}})
-    docs = {(d.rel, d.name): d for d in index.docs if d.sym is not None}
     seen = {_key(c) for c in cands}
     found = []
     for c in [c for c in cands if c.get('name') not in (None, MODULE) and ', class)' not in (c.get('line') or '')
@@ -1078,7 +1082,7 @@ def _with_callees(root, cands, text, names, top=3, limit=3):
             k = f"{d['rel']}::{d['name']}"
             if k in seen or _repo.is_test_path(d['rel']) or _repo.is_doc_path(d['rel']):
                 continue
-            doc = docs.get((d['rel'], d['name']))
+            doc = index.doc(d['rel'], d['name']) if d['name'] not in (None, MODULE) else None
             s = index.score(doc, q)[0] if doc is not None else 0
             if d in wrapped or s > 0:
                 seen.add(k)
@@ -1114,10 +1118,10 @@ def _with_callers(root, cands, top=3, limit=4):
         psym = table.get(c['rel'], parent) if parent else None
         # not a dunder, a nested function, or a name called in many places ('app'): their callers say little
         return not (short.startswith('__') or short in COMMON_METHODS or (psym is not None and psym.kind == 'def')
-                    or len(table.calls.get(short, [])) > 8)
+                    or table.calls.count(short, 8) > 8)
 
     for c in [c for c in cands if eligible(c)][:top]:
-        sites = table.calls.get(c['name'].split('.')[-1], [])
+        sites = table.calls.iter(c['name'].split('.')[-1])
         for r, caller, line in sites:
             if not caller or _repo.is_test_path(r) or _repo.is_doc_path(r) or f'{r}::{caller}' in seen:
                 continue
@@ -1328,8 +1332,9 @@ def _importers(root, table, located, limit=4):
         last = os.path.basename(p['rel'])[:-3]
         pat = re.compile(r'^\s*(from\s+(' + '|'.join(re.escape(m) for m in mods) + r'|\.+' + re.escape(last) +
                          r')\s+import|import\s+(' + '|'.join(re.escape(m) for m in mods) + r')\b)', re.M)
+        holding = _map.having_any(root, [m.split('.')[-1] for m in mods] + [last])
         for rel in table.syms:
-            if rel == p['rel'] or _repo.is_test_path(rel) or _repo.is_doc_path(rel):
+            if rel == p['rel'] or _repo.is_test_path(rel) or _repo.is_doc_path(rel) or rel not in holding:
                 continue
             text = _repo.read_text(root, rel)
             m = pat.search(text)
@@ -1613,7 +1618,8 @@ def _order(root, plan):
     keys = {_key(p) for p in plan}
     callees = {}
     for p in plan:
-        callers = {f'{r}::{c}' for r, c, _ in table.calls.get(p['name'].split('.')[-1], []) if c}
+        callers = {f'{r}::{c}' for q in plan for r, c, _ in table.calls.in_file(q['rel'], p['name'].split('.')[-1])
+                   if c}
         for k in callers & keys:
             if k != _key(p):
                 callees.setdefault(k, set()).add(_key(p))
@@ -2601,7 +2607,11 @@ def _dropped_uses(root, p, before, after):
         if len(defs) != 1 or a.startswith('__'):
             continue
         r, d = defs[0]
-        users = table.uses.get(a, []) + table.reads.get(a, []) + [c for c in table.calls.get(a, []) if c[1]]
+        users = []
+        for u in itertools.chain(table.uses.iter(a), table.reads.iter(a), (c for c in table.calls.iter(a) if c[1])):
+            users.append(u)
+            if len(users) > _impact.MAX_USES:
+                break
         if len(users) > _impact.MAX_USES:
             continue
         users = [u for u in dict.fromkeys(users) if (u[0], u[1]) != (p['rel'], p['name']) and u[1] != d.name

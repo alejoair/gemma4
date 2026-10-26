@@ -241,9 +241,10 @@ def _imported(root):
     acme.billing)."""
     if root in _IMPORTED:
         return _IMPORTED[root]
+    import _map                  # (here: _map imports this module)
     out = set()
-    for rel in iter_py(root, tests=True):
-        text = read_text(root, rel)
+    for rel, lines in _map.import_lines(root).items():
+        text = '\n'.join(lines)     # (git grep gives the import lines: no file is read; audit 10-26)
         found = re.findall(r'(?m)^[ \t]*from[ \t]+([A-Za-z_][\w.]*)[ \t]+import\b', text)
         for group in re.findall(r'(?m)^[ \t]*import[ \t]+([A-Za-z_][\w. \t,]*)', text):
             found += [x.split()[0] for x in group.split(',') if x.strip()]

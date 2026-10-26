@@ -814,3 +814,34 @@ S9 had three parallel stages and ran, so this is not proven to be S10's cause. I
 | B5 no idle agents | closer | No second specifier waiting with nothing to do (h14: idle in many tasks) |
 
 Generic: it removes a harness-level mechanism; nothing depends on a repository or an issue.
+
+### A lazy repository map (10-26, the user's: "only what is needed is loaded, and the time does not grow with the repository's size")
+
+**The fault.** Every script call is a new process (the ADK writes the skill to a new temporary directory and runs it), and `_repo.memo` kept the search index (`_rank.Index`) and the impact table (`_impact.Table`) only for one process. So every call that ranked candidates or looked a name up parsed and indexed every file of the repository again. On our dev repositories (fastapi, rich, requests: 100-1,100 files) that was 1-2 s per call and was never seen. On a large repository it is most of the task: replaying the Haiku journal of moto_5865 (1,500 files) took **130 s of script time** (req 19 s, locate 26 s, specify 27 s), and a django task 96 s, on our machine. The scorer's sandbox (2 vCPU, Docker, possibly gVisor) is slower, and its budget is 5 minutes for the whole task, model time included. The competition's ~120 tasks come from private repositories of unknown size: this is a likely reason for the ~0.06 on the leaderboard against 7-16 of 30 in our own evals (S7-S12).
+
+**The design** (`agent/skills/fix-issue/scripts/_map.py`):
+- **git decides which files are read.** `git grep -P` (tracked and untracked files; the ones git does not see are read directly; without git or Perl regexes, every file is read with the same regex) answers "which files can hold this name": as a word, as a definition (`def name`, `class name`), as a call (`name(`), as an attribute (`.name`). The window of a place looks up all its names in one grep (`Table.prefetch`).
+- **One file's record, kept on disk.** What the table needs of a file (its functions and classes, base classes, parameters, the calls and attribute reads in each function, an `__init__.py`'s exports) and what the index needs (its BM25 documents) are made from that file alone, in one AST walk, and stored with `marshal` under `SWE_STATE_ROOT/swe_map_<repo>/`, keyed by the file's path and content and by the source of the modules that make them. A later call reuses them; an edited file gets a new record.
+- **The same interfaces.** `Table.syms/calls/reads/uses/exports/bases/find/subclasses` and `Index.names/rank/query/score` keep their signatures; `Index.docs` (all documents) became `Index.doc(rel, name)` and `Index.docs_in(rel)`. Callers that read every file (the search for a text, the module that holds an assignment, an import alias, the test that uses a name, the files that import a module, the third-party modules the code imports) read only the files git names. Callers that need the first few callers or users read files in the order they are shown and stop there.
+- **Ranking without the whole corpus.** BM25 needs statistics of all documents. They are estimated from git grep counts: a token's document frequency from the lines that hold it in each file (at most that file's functions and classes + 1), the number of documents from the `def`/`class` lines, the average field lengths from a fixed sample of 24 files. Only the 40 files that hold the query's words most (`SELECT`) are indexed and scored.
+- **Bytecode reused** (`_boot.py`): the scripts are copied once per task to `SWE_STATE_ROOT/swe_code_<content hash>` and imported from there, so Python compiles their 11,000 lines once per task, not once per call (0.28 s → 0.06 s per call here).
+
+**Validation.**
+
+| Check | Before | After |
+|---|---|---|
+| Impact table and `Index.names`/`owner_class`: the same answers for ~150 sampled names per repository (find, calls, reads, uses, exports, subclasses, bases, related) | — | **0 differences** in 2,416 (rich), 2,354 (fastapi) and 2,500 (moto) answers |
+| `tools/bench_locate.py`, 129 dev tasks: hit@1 / @3 / @5 / @10 | 31% / 55% / 65% / 70% | 34% / 55% / 64% / 71%; the same first rank in 100 tasks, the gold place enters the top 10 in 4 and leaves it in 3 |
+| bench_locate seconds per task | ~60 (whole index) | 1.0 |
+| Replay of moto_5865's Haiku journal (12 calls, cold state) | 130.5 s | 8.0 s |
+| Replay of a django task (2,900 files, 10 calls) | 95.9 s | 10.9 s |
+| Replay of the 30 h17 journals (fastapi, rich, requests) | 5-23 s per task | 2-11 s per task, no traceback; answers differ from the first candidate list on (the order of some candidates) |
+
+| Item | Effect | Why |
+|---|---|---|
+| B10 time | closer | Script time no longer grows with the repository: the model's 5 minutes go to the model. A task on a large repository lost 1.5-2 of its 5 minutes to the scripts before the first decision |
+| W1 short list with evidence | neutral | The same candidates in most tasks; the localization benchmark is equal or better |
+| W3 code in front of it | neutral | The windows, related places and callers are the same (the table's answers are identical) |
+| B11 tool output true | neutral | Rankings use estimated statistics; the impact table, which the views and checks rely on, is exact |
+
+Generic: it changes how the repository is read, for any repository and any issue; nothing depends on a library, a task or a name.
