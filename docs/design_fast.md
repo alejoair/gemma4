@@ -845,3 +845,5 @@ Generic: it removes a harness-level mechanism; nothing depends on a repository o
 | B11 tool output true | neutral | Rankings use estimated statistics; the impact table, which the views and checks rely on, is exact |
 
 Generic: it changes how the repository is read, for any repository and any issue; nothing depends on a library, a task or a name.
+
+**With Gemma on Kaggle (vf21, 10-26):** 8/30 judged resolved on vf5's 30 tasks (vf20, the build before: 7/30), median 264 s (253 s), 10 tasks cut at 5 min (10), no internal error. These dev repositories are small, so their time is the model's and did not move; the gain is on large repositories, which only SWE-Gym's moto (and the private test set, of unknown size) has here. Submitted as S13.
