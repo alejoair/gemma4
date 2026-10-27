@@ -924,6 +924,12 @@ words, a script name, fewer than 4 words) with "Nothing was thought: that is a p
 "Send your decision now", so a refusal cannot loop (B5). Checklist: W7 closer (the thought must be written), B5 neutral
 (one explanation, then the decision), B8 closer (one form less).
 
+**vf24b (think v2, 10-27):** 11/30 judged resolved (vf22 10/30), median 96 s, 2 cut, 5 empty patches. The placeholder
+is gone, but think.py is still mostly called without reasoning: 247 of 312 calls put the call's own values in args
+('think.py' 138 times, 'fix-issue' 88); 65 real thoughts (median 537 characters). vLLM hung in rich_4075 in both vf24
+runs, inside its gemma4 tool parser, on the model's answer to the specify window of `Node`: a reproducible trigger in
+the thinking-off build, which the scorer's vLLM would meet too.
+
 ### Call forms with skill_name and file_path first (10-27, the user's: "arregla las llamadas mal formadas «fix-issue»")
 
 Every malformed call of vf21, vf22 and vf23 (13, 35 and 8 in 30 tasks) broke `skill_name` or `file_path`
