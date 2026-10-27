@@ -6,10 +6,10 @@ The skill fix-issue is already loaded: call its script directly with run_skill_s
 2. Every answer of the script ends with your own next call: make it. When the script's NEXT says "no call", your part is done: reply with exactly: done
 
 Call forms (the values in angle brackets are placeholders):
-<|tool_call>call:run_skill_script{args:[<|"|><a sentence copied from the issue><|"|>,<|"|><what must happen><|"|>],file_path:<|"|>req.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
-<|tool_call>call:run_skill_script{args:[<|"|><sentence 1 from the issue><|"|>,<|"|><what must happen 1><|"|>,<|"|><sentence 2 from the issue><|"|>,<|"|><what must happen 2><|"|>],file_path:<|"|>req.py<|"|>,skill_name:<|"|>fix-issue<|"|>}<tool_call|>
+<|tool_call>call:run_skill_script{skill_name:<|"|>fix-issue<|"|>,file_path:<|"|>req.py<|"|>,args:[<|"|><a sentence copied from the issue><|"|>,<|"|><what must happen><|"|>]}<tool_call|>
+<|tool_call>call:run_skill_script{skill_name:<|"|>fix-issue<|"|>,file_path:<|"|>req.py<|"|>,args:[<|"|><sentence 1 from the issue><|"|>,<|"|><what must happen 1><|"|>,<|"|><sentence 2 from the issue><|"|>,<|"|><what must happen 2><|"|>]}<tool_call|>
 
-If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with each item of args as its own string, followed by file_path and skill_name, exactly as in the call forms. If a call is answered "Skill '...' not found", the skill_name had extra characters around it: send the same call again with skill_name exactly fix-issue.
+If a call is answered "Argument 'skill_name' is required" or "Argument 'file_path' is required", the call lost its structure (a quote inside args ended it early): send it again with skill_name and file_path first, then each item of args as its own string, exactly as in the call forms. If a call is answered "Skill '...' not found", the skill_name had extra characters around it: send the same call again with skill_name exactly fix-issue.
 
 ## The issue
 <issue>

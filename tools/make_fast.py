@@ -31,16 +31,19 @@ WORKERS = {'locate': 1, 'specify': 1, 'edit': 1}
 # edit; off until it can end on its own
 REPRODUCE = False
 
-FORM = ('<|tool_call>call:run_skill_script{{args:[{args}],file_path:<|"|>{script}<|"|>,'
-        'skill_name:<|"|>fix-issue<|"|>}}<tool_call|>')
+# 10-27 (vf21-vf23, Gemma): every malformed call (13, 35 and 8 in 30 tasks) broke skill_name or file_path, the values
+# the form put after the long args list ('「fix-issue」', '``', '「think.py」'); the short values come first, in the order
+# the scripts' NEXT lines already give ("with skill_name fix-issue, file_path X and args [...]")
+FORM = ('<|tool_call>call:run_skill_script{{skill_name:<|"|>fix-issue<|"|>,file_path:<|"|>{script}<|"|>,'
+        'args:[{args}]}}<tool_call|>')
 Q = '<|"|>{}<|"|>'
 
 SKILL_NOTE = ('The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill '
               'tools (load_skill, load_skill_resource, list_skills) show only the scripts\' instructions and source, '
               'which say nothing about this issue.')
 ERRORS = ("If a call is answered \"Argument 'skill_name' is required\" or \"Argument 'file_path' is required\", the call "
-          "lost its structure (a quote inside args ended it early): send it again with each item of args as its own "
-          "string, followed by file_path and skill_name, exactly as in the call forms. If a call is answered \"Skill "
+          "lost its structure (a quote inside args ended it early): send it again with skill_name and file_path first, "
+          "then each item of args as its own string, exactly as in the call forms. If a call is answered \"Skill "
           "'...' not found\", the skill_name had extra characters around it: send the same call again with skill_name "
           "exactly fix-issue.")
 END = ("{n}. Every answer of the script ends with your own next call: make it. When the script's NEXT says \"no call\", "

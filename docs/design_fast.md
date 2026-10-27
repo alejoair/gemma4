@@ -923,3 +923,21 @@ in a few sentences). think.py answers an item that holds no reasoning (a placeho
 words, a script name, fewer than 4 words) with "Nothing was thought: that is a placeholder…", once, and after that only
 "Send your decision now", so a refusal cannot loop (B5). Checklist: W7 closer (the thought must be written), B5 neutral
 (one explanation, then the decision), B8 closer (one form less).
+
+### Call forms with skill_name and file_path first (10-27, the user's: "arregla las llamadas mal formadas «fix-issue»")
+
+Every malformed call of vf21, vf22 and vf23 (13, 35 and 8 in 30 tasks) broke `skill_name` or `file_path`
+('「fix-issue」' 21 times in vf22, '``', '「think.py」'): the two short values the prompts' call forms put after the long
+`args` list, which holds code and quotes. The ADK rejects such a call before any script runs ("Skill '…' not found"),
+so only the prompt can prevent it. The forms (tools/make_fast.py `FORM`) now give `skill_name` and `file_path` first and
+`args` last, the order the scripts' NEXT lines already use ("with skill_name fix-issue, file_path X and args […]"),
+and the recovery note says the same. A skill name with other characters cannot be added as an alias: ADK only accepts
+kebab-case names that match the skill's directory.
+
+| Item | Effect | Why |
+|---|---|---|
+| B4 call syntax | closer, to measure | the short exact values are written before the long args, not after them |
+| B12 contradictions | closer | the prompt's forms and the NEXT lines give the values in the same order |
+
+Generic: it changes the call format of every agent; nothing depends on a task.
+
