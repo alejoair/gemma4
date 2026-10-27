@@ -913,6 +913,10 @@ placeholder or the script's name; about 40 were real thoughts. So the model deci
 reasoning, and the gain in time came from the thinking being off. Malformed calls rose (36 against 16, mostly the
 skill name written 「fix-issue」). vf23 (the fixes with the native thinking) tells which change gave the result.
 
+**vf23 (the audit fixes alone, with the native thinking, 10-27):** 8/30 judged resolved (vf21 8/30), median 237 s,
+9 cut at 5 min, 3 empty patches (vf21 7), 8 malformed calls (15). The fixes removed empty patches and malformed calls
+but not unresolved tasks; vf22's gain (10/30, median 83 s, no cut) came from turning the native thinking off.
+
 **Think, second version (10-27, the user's: "haz los ajustes al think").** The call form with its placeholder is gone
 from every prompt; the step describes the call in words (skill_name, file_path think.py, one item: your own reasoning
 in a few sentences). think.py answers an item that holds no reasoning (a placeholder in angle brackets, the form's own
