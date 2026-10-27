@@ -3625,6 +3625,14 @@ def _view(root, st, stage, worker, target):
 THINK_LONG = 1500       # characters of one thought past which the answer asks for shorter ones
 
 
+def _no_thought(text):
+    """A think.py item that holds no reasoning: a placeholder in angle brackets, the form's own words, a script name, or
+    a few words."""
+    t = text.strip().strip('`\'"「」')
+    return (bool(re.fullmatch(r'<[^<>]*>', t)) or len(t.split()) < 4 or t.endswith('.py')
+            or bool(re.fullmatch(r'(?i)\W*(your|my|the)\s+reasoning\b.{0,40}', t)))
+
+
 def main_think(argv):
     """One call of think.py (make_fast.py --think): the agent's reasoning before a decision, written as a call because
     the build has no native thinking. It changes nothing: the thought is kept in the journal and counted in the agent's
@@ -3643,8 +3651,15 @@ def main_think(argv):
     _state.record({'think': text[:4000], 'worker': worker})
     _state.save('stages', st)
     nxt = st.get('last_next') or 'NEXT: send your decision.'
-    if not text:
-        out = 'Nothing was written: send your reasoning as one item, then your decision.'
+    if not text or _no_thought(text):
+        # vf22 (Gemma, Kaggle): 252 of 350 think.py calls sent the call form's placeholder itself ('<your reasoning, in
+        # a few sentences>') and about 50 more another placeholder or the script's name: a turn each and no thought.
+        # The answer says so once; after that it only points to the decision (no loop of refusals, B5)
+        st['think_empty'] = st.get('think_empty', 0) + 1
+        _state.save('stages', st)
+        out = ('Nothing was thought: that is a placeholder, not your reasoning. Write what you think about this step '
+               '(what in the window matters, what you choose and why), or send your decision now.'
+               if st['think_empty'] <= 1 else 'Send your decision now.')
     elif len(text) > THINK_LONG:
         out = ('Noted. (Keep each thought to a few sentences: the code is in the window, so name its lines instead of '
                'copying them.) Now send the decision it leads to.')

@@ -912,3 +912,10 @@ calls, 252 sent the call form's placeholder itself ('<your reasoning, in a few s
 placeholder or the script's name; about 40 were real thoughts. So the model decided almost every step without any
 reasoning, and the gain in time came from the thinking being off. Malformed calls rose (36 against 16, mostly the
 skill name written 「fix-issue」). vf23 (the fixes with the native thinking) tells which change gave the result.
+
+**Think, second version (10-27, the user's: "haz los ajustes al think").** The call form with its placeholder is gone
+from every prompt; the step describes the call in words (skill_name, file_path think.py, one item: your own reasoning
+in a few sentences). think.py answers an item that holds no reasoning (a placeholder in angle brackets, the form's own
+words, a script name, fewer than 4 words) with "Nothing was thought: that is a placeholder…", once, and after that only
+"Send your decision now", so a refusal cannot loop (B5). Checklist: W7 closer (the thought must be written), B5 neutral
+(one explanation, then the decision), B8 closer (one form less).
