@@ -63,7 +63,16 @@ REVIEW_LEFT_S = 75    # a review agent call took 15-55 s
 REG_LIMIT_S = 60      # the review's run of the existing tests (h14: 117-180 s without a limit)
 REPRO_NAME = 'test_swe_reproduce_issue.py'
 REPRO_TIMEOUT = 40
-CHAIN_CHARS = 32000    # an agent's answers before it takes no further item (about 9,000 tokens; compaction at 14,336)
+CHAIN_CHARS = 32000    # an agent's context before it takes no further item (about 9,000 tokens; compaction at 14,336)
+# audit 10-27 (vf21): only the script's answers were counted, while with include_thoughts the agent's own thoughts and
+# calls are about 29% of a specifier's prompt; three specify sessions passed 14,336 tokens and were compacted (13-26 s
+# each, outside the trace; rich_3942 lost its thread). Each call now also counts its arguments and an estimate of the
+# thought before it (none in a build without native thinking, which ships _mode.py)
+try:
+    import _mode
+    THOUGHT_CHARS = _mode.THOUGHT_CHARS
+except ImportError:
+    THOUGHT_CHARS = 2000
 ANSWER_CHARS = 12000   # gm11: the specify view with the whole place (150 lines) and its deciding calls
 # The per-edit test check (stage 6), off for now at the user's request (2026-10-14): in requests it cost about 70 s per
 # edit, and the first edit of a task built the call map with a whole-suite run (up to 150 s). SWE_EDIT_TESTS=1 turns
@@ -120,8 +129,14 @@ FAST = False            # the fast build (docs/design_fast.md): stage agents in 
 
 # ------------------------------------------------------------------------------------------------------- state
 
+# audit 10-27 (vf21): the clock started at the first script call, 8-36 s after the task's start (median about 18-20 s:
+# the harness's setup and the first model turn), so BUDGET_S and every STAGE_END came that much later on the harness's
+# clock, "time used" read low (B10), and the three tasks cut at 5 min had the largest offsets
+FIRST_CALL_S = 20
+
+
 def _new():
-    return {'t0': time.time(), 'paused0': _paused(), 'names': None, 'reqs': [], 'repro': None, 'repro_tries': 0, 'repro_done': False,
+    return {'t0': time.time() - FIRST_CALL_S, 'paused0': _paused(), 'names': None, 'reqs': [], 'repro': None, 'repro_tries': 0, 'repro_done': False,
             'located': {}, 'cands': {}, 'scope_done': False, 'plan': [], 'asked': {}, 'current': None,
             'round': 0, 'reviews': {}, 'verified': None, 'regressions': [], 'last_good': None, 'missing': [],
             'submitted': False, 'log': []}
@@ -375,7 +390,11 @@ COMMAND = re.compile(r'^\s*(?:grep|rg|find|ls|cat|cd|sed|awk|git|python3?|pytest
 
 
 def _looks_like_requirements(items):
-    return len(items) >= 2 and len(items) % 2 == 0 and all(len(x.split()) >= 3 for x in items[1::2])
+    # audit 10-27 (vf21, rich_4076 'preserve newlines', rich_3934 'empty live'): a two-word issue copied as both items
+    # of a pair was read as two names to look up and never saved; names are single words, so a pair whose sentence
+    # from the issue has two or more words is a requirement too
+    return len(items) >= 2 and len(items) % 2 == 0 and (all(len(x.split()) >= 3 for x in items[1::2])
+                                                        or all(len(x.split()) >= 2 for x in items[0::2]))
 
 
 def _copied(r):
@@ -607,15 +626,23 @@ def requirements(root, st, args):
     if not reqs:
         return 'No requirement was read. ' + form
     dropped = []
-    if len(reqs) > 1:
-        # gk11, gm8: a requirement whose "what must happen" repeats the issue's sentence states no situation and no
-        # result; locate then got nonsense candidates and review said "done" to anything (weak point 22)
-        keep = [r for r in reqs if not _copied(r)]
-        if keep:
-            dropped = [r for r in reqs if r not in keep]
-            reqs = keep
-            for i, r in enumerate(reqs):
-                r['id'] = f'R{i + 1}'
+    # audit 10-27 (vf21): the requirements sent before (each call used to replace them) are kept; a new pair with the
+    # same sentence from the issue replaces the old one. 10 of 30 tasks sent one pair per call and each replaced the
+    # last (rich_3180: 13 calls, 203 s, the right requirement lost)
+    kept = [r for r in st.pop('reqs_keep', None) or [] if r.get('quote')]
+
+    def same(a, b):
+        qa, qb = (re.sub(r'\W+', ' ', (x.get('quote') or '').lower()).strip() for x in (a, b))
+        return bool(qa) and difflib.SequenceMatcher(None, qa, qb).ratio() > 0.85
+    reqs = [r for r in kept if not any(same(r, n) for n in reqs)] + reqs
+    reqs = reqs[:MAX_REQS]
+    # gk11, gm8: a requirement whose "what must happen" repeats the issue's sentence states no situation and no
+    # result. Until 10-27 it was left out when others were sent; in vf21 (rich_4075) that removed the bug itself
+    # ("empty with end") and kept an aside ("Python 3.8 support is dropped"), while the prompt asks to repeat the
+    # issue's words when it gives nothing more. It is kept, after the concrete ones
+    reqs = [r for r in reqs if not _copied(r)] + [r for r in reqs if _copied(r)]
+    for i, r in enumerate(reqs):
+        r['id'] = f'R{i + 1}'
     # (10-20 to 10-21 a requirement that only repeated the issue's sentence was refused once; in h15 it fired in 3 of
     # the first 4 tasks, all title-only issues, and the second send added nothing the title did not say: one model
     # turn each for no information. Removed)
@@ -1438,6 +1465,18 @@ def _apply_copy(root, st, p, q):
     return True
 
 
+def _named_depth(st, p):
+    """How many 'missing' steps led to p: 0 for a located place, 1 for code a specifier named, 2 for code named from
+    that code."""
+    depth, seen = 0, set()
+    while p is not None and str(p.get('note') or '').startswith('the specifier of') and id(p) not in seen:
+        seen.add(id(p))
+        depth += 1
+        m = re.match(r'the specifier of (.+?) named this code', str(p['note']))
+        p = _place_by(st, m.group(1)) if m else None
+    return depth
+
+
 def _main_place(st):
     """The plan's place chosen first for the first requirement that has one."""
     for r in st['reqs']:
@@ -1964,7 +2003,7 @@ def specify(root, st, args):
     items = [a for a in args if a and a.strip()]
     # g11 (fastapi_13537): after 'missing' named a planned place, the next refusal offered 'missing' again and the same
     # call was sent a second time; that place's change is kept, so this place is asked only about itself
-    may_name = not (p.get('note') or '').startswith('the specifier of') and not p.get('named_planned')
+    may_name = _named_depth(st, p) < 2 and not p.get('named_planned')
     nxt = next_call('specify.py', *_specify_forms(p, may_name))
     if not items or _args.clean(items[0]).lower() in ('open', 'start', p['handle'].lower()):
         reqs = [_req(st, rid) for rid in p['reqs'] if _req(st, rid)]
@@ -2058,7 +2097,10 @@ def specify(root, st, args):
                    'the time for specifying is up')
             return (f'Not added: {why}. Send what changes in {p["handle"]} itself, or that it keeps its code.\n\n'
                     + next_call('specify.py', *_specify_forms(p, may_name=False)))
-        if (p.get('note') or '').startswith('the specifier of'):
+        if _named_depth(st, p) >= 2:
+            # audit 10-27 (vf21, fastapi_12942): one step down was refused, and it was the reference's fix
+            # (field_annotation_is_complex, named from the code analyze_param's specifier had named); code may name
+            # one further step, and the chain stops at the second
             # V23 (fastapi_14986): get_openapi named OpenAPI, which named Server, then both were 'no change' (170 s);
             # code named by a specifier names no further code
             # vf3 audit (fastapi_14361): the rule came without its reason while NEXT still offered 'missing' (P3, B12)
@@ -2150,14 +2192,24 @@ def specify(root, st, args):
                 "`return self.router.on_event(event_type)` with ...'. Send the sentence again.\n\n" + nxt)
     if len(sentence) > MAX_SENTENCE:
         return f'Too long ({len(sentence)} characters, at most {MAX_SENTENCE}). Send it shorter.\n\n{nxt}'
-    forced = False
-    if step.NO_CHANGE.match(sentence) and FAST and not p.get('edited') and not _has_change(st, p) and (
-            p is _main_place(st) or not any(q is not p and q.get('sentence') is None for q in st['plan'])):
+    forced, forced_main = False, None
+    if step.NO_CHANGE.match(sentence) and FAST and not p.get('edited') and not _has_change(st, p) and \
+            not any(q is not p and q.get('sentence') is None for q in st['plan']):
         # audit 10-20: vf5's warning ("the patch stays empty") fired in 7 tasks and 'no change' came back every time;
-        # every place kept its code in 4 empty patches, two of them at the reference's places (fastapi_13207). The
-        # place where the requirement was located, or the last place that could carry a change, is not left
-        # unchanged: the requirement itself becomes its sentence, and its editor writes the change
-        sentence, forced = _default_sentence(st, p), True
+        # every place kept its code in 4 empty patches, two of them at the reference's places (fastapi_13207). When
+        # the last open place gets 'no change' too and no place carries a change, the place where the requirement was
+        # located is not left unchanged: the requirement itself becomes its sentence, and its editor writes the change.
+        # Audit 10-27 (vf21): this fired at the main place's first 'no change', before the other places were
+        # specified (11 tasks, 6 of the 7 empty patches; rich_3043's right sentence for CONSOLE_HTML_FORMAT came later,
+        # and the editor opened the forced place first); now only at the end of the specify stage
+        main = _main_place(st)
+        if main is None or main is p or main.get('edited'):
+            sentence, forced = _default_sentence(st, p), True
+        else:
+            forced_main = main
+            main['sentence'], main['status'] = _default_sentence(st, main), 'todo'
+            main['fails'], main['edits'], main['refused'] = 0, 0, 0
+            main['defaulted'] = True
     if step.NO_CHANGE.match(sentence):
         p['sentence'], p['status'] = 'no change', 'nochange'
         if p.get('edited'):
@@ -2171,7 +2223,12 @@ def specify(root, st, args):
     else:
         p['sentence'], p['status'] = sentence, 'todo'
         p['fails'], p['edits'], p['refused'] = 0, 0, 0
+        p['defaulted'] = forced
     p.pop('note', None)
+    if p['status'] == 'nochange' and forced_main is not None:
+        return (f'{p["handle"]} keeps its code. No place of the fix had a change, so the patch would stay empty: '
+                f'{forced_main["handle"]}, where the requirement was located, keeps the change, and its editor writes '
+                f'it from what the requirement says: {forced_main["sentence"][:300]}\n\n{DONE}')
     if p['status'] == 'nochange':
         return f'{p["handle"]} keeps its code: it is not edited.\n\n{DONE}'
     if forced:
@@ -2267,7 +2324,32 @@ def _unescaped(text):
     return text
 
 
-def _replace_text(root, p, old, new):
+def _first_number(raw):
+    """The window's line number the copied old lines start with ('292|    x = 1'), or None."""
+    m = re.match(r'\s*(\d+)\|', (raw or '').lstrip('\n'))
+    return int(m.group(1)) if m else None
+
+
+def _replace_text(root, p, old, new, first=None):
+    """['replace', old lines, new lines] inside the place, with the fallbacks of audit 10-27 (vf21: 4 replace calls
+    refused, fastapi_9753 ended with an empty patch): the lines as sent; else with one level of escaping undone
+    (\\" sent for ", \\\\ for \\: every answer reaches the model as JSON, checklist B15), in the old and the new lines
+    alike; and when they occur more than once, the occurrence at the window's line number they were copied with."""
+    res = _replace_once(root, p, old, new, first)
+    if isinstance(res, str) and 'not found' in res:
+        old2, new2 = _one_escape_less(old), _one_escape_less(new)
+        if old2 != old:
+            res2 = _replace_once(root, p, old2, new2, first)
+            if not isinstance(res2, str):
+                return res2
+    return res
+
+
+def _one_escape_less(text):
+    return text.replace('\\\\', '\x00').replace('\\"', '"').replace("\\'", "'").replace('\x00', '\\')
+
+
+def _replace_once(root, p, old, new, first=None):
     """['replace', old lines, new lines] inside the place: the old lines are found by their text (leading and trailing
     spaces ignored, once in the place), the new lines are re-indented to the first old line. (start, end, text) or an
     error string."""
@@ -2300,8 +2382,11 @@ def _replace_text(root, p, old, new):
             return i + 1, i + 1, line
     if not hits:
         return 'the old lines were not found in this place (send them as the window shows them)'
+    if len(hits) > 1 and first is not None and sum(1 for h in hits if h[0] == first) == 1:
+        hits = [h for h in hits if h[0] == first]
     if len(hits) > 1:
-        return f'the old lines occur {len(hits)} times in this place: send more lines around them'
+        return (f'the old lines occur {len(hits)} times in this place (at lines '
+                f'{", ".join(str(h[0]) for h in hits)}): send more lines around them')
     a, b = hits[0]
     pad = step._indent_of(lines[a - 1])
     text = step.textwrap.indent(step.textwrap.dedent(new.strip('\n')), pad) if new.strip() else ''
@@ -2370,7 +2455,11 @@ def edit(root, st, args):
         # h13 (fastapi_15661): the count was per place, so repair's first 'no change' after the editor's was not
         # refused at all; each stage's agent is refused once
         nck = f'nc_edit_refused_{st.get("stage_now") or "edit"}'
-        if FAST and _must_edit(root, p) and p.get(nck, 0) < 2:
+        # audit 10-27: a place that carries only the requirement's text, while another place still has a
+        # specifier's sentence to edit, may keep its code
+        later = p.get('defaulted') and any(q is not p and q.get('status') == 'todo' and not q.get('defaulted')
+                                           for q in st['plan'])
+        if FAST and _must_edit(root, p) and p.get(nck, 0) < 2 and not later:
             # audit 10-20 (fastapi_13207, rich_3772): the editor's 'no change' undid the script's own retry of an
             # empty patch; a place with a change to make, while the patch is empty, is edited (refused once, then failed)
             p[nck] = p.get(nck, 0) + 1
@@ -2444,8 +2533,9 @@ def edit(root, st, args):
         before = _repo.read_lines(root, p['rel'])
         groups = [(_args.code(_unescaped(items[k])), _args.code(_unescaped(items[k + 1]))) for k in range(1, len(items), 2)]
         r = None
+        firsts = [_first_number(items[k]) for k in range(1, len(items), 2)]
         for n, (old_text, new_text) in enumerate(groups, 1):
-            res = _replace_text(root, p, old_text, new_text)
+            res = _replace_text(root, p, old_text, new_text, firsts[n - 1])
             if not isinstance(res, str):
                 r = step._edit.apply(root, p['rel'], res[0], res[1], res[2] or 'DELETE')
                 if not r.applied:
@@ -2476,7 +2566,7 @@ def edit(root, st, args):
             new_text = '\n'.join(rest)
             _add_imports(root, p['rel'], head)
             _refresh(root, p)
-        res = _replace_text(root, p, _args.code(items[1]), new_text)
+        res = _replace_text(root, p, _args.code(items[1]), new_text, _first_number(items[1]))
         if isinstance(res, str) and 'not found' in res and new_text.strip() and \
                 not isinstance(_replace_text(root, p, new_text, new_text), str):
             # gm11 (the 31B): after an accepted edit the editor sent the same replace again and read 'not found' as a
@@ -2680,6 +2770,20 @@ def _unspent(p):
     p['refused'] = p.get('refused', 0) + 1
 
 
+def _hollow(before, after):
+    """Whether an edit only removed statements and put pass, ... or comments in their place."""
+    def code(lines):
+        return [l.split('#', 1)[0].strip() for l in lines if l.split('#', 1)[0].strip()]
+    gone, added = [], []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        if tag in ('delete', 'replace'):
+            gone += code(before[i1:i2])
+        if tag in ('insert', 'replace'):
+            added += code(after[j1:j2])
+    real = [x for x in gone if x not in ('pass', '...')]
+    return bool(real) and bool(added) and all(x in ('pass', '...') for x in added)
+
+
 def _after_edit(root, st, p, r, before, names, nxt):
     if not r.applied:
         _repo.write_lines(root, p['rel'], before)
@@ -2702,6 +2806,14 @@ def _after_edit(root, st, p, r, before, names, nxt):
                               f'{_brief(p["sentence"])}')
         return f'Not applied: {err}.\n\n{nxt}'
     after = _repo.read_lines(root, p['rel'])
+    if _hollow(before, after):
+        # audit 10-27 (vf21, fastapi_5624): an edit that put 'pass' and '# Wait, ...' comments where an assignment was
+        # was kept, and the patch submitted with it was worse than no change
+        _repo.write_lines(root, p['rel'], before)
+        _refresh(root, p)
+        _unspent(p)
+        return ('Not applied: the new lines replace code with only pass or ... (and comments). Send the code that '
+                f'makes the change: {_brief(p.get("sentence") or "")}\n\n{nxt}')
     changed = {p['rel']: names + [l.strip() for l in after[r.start - 1:r.end]]}
     for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
         if tag in ('delete', 'replace'):
@@ -3276,6 +3388,7 @@ def _unspecified_default(st):
             p['sentence'] = _default_sentence(st, p)
             p['status'] = 'nochange' if p['sentence'] == 'no change' else 'todo'
             p['fails'], p['edits'], p['refused'] = 0, 0, 0
+            p['defaulted'] = True
 
 
 def _claim(root, st, stage, worker):
@@ -3351,10 +3464,14 @@ def _claim(root, st, stage, worker):
                 return _take(st, 'specify', p['handle'], worker, 'specify')
             p['sentence'] = _default_sentence(st, p)
             p['status'] = 'nochange' if p['sentence'] == 'no change' else 'todo'
+            p['defaulted'] = True
         if stage == 'specify':
             return None
     if stage in ('edit', 'repair'):
-        for p in st['plan']:
+        # audit 10-27 (vf21, rich_3043, rich_3772): the editor opened the place that carried only the requirement's
+        # text before the place a specifier had written a concrete sentence for, and the time ran out there; the places
+        # with a specifier's sentence are edited first
+        for p in sorted(st['plan'], key=lambda q: bool(q.get('defaulted'))):
             if p.get('status') != 'todo' or _claimed(st, 'edit', p['handle'], worker):
                 continue
             q = _copy_of(root, st, p)
@@ -3450,8 +3567,8 @@ def _part_done(st, stage, worker):
     specifiers doubting their result; 3 of 9 called 24-96 s more while the stage waited for them)."""
     did = [d for d in st.get('wfinished', {}).get(worker, [])]
     recap = ('You finished: ' + '; '.join(d[:200] for d in did[-4:]) + '. ') if did else ''
-    final = ('until the locate agents start, sending the pairs again replaces them' if stage == 'requirements'
-             else 'what you saved is final')
+    final = ('sending more pairs adds them (a pair with the same sentence from the issue replaces its old one)'
+             if stage == 'requirements' and not _late(st, stage) else 'what you saved is final')
     return (f'Your part is done. {recap}Next, {LATER.get(stage, "the next agents go on")}; {final}, so nothing more is '
             f'needed from you.\n\n{FAST_DONE}')
 
@@ -3463,8 +3580,11 @@ def _finished(st, stage, done_before):
     next, and for the requirements how to replace them."""
     if stage == 'requirements' and st['reqs']:
         done = 'the requirements saved are ' + '; '.join(f'{r["id"]}: {r["what"][:160]}' for r in st['reqs'])
-        extra = (' Sending the pairs again replaces them while no code is located yet; replying done hands them on.'
-                 if not st['located'] else '')
+        # audit 10-27 (vf21): after the stage's end the calls were refused with the text "Sending the pairs again
+        # replaces them", and the agent sent them again 13 times in 3 tasks (B12)
+        extra = (' Sending more pairs adds them while no code is located yet; replying done hands them on.'
+                 if not st['located'] and not _late(st, stage) else
+                 ' The requirements are final now: the time for this part is over.')
     else:
         done = 'you finished ' + '; '.join(d[:200] for d in done_before[-4:])
         extra = (' Sending other names replaces your last choice until the specify stage starts.'
@@ -3500,6 +3620,37 @@ def _view(root, st, stage, worker, target):
     st['current'] = (handler, target)
     # the requirements stage opens with its first question (the names), not with an 'open' item
     return HANDLERS[handler](root, st, [] if handler == 'requirements' else ['open'])
+
+
+THINK_LONG = 1500       # characters of one thought past which the answer asks for shorter ones
+
+
+def main_think(argv):
+    """One call of think.py (make_fast.py --think): the agent's reasoning before a decision, written as a call because
+    the build has no native thinking. It changes nothing: the thought is kept in the journal and counted in the agent's
+    context, and the answer repeats the agent's next call, so that the decision follows (W4). The user's experiment of
+    10-27, after docs/trace_audit_vf21.md: native thoughts ran into their 1,024-token budget in 42-58% of the model's
+    time, cut mid-sentence, and copied the window's code."""
+    if not _state.lock():
+        print('Noted.\n\nNEXT: send your decision.')
+        return
+    st = _state.load('stages') or _new()
+    text = ' '.join(a for a in argv if a and a.strip()).strip()
+    worker = st.get('last_worker')
+    if worker:
+        st.setdefault('wchars', {})[worker] = st.get('wchars', {}).get(worker, 0) + len(text) + 200
+    st['thoughts'] = st.get('thoughts', 0) + 1
+    _state.record({'think': text[:4000], 'worker': worker})
+    _state.save('stages', st)
+    nxt = st.get('last_next') or 'NEXT: send your decision.'
+    if not text:
+        out = 'Nothing was written: send your reasoning as one item, then your decision.'
+    elif len(text) > THINK_LONG:
+        out = ('Noted. (Keep each thought to a few sentences: the code is in the window, so name its lines instead of '
+               'copying them.) Now send the decision it leads to.')
+    else:
+        out = 'Noted. Now send the decision it leads to.'
+    print(f'{out}\n\n{nxt}')
 
 
 def main_fast(stage, worker, argv):
@@ -3547,8 +3698,14 @@ def main_fast(stage, worker, argv):
         st['stage_now'] = stage
         if stage == 'specify' and cur is None and last and first not in ('', 'open', 'start', 'next', 'done'):
             q = _place_by(st, last)
-            if q is not None and q.get('status') == 'nochange' and not q.get('edited') \
-                    and not _claims(st).get(f'specify {q["handle"]}'):
+            # audit 10-27 (vf21, fastapi_9753, fastapi_14459): a specifier that saw its last sentence was wrong sent the
+            # right one and was told its part was finished; a saved sentence may also be corrected once, until the
+            # place is edited
+            if q is not None and (q.get('status') == 'nochange' or (q.get('status') == 'todo'
+                                                                    and not q.get('corrected'))) \
+                    and not q.get('edited') and not _claims(st).get(f'specify {q["handle"]}'):
+                if q.get('status') == 'todo':
+                    q['corrected'] = True
                 # audit 10-20 (rich_3480): after its 'no change' the specifier sent the right sentence for
                 # Text.append_text and was told its part was finished; the patch stayed empty. Until the edit stage
                 # starts, the worker's next answer replaces its 'no change'
@@ -3556,10 +3713,25 @@ def main_fast(stage, worker, argv):
                 if st.setdefault('wfinished', {}).get(worker):
                     st['wfinished'][worker].pop()
                 cur = st['wcur'][worker]
+        if stage == 'edit' and cur is None and last and first not in ('', 'open', 'start', 'next', 'done',
+                                                                      'no change') and not _over_budget(st):
+            q = _place_by(st, last)
+            if q is not None and q.get('status') == 'done' and not q.get('ecorrected') \
+                    and not _claims(st).get(f'edit {q["handle"]}'):
+                # audit 10-27 (vf21, fastapi_5624): the editor saw its kept edit was wrong and its correction was
+                # refused ("your part is finished"); the last edit may be corrected once
+                q['ecorrected'] = True
+                q['status'] = 'todo'
+                _take(st, 'edit', q['handle'], worker, 'edit')
+                if st.setdefault('wfinished', {}).get(worker):
+                    st['wfinished'][worker].pop()
+                cur = st['wcur'][worker]
         if stage == 'requirements' and cur is None and st['reqs'] and not st['located'] and len(args) >= 2 \
                 and not _late(st, stage) and _looks_like_requirements([_sentence(a) for a in args]):
             # vf3: an agent whose saved requirement was wrong sent the right ones and was told it was finished; before
-            # anything is located, new requirements replace the old
+            # anything is located, new requirements are taken (since 10-27 they are added to the saved ones; the same
+            # sentence from the issue replaces its old pair)
+            st['reqs_keep'] = st['reqs']
             st['reqs'] = []
             st.get('wfinished', {}).pop(worker, None)
             st['asked'].pop('requirements', None)
@@ -3645,7 +3817,10 @@ def main_fast(stage, worker, argv):
         out = f'The script hit an internal error ({type(e).__name__}).\n\n{FAST_DONE}'
     if len(out) > ANSWER_CHARS:
         out = out[:ANSWER_CHARS - 1500] + '\n      ... (cut) ...\n' + out[-1400:]
-    st.setdefault('wchars', {})[worker] = st.get('wchars', {}).get(worker, 0) + len(out)
+    st.setdefault('wchars', {})[worker] = (st.get('wchars', {}).get(worker, 0) + len(out)
+                                           + len(json.dumps(list(argv))) + THOUGHT_CHARS)
+    nexts = [l for l in out.splitlines() if l.startswith('NEXT')]
+    st['last_next'], st['last_worker'] = (nexts[-1] if nexts else ''), worker
     _state.save('stages', st)
     # h13: the harness's trace keeps one answer of the calls that parallel workers send at the same moment (122 of
     # 600 lost); the journal holds every call and the whole answer as printed, and the eval tools copy it per task

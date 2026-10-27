@@ -126,7 +126,9 @@ def code(text):
     if lines and lines[-1].strip().startswith('```'):
         lines = lines[:-1]
     body = [l for l in lines if l.strip()]
-    if body and all(NUMBERED.match(l) for l in body):
+    # audit 10-27 (vf21, rich_3278): some lines of a copy kept the window's number and others not, the prefix was left
+    # in, and a regex was corrupted; most lines numbered is a copy of the window
+    if body and NUMBERED.match(body[0]) and 2 * sum(1 for l in body if NUMBERED.match(l)) >= len(body):
         lines = [NUMBERED.sub('', l, count=1) for l in lines]
     return '\n'.join(lines) + '\n' if lines else ''
 

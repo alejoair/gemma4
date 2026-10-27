@@ -7,8 +7,14 @@ committed. Build with: tools/build.py <out> --variant stages,fast
 """
 import os
 import shutil
+import sys
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'variants', 'fast')
+# --think (the user's experiment, 10-27): the same build with the model's native thinking off (thinking_budget 0, so
+# the harness sends enable_thinking false) and a think.py script the agents call with their reasoning, written to
+# variants/think/ (build: tools/build.py <out> --variant stages,think). docs/trace_audit_vf21.md: 42-58% of the model's
+# time went to thoughts that ran into the 1,024-token budget, cut mid-sentence, often copying the window's code
+THINK = '--think' in sys.argv
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'variants', 'think' if THINK else 'fast')
 MODEL = 'gemma-4-31b-it-qat-w4a16-ct'
 # h13 (Haiku): locate2 had nothing to do in 32 of 60 runs and edit2 in 9; with Gemma (vf5) one worker costs about 8 s in
 # locate and 2 s in edit, while specify alone would cost about 53 s (docs/design_fast.md). Parallel workers also lose
@@ -62,10 +68,13 @@ STAGES = {
             "which check that behaviour). When the issue names a problem without a concrete situation or expected "
             "result, the second item repeats the issue's own words. 1 to 6 requirements: the ones the issue asks for "
             "now. Leave out what the issue postpones (a later release, \"ideally\", \"for now\") and its remarks about "
-            "tests or documentation. The answer shows what the repository defines for the names in them, with each signature, "
-            "and which ones do not exist yet; until you reply done, sending the pairs again replaces the saved "
-            "requirements (with the exact names it shows)."],
-        forms=[['<a sentence copied from the issue>', '<what must happen>']],
+            "tests or documentation. Send all of them in one call: [sentence 1, what 1, sentence 2, what 2, ...]. The "
+            "answer shows what the repository defines for the names in them, with each signature, and which ones do "
+            "not exist yet; until you reply done, sending more pairs adds them to the saved ones (a pair with the same "
+            "sentence from the issue replaces its old one)."],
+        forms=[['<a sentence copied from the issue>', '<what must happen>'],
+               ['<sentence 1 from the issue>', '<what must happen 1>', '<sentence 2 from the issue>',
+                '<what must happen 2>']],
         sampling='sampling_1k.yaml', desc='Turns the issue into 1 to 6 concrete requirements.'),
     'reproduce': dict(
         intro='You write one test that shows one requirement of the issue below is not met yet. That is your only '
@@ -184,13 +193,40 @@ if __name__ == '__main__':
 '''
 
 
+THINK_STEP = ("You have no hidden reasoning: your thinking is written through think.py. Before a decision that needs "
+              "thought (the requirements, the places, what changes, the code to write, whether the patch is right), "
+              "call think.py once with one item: your reasoning in a few sentences (what in the window matters, the "
+              "options, the one you take and why). Name lines and names instead of copying code into it. Its answer "
+              "repeats your next call; then send the decision. Opening a window and replying done need no thought.")
+
+
+THINK_ENTRY = '''"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)
+
+Your reasoning, written down before a decision (make_fast.py --think)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import _boot  # noqa: E402,F401  (bytecode reused between calls)
+import _stages  # noqa: E402
+
+if __name__ == '__main__':
+    _stages.main_think(sys.argv[1:])
+'''
+
+
 def prompt(stage, script):
     t = STAGES[stage]
     steps = [s.format(script=script) for s in t['steps']]
+    if THINK:
+        steps.insert(1 if len(steps) > 1 else 0, THINK_STEP)
     lines = [t['intro'], '', SKILL_NOTE, '']
     lines += [f'{i}. {s}' for i, s in enumerate(steps, 1)]
     lines += [END.format(n=len(steps) + 1), '', 'Call forms (the values in angle brackets are placeholders):']
     lines += [FORM.format(args=','.join(Q.format(a) for a in f), script=script) for f in t['forms']]
+    if THINK:
+        lines.append(FORM.format(args=Q.format('<your reasoning, in a few sentences>'), script='think.py'))
     lines += [f'<|tool_call>call:{tool}{{}}<tool_call|>' for tool in t.get('tools') or []]
     lines += ['', ERRORS, ISSUE]
     return '\n'.join(lines)
@@ -257,7 +293,18 @@ def main():
                                     'include_contents: none\ninstruction: !include finish.md\ntools:\n  - submit_patch\n'
                                     'generate_content_config: !include sampling_finish.yaml\n')
     write('sub_agents/sampling_finish.yaml', 'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: 512\n'
-                                             'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n')
+                                             + ('thinking_config:\n  thinking_budget: 0\n  include_thoughts: false\n'
+                                                if THINK else
+                                                'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n'))
+    if THINK:
+        # the stages build's sampling files, with the native thinking off (budget 0: the harness sends
+        # enable_thinking false to vLLM) and the same output limits
+        for name, out in (('sampling_1k.yaml', 3072), ('sampling_512.yaml', 2048), ('sampling_edit.yaml', 2560)):
+            write(f'sub_agents/{name}', f'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: {out}\n'
+                                        'thinking_config:\n  thinking_budget: 0\n  include_thoughts: false\n')
+        write(os.path.join(scripts, 'think.py'), THINK_ENTRY)
+        write(os.path.join(scripts, '_mode.py'), '"""This build has no native thinking (make_fast.py --think)."""\n'
+                                                 'THOUGHT_CHARS = 0     # no hidden thought before a call\n')
     sub.append('sub_agents/finish.yaml')
     write('agent.yaml', 'agent_class: SequentialAgent\nname: issue_fixer\ndescription: Fixes the issue through its '
                         'stages in a fixed order, one agent at a time (docs/design_fast.md).\n'

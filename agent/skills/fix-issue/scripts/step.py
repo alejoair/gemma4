@@ -470,9 +470,12 @@ def _patch_here(root, p):
             cur.append(line)
     if not hunks:
         return ''
-    body = '\n'.join(l for h in hunks for l in h[1:])
-    return (f'Your patch already changes {p["handle"]} (the numbered code below is the code now, with this change):\n'
-            f'{body}')
+    # audit 10-27 (vf21, rich_3905, fastapi_11194): the hunks were joined without their @@ lines under a text that
+    # called them "the numbered code below", so lines of separate hunks read as adjacent and the check agent judged a
+    # correct patch "not done" (B12, W5: a diff is read best in its usual form)
+    body = '\n'.join(l for h in hunks for l in h)
+    return (f'Your patch already changes {p["handle"]}; its diff (git diff format: - removed, + added, the other lines '
+            f'unchanged around them):\n{body}')
 
 
 def _owner_class(root, p):

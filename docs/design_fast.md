@@ -847,3 +847,61 @@ Generic: it removes a harness-level mechanism; nothing depends on a repository o
 Generic: it changes how the repository is read, for any repository and any issue; nothing depends on a library, a task or a name.
 
 **With Gemma on Kaggle (vf21, 10-26):** 8/30 judged resolved on vf5's 30 tasks (vf20, the build before: 7/30), median 264 s (253 s), 10 tasks cut at 5 min (10), no internal error. These dev repositories are small, so their time is the model's and did not move; the gain is on large repositories, which only SWE-Gym's moto (and the private test set, of unknown size) has here. Submitted as S13.
+
+### Fixes from the vf21 trace audit (10-27, the user's: "haz los otros arreglos que son bugs")
+
+From `docs/trace_audit_vf21.md` (five fresh agents on the vf21 traces). Each fix is a script rule that contradicted its
+own prompt or refused a right answer:
+
+| Stage | Bug | Fix |
+|---|---|---|
+| requirements | each call replaced the saved list and the answer invited resending; after STAGE_END the refusal repeated "sending the pairs again replaces them"; `_copied` dropped the pair that copies the issue (rich_4075 lost the bug); a two-word title copied as a pair was read as a name lookup (rich_4076, rich_3934) | pairs accumulate (the same sentence from the issue replaces its old pair); the prompt asks for all pairs in one call; a frozen stage says the requirements are final; copied pairs are kept, after the concrete ones; a pair whose sentence has 2+ words is a requirement |
+| specify | 'no change' on the main place was forced at its first answer, before the other places were specified, and the specifier's part ended (11 tasks, 6 of the 7 empty patches) | forced only when the last open place gets 'no change' and no place carries a change; the change then goes to the main place |
+| specify | a specifier could not correct its last saved sentence ("your part is finished": fastapi_9753, fastapi_14459) | one correction of the last sentence until the place is edited |
+| specify | 'missing' from code a specifier had named was refused, and it was the reference's fix (fastapi_12942) | one more step down; the chain stops at the second |
+| edit | the editor opened the place carrying only the requirement's text first (rich_3043, rich_3772) | places with a specifier's sentence are edited first; a place with only the requirement's text may keep its code while another still has a real sentence |
+| edit | `replace` refused `\"`/`\\\\` copies of the window and duplicates the model had numbered (fastapi_9753 empty patch, fastapi_13207, fastapi_5624); a copy with numbers on some lines kept them (rich_3278's corrupted regex) | one level of escaping undone when the lines are not found; the occurrence at the copied line number when there are several (the refusal lists their lines); numbers stripped when most lines carry them |
+| edit | an edit putting `pass`/comments where statements were was kept (fastapi_5624); a correction of the last edit was refused | such an edit is refused; the last edit may be corrected once |
+| edit | `max_output_tokens` 4096 let one call run 82-110 s and the task end with an empty patch (rich_3772, fastapi_14419) | 2560 (the longest completed edit call was 1,663 tokens) |
+| check | its window called a diff joined without its `@@` lines "the numbered code below is the code now" (a false 'not done' on a correct patch, rich_3905) | the diff with its hunk headers, called a git diff |
+| all | the clock started at the first script call, 8-36 s into the task: BUDGET_S and STAGE_END came late, "time used" read low | the clock starts 20 s before the first call (`FIRST_CALL_S`) |
+| all | `CHAIN_CHARS` counted only the script's answers; three specify sessions were compacted (13-26 s each, outside the trace) | each call also counts its arguments and an estimate of its thought (2,000 characters; none without native thinking) |
+
+Checked: 30 replays of the h17 journals, no traceback and no internal error; requirement accumulation and the two-word
+pair checked by hand on moto. Not yet run with the model.
+
+| Item | Effect | Why |
+|---|---|---|
+| B12 contradictions | closer | the requirements answers and refusals say what the script does; the check window says what it shows |
+| B5 refusals | closer | right answers no longer refused (a corrected sentence or edit, a numbered or escaped copy, one more 'missing' step) |
+| B10 time | closer | the clock is nearer the harness's; no single call can take a third of the task |
+| F1 forcing | neutral | the empty-patch rule still forces a change, now only when nothing else carries one |
+| B8 forms | neutral | no new form; the requirements form shows two pairs in one call |
+
+Generic: every fix is about the procedure's own rules and messages; none names a repository, library or task.
+
+### Experiment: native thinking off, a think script (10-27, the user's)
+
+The user's idea: "desactiva el thinking, y crea un script de think y instrucciones para que el modelo use esa tool …
+así solucionamos ese problema al tener más control sobre los pensamientos". The audit found the native thoughts in
+42-58% of the model's time, cut at their 1,024-token budget mid-sentence (39% of specify's), followed by malformed
+calls 8.5% of the time (1.2% otherwise), and copying the window's code.
+
+`tools/make_fast.py --think` writes `variants/think/` (build `--variant stages,think`): the same agents with
+`thinking_budget: 0` and `include_thoughts: false` (the harness's `apply_thinking_config_to_model` then sends
+`chat_template_kwargs.enable_thinking: false` to vLLM), a step in every prompt (call `think.py` with the reasoning in a
+few sentences before a decision that needs thought, naming lines instead of copying code), and `think.py`
+(`_stages.main_think`): it changes nothing, keeps the thought in the journal, counts it in the agent's context, and
+answers "Noted. Now send the decision it leads to." with the agent's last NEXT line. `_mode.py` sets the hidden-thought
+estimate to 0.
+
+| Item | Effect | Why |
+|---|---|---|
+| W7 think before calls | farther, to measure | thinking is no longer automatic: the model must choose to call think.py; a decision without it has no reasoning |
+| B10 time | closer, to measure | a thought is as long as the model writes it, with no budget to run into; the answer asks for few sentences |
+| B4 call syntax | closer, to measure | no call follows a thought cut mid-sentence (8.5% malformed after a capped thought) |
+| B8 forms | farther | one more call form in every agent |
+| P5 visible state | closer | the reasoning is in the trace as calls, so the next turns and the audit read it |
+
+Generic: it changes how every agent reasons, for any task. The only valid test is the model: a Kaggle eval of this
+build on vf5's 30 tasks against vf21 (and against the fixes alone).
