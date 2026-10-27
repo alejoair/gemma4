@@ -955,3 +955,16 @@ kebab-case names that match the skill's directory.
 
 Generic: it changes the call format of every agent; nothing depends on a task.
 
+
+Checked with Haiku through `tools/anthropic_proxy.py` on 10 dev tasks (10-27, the user's: "prueba con haiku, a ver si
+mejoran las malformadas"), the old forms (vf24's build) against the new ones plus think v3 (vf26's build):
+
+| Build | Resolved (judge) | Median s | Calls | Malformed | think.py with no reasoning |
+|---|---|---|---|---|---|
+| old forms | 9/10 | 60 | 178 | 0 | 0 of 63 |
+| new forms + think v3 | 8/10 | 56 | 169 | 0 | 0 of 52 |
+
+Haiku makes no malformed call with either form, so this run shows no regression but cannot measure the fix: the
+'「fix-issue」' values are the 31B's own failure, and only a run of the 31B (Colab vLLM or Kaggle) measures them. The one
+difference, rich_3180, is the edit's content (the new `chop_cells` walks forward but still returns the chunks
+reversed), not the call form; requests_7205 fails in both on an environment test (`test_unzipped_paths_unchanged`).
