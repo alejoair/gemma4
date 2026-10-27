@@ -37,6 +37,11 @@ REPRODUCE = False
 FORM = ('<|tool_call>call:run_skill_script{{skill_name:<|"|>fix-issue<|"|>,file_path:<|"|>{script}<|"|>,'
         'args:[{args}]}}<tool_call|>')
 Q = '<|"|>{}<|"|>'
+# 10-28 (vf22, vf24b, Gemma, thinking off): 5-7% of the calls lost the <|"|> delimiter around skill_name or file_path
+# ('「fix-issue」' 31 of 46 in vf24b), a single token sampled wrong at temperature 1.0 and copied later from the history
+# (docs/design_fast.md, "A lower temperature for the calls"). The think build samples at 0.5: a token with a tenth of
+# the delimiter's probability gets a hundredth of it; top_k and top_p stay the vendor's
+TEMPERATURE = 0.5 if THINK else 1.0
 
 SKILL_NOTE = ('The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill '
               'tools (load_skill, load_skill_resource, list_skills) show only the scripts\' instructions and source, '
@@ -304,7 +309,7 @@ def main():
     write('sub_agents/finish.yaml', f'name: finish\ndescription: Submits the patch.\nmodel: {MODEL}\n'
                                     'include_contents: none\ninstruction: !include finish.md\ntools:\n  - submit_patch\n'
                                     'generate_content_config: !include sampling_finish.yaml\n')
-    write('sub_agents/sampling_finish.yaml', 'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: 512\n'
+    write('sub_agents/sampling_finish.yaml', f'temperature: {TEMPERATURE}\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: 512\n'
                                              + ('thinking_config:\n  thinking_budget: 0\n  include_thoughts: false\n'
                                                 if THINK else
                                                 'thinking_config:\n  thinking_budget: 64\n  include_thoughts: true\n'))
@@ -312,7 +317,7 @@ def main():
         # the stages build's sampling files, with the native thinking off (budget 0: the harness sends
         # enable_thinking false to vLLM) and the same output limits
         for name, out in (('sampling_1k.yaml', 3072), ('sampling_512.yaml', 2048), ('sampling_edit.yaml', 2560)):
-            write(f'sub_agents/{name}', f'temperature: 1.0\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: {out}\n'
+            write(f'sub_agents/{name}', f'temperature: {TEMPERATURE}\ntop_k: 64\ntop_p: 0.95\nmax_output_tokens: {out}\n'
                                         'thinking_config:\n  thinking_budget: 0\n  include_thoughts: false\n')
         write(os.path.join(scripts, 'think.py'), THINK_ENTRY)
         write(os.path.join(scripts, '_mode.py'), '"""This build has no native thinking (make_fast.py --think)."""\n'

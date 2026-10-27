@@ -968,3 +968,38 @@ Haiku makes no malformed call with either form, so this run shows no regression 
 '「fix-issue」' values are the 31B's own failure, and only a run of the 31B (Colab vLLM or Kaggle) measures them. The one
 difference, rich_3180, is the edit's content (the new `chop_cells` walks forward but still returns the chunks
 reversed), not the call form; requests_7205 fails in both on an environment test (`test_unzipped_paths_unchanged`).
+
+### A lower temperature for the calls (10-28, the user's: "arregla lo de las llamadas malformadas")
+
+Malformed calls per run_skill_script call in the Kaggle traces (a call whose skill_name is not exactly fix-issue or
+whose file_path is not a script name):
+
+| Run | Thinking | Calls | Malformed | Rate | After a malformed call (same agent) |
+|---|---|---|---|---|---|
+| vf20 | on | 378 | 10 | 2.6% | 0/10 |
+| vf21 | on | 384 | 16 | 4.2% | 0/15 |
+| vf23 | on | 374 | 8 | 2.1% | 1/8 |
+| vf22 | off (think.py) | 736 | 36 | 4.9% | 2/34 |
+| vf24b | off (think.py) | 662 | 46 | 6.9% | 8/46 |
+
+In vf24b, 31 of the 46 wrote `「fix-issue」` and 35 came from specify1, mostly think.py calls whose args held a
+script or skill name. The value is right and only its delimiter is wrong: the model sampled 「 (or a backtick, or
+`":"`) where the `<|"|>` token goes. All agents sampled at temperature 1.0 (the vendor's setting, checklist B14), where a
+token with a few percent of the probability is drawn a few percent of the time, once per string value, three string
+values per call. Once in the history, the slip is copied more often (8/46 after a malformed call against 38/469 after
+a good one). The ADK refuses such a call before any script runs, so no script can repair it, and an alias cannot be
+declared (ADK accepts only the kebab-case name of the skill's directory).
+
+Change: the think build (`tools/make_fast.py --think`) samples every agent at temperature 0.5, keeping top_k 64 and
+top_p 0.95. Dividing the logits by 0.5 squares the probability ratios: a token with a tenth of the delimiter's
+probability gets about a hundredth. Thinking is off in this build, so B14's reason for the vendor setting (greedy
+decoding loops in thinking) applies less, and the same-call-three-times stop already ends a looping part. vf27 (vf26 plus
+this) measures it: malformed rate per call, loops (the same call repeated), resolved.
+
+| Item | Effect | Why |
+|---|---|---|
+| B4 call syntax | closer | the delimiter slips are sampling noise, which the lower temperature cuts |
+| B14 vendor decoding | farther, with a reason | measured: 5-7% malformed calls at 1.0 with thinking off; loops are watched in vf27 |
+| B12 contradictions | neutral | no text changes |
+
+Generic: a sampling setting for every agent; it does not depend on a task, repository or name.
