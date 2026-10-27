@@ -298,6 +298,18 @@ def start_watchdog(server, probe_every: int = 30, misses: int = 3):
                 server.stop()
             except Exception as e:  # noqa: BLE001
                 print('WATCHDOG: stop failed:', e, flush=True)
+            # vf24 (10-27): the restart failed with "Free memory on device cuda:0 (1.61/22.03 GiB)": the old engine and
+            # its tensor-parallel workers (grandchildren of the server, titled VLLM::EngineCore and VLLM::Worker_TP*)
+            # outlived it and held the GPUs, and the 24 tasks left ran without a model. They are killed, and the restart
+            # waits until the GPUs' memory is free
+            sh("pkill -9 -f '[V]LLM::' || true", timeout=30)     # ([V]: not the shell itself)
+            for _ in range(36):
+                used = [int(x) for x in sh('nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits',
+                                           timeout=30).split() if x.strip().isdigit()]
+                if used and max(used) < 2000:
+                    break
+                time.sleep(5)
+            print(f'WATCHDOG: GPU memory before the restart (MiB): {used}', flush=True)
             try:
                 server.start()
                 print('WATCHDOG: vLLM restarted', flush=True)
