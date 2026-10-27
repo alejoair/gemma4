@@ -905,3 +905,10 @@ estimate to 0.
 
 Generic: it changes how every agent reasons, for any task. The only valid test is the model: a Kaggle eval of this
 build on vf5's 30 tasks against vf21 (and against the fixes alone).
+
+**vf22 (Gemma on Kaggle, 10-27), with the audit fixes:** 10/30 judged resolved (vf21 8/30), median 83 s per task (264
+s), no task cut at 5 min (10), 4 empty patches (7). But the think script was mostly not used to think: of 350 think.py
+calls, 252 sent the call form's placeholder itself ('<your reasoning, in a few sentences>') and about 50 more another
+placeholder or the script's name; about 40 were real thoughts. So the model decided almost every step without any
+reasoning, and the gain in time came from the thinking being off. Malformed calls rose (36 against 16, mostly the
+skill name written 「fix-issue」). vf23 (the fixes with the native thinking) tells which change gave the result.
