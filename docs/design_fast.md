@@ -930,6 +930,14 @@ is gone, but think.py is still mostly called without reasoning: 247 of 312 calls
 runs, inside its gemma4 tool parser, on the model's answer to the specify window of `Node`: a reproducible trigger in
 the thinking-off build, which the scorer's vLLM would meet too.
 
+**Think, third version (10-27, the user's: "arregla que think.py reciba el razonamiento en args").** vf24b's
+traces show where the thought went: the good ones came as ['think.py', '<reasoning>'] and the empty ones as ['think.py']
+or ['fix-issue'] (args read as a command line that starts with the script's name). think.py now drops a leading script
+or skill name from args; the prompts show the think call again, with the reasoning as a sentence frame to complete
+('R<n> needs ...; the code shown does ... at ...; so I choose ..., because ...'), which think.py does not take as a
+thought when it comes back uncompleted; and its one explanation says where the thought goes. Checklist: W7 closer,
+B12 closer (the form, the step and the answer say the same), B8 neutral (the think form is back, one form).
+
 ### Call forms with skill_name and file_path first (10-27, the user's: "arregla las llamadas mal formadas «fix-issue»")
 
 Every malformed call of vf21, vf22 and vf23 (13, 35 and 8 in 30 tasks) broke `skill_name` or `file_path`

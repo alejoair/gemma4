@@ -197,14 +197,18 @@ if __name__ == '__main__':
 '''
 
 
-# vf22 (Gemma): 252 of 350 think.py calls sent the call form's placeholder itself; the call is described in words
-# only, with no form to copy (make_fast.py --think)
+# vf22 (Gemma): 252 of 350 think.py calls sent the call form's placeholder itself, so the form was dropped (v2).
+# vf24b: 226 of 312 calls then sent only the call's own values as args (['think.py'], ['fix-issue']): the model took args
+# for a command line that starts with the script's name, and the good thoughts came as ['think.py', '<reasoning>'].
+# v3: the form is back as a sentence to complete, with the reasoning as the only item (think.py also drops a leading
+# script or skill name, and says once how to send the thought)
+THINK_FRAME = 'R<n> needs ...; the code shown does ... at ...; so I choose ..., because ...'
 THINK_STEP = ("You have no hidden reasoning: you think by writing. Before a decision that needs thought (the "
-              "requirements, the places, what changes, the code to write, whether the patch is right), call "
-              "run_skill_script with skill_name fix-issue, file_path think.py and one item in args: your own "
-              "reasoning about this step, in a few sentences of your words (what in the window matters, the options, "
-              "the one you take and why). Name lines and names instead of copying code into it. Its answer repeats "
-              "your next call; then send the decision. Opening a window and replying done need no thought.")
+              "requirements, the places, what changes, the code to write, whether the patch is right), call think.py "
+              "with your reasoning as the only item of args: a few sentences of your own, completing the form below "
+              "(what the requirement needs, what the code shown does and where, what you choose and why). Name lines "
+              "and names instead of copying code. Its answer repeats your next call; then send the decision. Opening a "
+              "window and replying done need no thought.")
 
 
 THINK_ENTRY = '''"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)
@@ -233,6 +237,8 @@ def prompt(stage, script):
     lines += [f'{i}. {s}' for i, s in enumerate(steps, 1)]
     lines += [END.format(n=len(steps) + 1), '', 'Call forms (the values in angle brackets are placeholders):']
     lines += [FORM.format(args=','.join(Q.format(a) for a in f), script=script) for f in t['forms']]
+    if THINK:
+        lines.append(FORM.format(args=Q.format(THINK_FRAME), script='think.py'))
     lines += [f'<|tool_call>call:{tool}{{}}<tool_call|>' for tool in t.get('tools') or []]
     lines += ['', ERRORS, ISSUE]
     return '\n'.join(lines)

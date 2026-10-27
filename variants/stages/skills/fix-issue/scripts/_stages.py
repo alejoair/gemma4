@@ -3629,8 +3629,10 @@ def _no_thought(text):
     """A think.py item that holds no reasoning: a placeholder in angle brackets, the form's own words, a script name, or
     a few words."""
     t = text.strip().strip('`\'"「」')
+    frame = 'R<n> needs ...; the code shown does ... at ...; so I choose ..., because ...'
     return (bool(re.fullmatch(r'<[^<>]*>', t)) or len(t.split()) < 4 or t.endswith('.py')
-            or bool(re.fullmatch(r'(?i)\W*(your|my|the)\s+reasoning\b.{0,40}', t)))
+            or bool(re.fullmatch(r'(?i)\W*(your|my|the)\s+reasoning\b.{0,40}', t))
+            or difflib.SequenceMatcher(None, t, frame).ratio() > 0.8)          # the form's frame, not completed
 
 
 def main_think(argv):
@@ -3643,7 +3645,12 @@ def main_think(argv):
         print('Noted.\n\nNEXT: send your decision.')
         return
     st = _state.load('stages') or _new()
-    text = ' '.join(a for a in argv if a and a.strip()).strip()
+    # vf24b: the good thoughts came as ['think.py', '<reasoning>'] (args read as a command line): a leading script or
+    # skill name is not part of the thought
+    items = [a for a in argv if a and a.strip()]
+    while items and re.fullmatch(r'[\W]*(?:[\w-]+\.py|fix-issue)[\W]*', items[0].strip()):
+        items.pop(0)
+    text = ' '.join(items).strip()
     worker = st.get('last_worker')
     if worker:
         st.setdefault('wchars', {})[worker] = st.get('wchars', {}).get(worker, 0) + len(text) + 200
@@ -3657,9 +3664,10 @@ def main_think(argv):
         # The answer says so once; after that it only points to the decision (no loop of refusals, B5)
         st['think_empty'] = st.get('think_empty', 0) + 1
         _state.save('stages', st)
-        out = ('Nothing was thought: that is a placeholder, not your reasoning. Write what you think about this step '
-               '(what in the window matters, what you choose and why), or send your decision now.'
-               if st['think_empty'] <= 1 else 'Send your decision now.')
+        # vf24b: 226 of 312 calls sent only ['think.py'] or ['fix-issue']; the answer shows where the thought goes
+        out = ("Nothing was thought: args held no reasoning. The thought is the only item of args, in your own words: "
+               "['R1 needs ...; the code shown does ... at ...; so I choose ..., because ...'], completed. Or send "
+               "your decision now." if st['think_empty'] <= 1 else 'Send your decision now.')
     elif len(text) > THINK_LONG:
         out = ('Noted. (Keep each thought to a few sentences: the code is in the window, so name its lines instead of '
                'copying them.) Now send the decision it leads to.')
