@@ -1059,3 +1059,29 @@ temperature's known failure. Changes (vf28):
 | B4 call syntax | neutral | the 1.8% of vf25 is the reference again |
 
 Generic: a sampling setting and a loop stop for every agent; nothing depends on a task.
+
+### Short native thinking (10-28, the user's: "cómo arreglamos lo de thinking", then "prueba en kaggle")
+
+The two ways of thinking measured so far each failed in their own way:
+
+| | Native, budget 512-1024 (vf21, vf23) | Off, with think.py (vf22, vf24b, vf25, vf27) |
+|---|---|---|
+| Resolved | 8/30 | 9-11/30 |
+| Median per task | 237-264 s | 83-139 s |
+| Cut at 5 min | 9-10 | 0-2 |
+| Its failure | 42-58% of the time in thoughts that ran into the budget | thoughts sent as a call: empty (`['think.py']`), cut at max_output_tokens before the call closed (14 in vf25), loops (vf27) |
+
+The native budget is a safe limit: vLLM ends the thought and the model still writes its call. think.py has no limit
+but max_output_tokens, which loses the call. So variants/short (build: `tools/build.py <out> --variant
+stages,fast,short`) is the fast build (native thinking, no think.py, the reordered call forms) with every agent's
+thinking budget at 256 tokens (finish keeps 64): at most about 7 s of thought per turn instead of about 30 s. vf29
+measures it on 10 of vf5's tasks (the Kaggle GPU quota left before 10-31 does not cover 30), against vf25's result
+on the same tasks.
+
+| Item | Effect | Why |
+|---|---|---|
+| B4 call syntax | closer | no reasoning inside a call's args; the call forms stay reordered |
+| B14 vendor decoding | neutral | temperature 1.0, top_k 64, top_p 0.95 |
+| Thinking budget (the vf21 audit) | closer | a hard cap that cannot lose the call, a quarter of the old budget |
+
+Generic: a sampling setting for every agent; nothing depends on a task.
