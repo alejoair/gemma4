@@ -1092,3 +1092,9 @@ written as text (vf25: 6 on these tasks), no think.py calls to lose, malformed 3
 thoughts stayed short (median 521 characters, max 1,223). Ten tasks cannot tell 4 from 5; the result says the short
 native budget is as good as think.py at least, with fewer ways to fail, and needs the 30 tasks when the quota allows
 (10-31).
+
+vf29b (the same build on vf25's 30 tasks, 10-28): 10/30 against vf25's 11/30 (gained fastapi_14361, lost fastapi_5624
+and rich_3772), median 128 s against 139 s, 1 empty patch against 5, malformed calls 0.9% against 1.8%, calls written
+as text 2 against 14, 341 calls against 450. The resolved count is within one task, and every failure that think.py
+brought is gone or smaller, at fewer calls. Decision: the short native budget (variants/short) replaces think.py as
+the build to evaluate; think.py (variants/think) stays in the repository as the measured alternative.
