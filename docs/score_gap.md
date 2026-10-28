@@ -85,3 +85,31 @@ vf24b in rich_4075, vf25 in rich_3934). Our eval's watchdog kills and restarts v
 from the hang on every task would time out, and with a resolve rate near 10% a hang among the first tasks leaves
 nothing. Not proven: the scorer's logs are not visible, and it may also treat thinking_budget 0 differently. Either way
 a thinking-off build is not sent again; vf29b (native thinking on, budget 256) keeps the thinking on, as S13 did.
+
+## What hangs vLLM (10-28)
+
+Read in vLLM 0.19.1's `vllm/tool_parsers/gemma4_tool_parser.py` and reproduced with `tools/vllm_hang_check.py`
+(it runs the parser's own functions on call texts). In `_parse_gemma4_array`, an array item that does not start with
+the `<|"|>` delimiter is read as a bare value up to the next `,` or `]`. When that stop is a `]` inside the item's own
+text (`x[0]`, `lines[3]`, a list, a JSON-quoted string such as `"d[k]"`), the next pass starts on that `]`, reads an
+empty bare value without moving, and loops forever, appending empty items. The parser runs inside the API server, so
+the request never returns and every later request waits: in the scorer, which never restarts vLLM (adk_submission's
+`VllmServer` checks /health only at start), every remaining task times out.
+
+| Call text (inside `run_skill_script{...}`) | Result |
+|---|---|
+| `args:[<|"|>R1 needs x[0] here<|"|>]` | ok |
+| `args:[R1 needs a fix here]` (bare, no `]`) | ok |
+| `args:[R1 needs x[0] to change]` (bare, with `]`) | **hangs** |
+| `args:[<|"|>replace<|"|>,lines[3]]` (a bare item after a string) | **hangs** |
+| `args:[[<|"|>a]b<|"|>]]` (a nested array, `]` in a string) | **hangs** |
+| `args:["R1 needs d[k] set"]` (JSON quotes instead of the delimiter) | **hangs** |
+
+So the trigger is the model dropping the `<|"|>` delimiter on an `args` item whose text holds a `]`. The thinking-off
+builds made it likely: every thought went into `args` as long text with code and brackets, and their delimiter slips
+were 2-7% of the calls (vf22, vf24b, vf25 hung once in about 30 tasks each; S14 scored 0.00). With the native thinking
+on, reasoning stays in the thought channel and `args` holds names, sentences and code that the forms delimit (vf29 and
+vf29b: no hang in 40 tasks). What lowers the risk on our side: native thinking on; the call forms with every item
+delimited and skill_name/file_path first (malformed calls 0.9% in vf29b); no free text in `args` beyond what a step
+needs. The fix itself is vLLM's (the bare-value branch must advance past a `]` it cannot consume), so it is the hosts'
+to patch in the scorer.
