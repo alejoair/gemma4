@@ -39,9 +39,10 @@ FORM = ('<|tool_call>call:run_skill_script{{skill_name:<|"|>fix-issue<|"|>,file_
 Q = '<|"|>{}<|"|>'
 # 10-28 (vf22, vf24b, Gemma, thinking off): 5-7% of the calls lost the <|"|> delimiter around skill_name or file_path
 # ('「fix-issue」' 31 of 46 in vf24b), a single token sampled wrong at temperature 1.0 and copied later from the history
-# (docs/design_fast.md, "A lower temperature for the calls"). The think build samples at 0.5: a token with a tenth of
-# the delimiter's probability gets a hundredth of it; top_k and top_p stay the vendor's
-TEMPERATURE = 0.5 if THINK else 1.0
+# (docs/design_fast.md, "A lower temperature for the calls"). vf27 sampled the think build at 0.5: malformed calls rose
+# to 4.8% (vf25 at 1.0: 1.8%), repeated calls from 12 to 86 (one loop of 68) and resolved fell to 9/30 (B14). Back to
+# the vendor's 1.0
+TEMPERATURE = 1.0
 
 SKILL_NOTE = ('The skill fix-issue is already loaded: call its script directly with run_skill_script. The other skill '
               'tools (load_skill, load_skill_resource, list_skills) show only the scripts\' instructions and source, '

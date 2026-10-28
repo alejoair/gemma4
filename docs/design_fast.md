@@ -1025,3 +1025,37 @@ max_output_tokens would not help: the long thoughts are loops, and every 1,000 t
 | B12 contradictions | neutral | the prompt and think.py's answer give the same limit |
 
 Generic: a length limit for every agent's thoughts; nothing depends on a task.
+
+### vf27: the lower temperature failed; reverted, and a stop for empty thoughts (10-28)
+
+vf27 (think v3 + every agent at temperature 0.5) resolved 9/30 (vf25 11/30). The temperature did the opposite of what
+was expected:
+
+| | vf25 (1.0) | vf27 (0.5) |
+|---|---|---|
+| Malformed calls | 8 of 450 (1.8%) | 28 of 583 (4.8%) |
+| '「fix-issue」' | 4 | 1 |
+| Repeated identical calls | 12 | 86 |
+| think.py without reasoning | 22 | 127 |
+| Calls written as text (thought cut) | 14 | 9 |
+| Empty patches | 5 | 1 |
+
+The delimiter slips were not low-probability samples that a lower temperature removes: at 0.5 the model still closed
+strings with a backtick (`file_path:<|"|>think.py`,skill_name:`) and lost the call's structure, at a higher rate. The
+loops of B14 appeared instead: specify1 sent `['think.py']` 68 times in a row in fastapi_5624, each answered "Send your
+decision now." vf27 also changed think v2 to v3, so the two are not separated; the loop and the repeats are the
+temperature's known failure. Changes (vf28):
+
+- Temperature 1.0 again (the vendor's setting).
+- Three think.py calls in a row with no thought end the worker's part, as three identical calls already do (SWE-Gym's
+  "stuck in a loop"); a real thought or any decision resets the count. Replayed on a fastapi_12942 trace with an
+  inserted loop: the third empty call ends the part, no faults.
+- The 150-word limit on a thought (above) stays.
+
+| Item | Effect | Why |
+|---|---|---|
+| B14 vendor decoding | closer | back to the vendor's 1.0 after the measured loops |
+| B5 loops of refusals | closer | an empty-thought loop ends after three calls instead of running out the time |
+| B4 call syntax | neutral | the 1.8% of vf25 is the reference again |
+
+Generic: a sampling setting and a loop stop for every agent; nothing depends on a task.

@@ -3664,15 +3664,29 @@ def main_think(argv):
         # a few sentences>') and about 50 more another placeholder or the script's name: a turn each and no thought.
         # The answer says so once; after that it only points to the decision (no loop of refusals, B5)
         st['think_empty'] = st.get('think_empty', 0) + 1
+        run = st.setdefault('think_empty_run', {})
+        run[worker] = run.get(worker, 0) + 1
+        # vf27 (temperature 0.5): specify1 sent ['think.py'] 68 times in a row in fastapi_5624, each answered 'Send your
+        # decision now.'; three empty thoughts in a row end the part, like three identical calls (main_fast)
+        if worker and run[worker] >= 3:
+            _release(st, worker, 'stopped after three calls of think.py with no thought')
+            _state.save('stages', st)
+            print('This is the third call of think.py in a row with no thought in args, so your part ends here, and '
+                  'the next agent goes on with what is left.\n\n' + FAST_DONE)
+            return
         _state.save('stages', st)
         # vf24b: 226 of 312 calls sent only ['think.py'] or ['fix-issue']; the answer shows where the thought goes
         out = ("Nothing was thought: args held no reasoning. The thought is the only item of args, in your own words: "
                "['R1 needs ...; the code shown does ... at ...; so I choose ..., because ...'], completed. Or send "
                "your decision now." if st['think_empty'] <= 1 else 'Send your decision now.')
     elif len(text) > THINK_LONG:
+        st.get('think_empty_run', {}).pop(worker, None)
+        _state.save('stages', st)
         out = (f'Noted. (This thought had {len(text.split())} words; keep each one under 150: a longer one is cut off '
                'before the call ends and lost. Name lines instead of copying code.) Now send the decision it leads to.')
     else:
+        st.get('think_empty_run', {}).pop(worker, None)
+        _state.save('stages', st)
         out = 'Noted. Now send the decision it leads to.'
     print(f'{out}\n\n{nxt}')
 
@@ -3759,6 +3773,7 @@ def main_fast(stage, worker, argv):
             st['reqs'] = []
             st.get('wfinished', {}).pop(worker, None)
             st['asked'].pop('requirements', None)
+        st.get('think_empty_run', {}).pop(worker, None)     # a decision ends a run of empty thoughts (main_think)
         key = json.dumps([(cur or [None, None])[1], args])[:2000]     # the same call on the same item
         rep = st.setdefault('wrepeat', {}).get(worker) or ['', 0]
         rep = [key, rep[1] + 1] if rep[0] == key and first not in ('', 'open', 'start', 'next') else [key, 1]
