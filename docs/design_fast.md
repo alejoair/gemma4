@@ -1085,3 +1085,10 @@ on the same tasks.
 | Thinking budget (the vf21 audit) | closer | a hard cap that cannot lose the call, a quarter of the old budget |
 
 Generic: a sampling setting for every agent; nothing depends on a task.
+
+vf29 (10 tasks, 10-28): 4/10 resolved against vf25's 5/10 on the same tasks (gained fastapi_14361, lost rich_3043 and
+rich_3772), median 155 s against 194 s, 1 empty patch against 3. The failures that think.py brought are gone: no call
+written as text (vf25: 6 on these tasks), no think.py calls to lose, malformed 3 of 129 (2.3%, vf25 1.8%). Native
+thoughts stayed short (median 521 characters, max 1,223). Ten tasks cannot tell 4 from 5; the result says the short
+native budget is as good as think.py at least, with fewer ways to fail, and needs the 30 tasks when the quota allows
+(10-31).
