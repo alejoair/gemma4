@@ -75,3 +75,13 @@ statements are 64-354 characters, mostly a PR title and "Fixes #N".
 - Repair's retry on the main place fired in 3 tasks (fastapi_13207, fastapi_14372, rich_3772). None of them produced a diff from it.
 
 **How much it matters:** S1 resolved only 1 of these 11 tasks (rich_4075). Its patches for the other 10 fail as well. Of S1's three tasks that vf5 does not resolve, two are tasks where vf5 wrote a wrong patch (rich_3718 and rich_3043). Removing the empty patches alone would recover about 1 task against S1.
+
+## S14: 0.00 with the native thinking off (10-28)
+
+S14 (vf22: thinking_budget 0, think.py) scored 0.00, against 10/30 on our Kaggle eval and S13's 0.10 with the thinking
+on. No error was reported; the score took about 20 h. The likeliest cause is vLLM 0.19.1's gemma4 tool parser hang
+(`_parse_gemma4_array`, a loop on the model's output): the thinking-off builds hit it once in about 30 tasks (vf22 and
+vf24b in rich_4075, vf25 in rich_3934). Our eval's watchdog kills and restarts vLLM; the scorer has no such watchdog, so
+from the hang on every task would time out, and with a resolve rate near 10% a hang among the first tasks leaves
+nothing. Not proven: the scorer's logs are not visible, and it may also treat thinking_budget 0 differently. Either way
+a thinking-off build is not sent again; vf29b (native thinking on, budget 256) keeps the thinking on, as S13 did.
