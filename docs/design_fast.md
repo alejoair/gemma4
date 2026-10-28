@@ -1003,3 +1003,25 @@ this) measures it: malformed rate per call, loops (the same call repeated), reso
 | B12 contradictions | neutral | no text changes |
 
 Generic: a sampling setting for every agent; it does not depend on a task, repository or name.
+
+### vf25: the reordered forms work; thoughts cut at max_output_tokens (10-28)
+
+vf25 (think v2 plus skill_name and file_path first) resolved 11/30, like vf24b. Malformed calls fell from 46 of 662
+(6.9%) to 8 of 450 (1.8%), so the call-form reorder did what it was meant to do. vf27 adds a temperature of 0.5 on top.
+
+The traces also show a second kind of lost call, which the malformed count did not include: 14 calls written as text
+in vf25 (vf24b 12, vf22 7). Each was a think.py call whose reasoning ran 1,500-2,500 words, copying code and tracing it
+("Wait, ..."), until max_output_tokens cut it before the call closed. vLLM then returns the text as a plain answer, the
+ADK takes it as the agent's final answer, and the part ends with its decision never sent. The accepted thoughts had a
+median of 90 words (75% under 140). Change: the think step in every prompt gives a limit and its cost ("At most 150
+words: a longer thought is cut off before the call ends, so the call is lost and your part ends with nothing done"),
+and think.py's answer to a thought over 1,000 characters gives its word count and the same reason. Raising
+max_output_tokens would not help: the long thoughts are loops, and every 1,000 tokens costs about 25 s.
+
+| Item | Effect | Why |
+|---|---|---|
+| B4 call syntax | closer | a call that cannot close is a malformed call; the limit keeps it short enough to close |
+| A-length (long outputs drift) | closer | a bound with its reason, in the prompt and in the feedback |
+| B12 contradictions | neutral | the prompt and think.py's answer give the same limit |
+
+Generic: a length limit for every agent's thoughts; nothing depends on a task.

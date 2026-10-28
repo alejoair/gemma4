@@ -208,12 +208,16 @@ if __name__ == '__main__':
 # v3: the form is back as a sentence to complete, with the reasoning as the only item (think.py also drops a leading
 # script or skill name, and says once how to send the thought)
 THINK_FRAME = 'R<n> needs ...; the code shown does ... at ...; so I choose ..., because ...'
+# 10-28 (vf25): 14 think.py calls in 30 tasks ran 1,500-2,500 words and were cut at max_output_tokens before the
+# call closed; the harness took the cut text as the agent's final answer and the part ended. Accepted thoughts: median
+# 90 words, 75% under 140
 THINK_STEP = ("You have no hidden reasoning: you think by writing. Before a decision that needs thought (the "
               "requirements, the places, what changes, the code to write, whether the patch is right), call think.py "
               "with your reasoning as the only item of args: a few sentences of your own, completing the form below "
               "(what the requirement needs, what the code shown does and where, what you choose and why). Name lines "
-              "and names instead of copying code. Its answer repeats your next call; then send the decision. Opening a "
-              "window and replying done need no thought.")
+              "and names instead of copying code. At most 150 words: a longer thought is cut off before the call ends, "
+              "so the call is lost and your part ends with nothing done. Its answer repeats your next call; then send "
+              "the decision. Opening a window and replying done need no thought.")
 
 
 THINK_ENTRY = '''"""(To the model: call this script with run_skill_script; reading its source does not help with the task.)

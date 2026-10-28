@@ -3622,7 +3622,8 @@ def _view(root, st, stage, worker, target):
     return HANDLERS[handler](root, st, [] if handler == 'requirements' else ['open'])
 
 
-THINK_LONG = 1500       # characters of one thought past which the answer asks for shorter ones
+THINK_LONG = 1000       # characters of one thought (about 150 words, the prompt's limit) past which the answer asks
+                        # for shorter ones
 
 
 def _no_thought(text):
@@ -3669,8 +3670,8 @@ def main_think(argv):
                "['R1 needs ...; the code shown does ... at ...; so I choose ..., because ...'], completed. Or send "
                "your decision now." if st['think_empty'] <= 1 else 'Send your decision now.')
     elif len(text) > THINK_LONG:
-        out = ('Noted. (Keep each thought to a few sentences: the code is in the window, so name its lines instead of '
-               'copying them.) Now send the decision it leads to.')
+        out = (f'Noted. (This thought had {len(text.split())} words; keep each one under 150: a longer one is cut off '
+               'before the call ends and lost. Name lines instead of copying code.) Now send the decision it leads to.')
     else:
         out = 'Noted. Now send the decision it leads to.'
     print(f'{out}\n\n{nxt}')
