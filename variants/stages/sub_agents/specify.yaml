@@ -3,4 +3,4 @@ description: Writes one sentence of what must change in one place of the code, n
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include specify.md
 skills: [skills/fix-issue]
-generate_content_config: !include sampling_2k.yaml
+generate_content_config: !include sampling_1k.yaml

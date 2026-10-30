@@ -40,9 +40,15 @@ Source: the competition pages and `HARNESS_README.md` in the competition data
 - **The only valid test is a run against the model, monitored and analysed step by step** through the gateway API
   (local 12B) or the Kaggle traces (31B). Dry runs and replays catch script errors; they are not evidence that a change
   works. (The user removed the unit tests on 2026-10-09.)
+- **Every change to the system must be generic** (the user's, 10-15): it must hold for any repository and any issue, never a rule for one task, library or name seen in a trace (the trace is only the evidence). Each change's checklist table says why it is generic.
 - Never remove a piece of the design because it has few or no calls: find out why it is not used and wire it.
 - Record design decisions and literature in the repository (this file and `docs/`), never only in the scratchpad.
 - Every evaluated version (Kaggle eval run V, submission S) gets a row in `VERSIONS.md` as soon as it finishes.
+- **Model runs use only the competition's model on the Colab vLLM** (the user's, 2026-10-15): `tools/colab_vllm.ipynb`
+  on a Colab Pro G4 (RTX PRO 6000 Blackwell, 96 GB), vLLM 0.19.1 with the harness's own options (gemma4 parsers,
+  `--reasoning-config` with `<|channel>`/`<channel|>`), reached through `tools/step_gate.py --stream-upstream
+  --api-key-file <scratchpad key>`. Not the local llama.cpp server, not Haiku. The URL and key are given by the user
+  each session; the key stays in the scratchpad.
 - No Kaggle competition submission unless the user asks.
 - Never use Claude's outputs to train Gemma.
 - No model identifiers in commits, PRs or code. Commit and push after each round of changes
@@ -81,7 +87,7 @@ its own class as code) and the code that calls it, then what the change must do 
 sentences about the behaviour, its example, an existing test that uses the code), then the answer forms and NEXT.
 Questions are not answered in the edit step. Code is named by its qualified name; old ids (C2, P1) are still read.
 
-**Budget and generation:** `eval_config.yaml` 240 s per command / 60 min per task (7 min until 10-12; raised at the user's request: V17 lost 3 of 4 tasks to the 7-min stop while the editor was still working); tool calls 200 and turns 300, not binding (since
+**Budget and generation:** `eval_config.yaml` 600 s per command / **5 min per task since 10-15** (the user's: S6, with 60 min, finished without a score, most likely past the 12 h; 7 min until 10-12, 60 min from 10-12 to 10-15); the stages route submits at 4 min 30 s (`BUDGET_S`); tool calls 200 and turns 300, not binding (since
 10-11, the user's: time is the competition's only real limit, 12 h for about 120 tasks); no limit of our own
 inside the script (the 340 s edit stop was removed on 10-11 at the user's request). Sampling per agent: the coordinator
 `configs/sampling.yaml` (temperature 0.2, top_p 0.95, max_output_tokens 4096, thinking 512); the agent_tool sub-agents
@@ -120,13 +126,18 @@ characters (the specifier's view at about 27,000).
   requirements quoted from the statement (never by a reproduction test, which is optional evidence), agents
   requirements / reproduce / locate / scope / specify / edit / review, the coordinator only routes. Designed, not built
   yet.
+- 10-26 (the user's): **a lazy repository map** (`_map.py`, `docs/design_fast.md`): every call rebuilt the index and
+  the impact table from all files (moto_5865: 130 s of script time per task; django 96 s). Now git grep names the files
+  a question needs, each file's record is kept on disk by its content, BM25's statistics are estimated, and the
+  scripts' bytecode is reused (`_boot.py`): moto 8 s, django 11 s, the impact table's answers identical.
 
 ## Results so far
 
 All rows are in `VERSIONS.md`. Kaggle evals (the 31B on the same 10 dev tasks): V2 1/10, V3 3/10, V4 1/10, V6 2/10,
 V8 harness error, V10 1/10 (rich_3006 in almost every run). Local 12B batches with step.py: 1/10 and 1/10.
 Competition submissions: S1 0.12 (sample agent), S2 0.05, S3 0.05, **S4 (= V3) 0.13** (scored 10-10), S5 (step
-procedure v1, commit bea4f0f, 5-min budget) **0.03** (checked 10-13).
+procedure v1, commit bea4f0f, 5-min budget) **0.03** (checked 10-13). S6 (microtasks, 60 min) finished without a
+score. **S7 (= V25, the stages build, 5 min) 0.06** (checked 10-16; V25 judged 4/10 on the Kaggle eval). **S8 (= vf5, the fast build, 5 min) 0.06** (checked 10-18; vf5 judged 12/30 on the Kaggle eval). **S9 (= vf11, vf5's specify plus the generic-repository fixes) 0.05** (checked 10-19); **S13 (= vf21, the lazy repository map) 0.10** (checked 10-27). **S14 (= vf22, native thinking off with think.py, plus the audit fixes) 0.00** (checked 10-28; likely the vLLM tool-parser hang that thinking-off builds hit, with no watchdog in the scorer); the gap between the internal eval and the leaderboard is in `docs/score_gap.md`.
 
 Latest (2026-10-09): V11 (before the D3 redesign) 1/10, 22% malformed calls; V12 (D3 redesign) 1/10, 35%; V13 invalid
 (vLLM froze mid-run); V13b (all checklist fixes, names, new prompt, `file_path step.py`) 1/10, **4% malformed calls**,
@@ -140,12 +151,23 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
 ## Repository map
 
 - `agent/`: the submission (above).
+- `tools/colab_vllm.ipynb` (10-15): the competition's model and vLLM (0.19.1, the gemma4 parsers) on a Colab Pro GPU,
+  served through a Cloudflare quick tunnel with a key; `tools/step_gate.py --stream-upstream --api-key-file <file>`
+  reaches it (a quick tunnel cuts a response whose first byte takes over 100 s). The tunnel's domain must be in the
+  environment's allowed domains. To restart vLLM there, kill its engine too (`pkill -9 -f 'VLLM::EngineCore'`, then
+  wait for the VRAM to drop): `proc.kill()` leaves the engine holding 91 GB and the new server fails (10-15). Stopping a
+  cell can kill the tunnel or vLLM started from that kernel; the repository's notebook starts both in new sessions.
+- `tools/swegym.py` (10-21, the user's): SWE-Gym's tasks (Hugging Face, Lite 230 / full 2,438, 11 repositories) as a
+  second task set in the competition's data layout (tasks.jsonl, snapshots/), with one venv per repository and version
+  for the subprocess sandbox; run local_eval/judge with that venv's Python. 39 Lite tasks score here (moto 35,
+  conan 4); the list and why the other repositories do not: `docs/swegym.md`.
 - `tools/build.py` (build + validate), `tools/bench_locate.py` (129-task localization benchmark; snapshots via
   `tools/fetch_snapshots.sh`).
 - `VERSIONS.md`: every eval run and submission.
 - `docs/llm_checklist.md`: the checklist; `docs/llm_strengths.md`, `docs/prompting_input.md`,
   `docs/prompting_feedback.md`: the literature behind it; `docs/audit_v10.md`: the critical audit of the V10 traces. `docs/prompt_audit.md`: every text the model reads
-  (ours, the ADK's, the harness's) and its problems.
+  (ours, the ADK's, the harness's) and its problems. `docs/prompt_audit_stages.md`: the same for the stages build, with the
+  checklist applied item by item (10-15).
 - `docs/design_single.md`: the design method (HTA → function allocation → workflow vs agent → detailed design), design
   v1, its verification and the local batches. `docs/scripts_spec.md`: what each script must do, with the literature
   per script. `docs/literature.md`: the 31B's failures in V1–V6 with the techniques from the literature, and the papers
@@ -170,7 +192,7 @@ The gaps of the current design are listed in `docs/llm_checklist.md` (its "Check
    monitor.
 7. Analyse each finished task (result, calls, wasted calls and their cause, the fix) and record it in
    `docs/design_single.md`.
-8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
+8. Kaggle eval: copy the build to `scratchpad/ds3/v<N>` and `tools/{kaggle_eval,judge,eval_env,hermetic,journals}.py` to `scratchpad/ds3/bench/`, `kaggle datasets version -p ds3 -r zip`, wait for "ready",
    set `SUBMISSION` in `scratchpad/kn_single*/run.py`, `kaggle kernels push`. Outputs: `kaggle kernels output`.
    Traces: `scratchpad/trace_brief.py`, `trace_stats.py`.
 

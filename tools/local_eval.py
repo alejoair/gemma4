@@ -5,6 +5,9 @@ with the model served by the gateway instead of a vLLM server started here.
 
   python tools/local_eval.py --submission <dir> --data <competition data dir> --tasks rich_3006 --out <dir>
       [--model gemma-26b] [--api-base https://llm.rayflow.dev/v1]
+  python tools/local_eval.py ... --screen 30 --exclude <ids> --fetch-snapshots --screen-only
+      chooses 30 tasks this environment can score (tools/judge.py screen), downloading missing snapshots with the
+      kaggle CLI; the list goes to <out>/screen.csv and <out>/screened.txt
 
 <data> holds tasks.jsonl, snapshots/<task>.tgz and wheels/ (tools/fetch_snapshots.sh, kaggle competitions download).
 Each task's patch goes to <out>/patch_<task>.diff, the harness logs and traces to <out>/results/.
@@ -19,6 +22,8 @@ import shutil
 import time
 from pathlib import Path
 
+import journals  # noqa: E402  (tools/journals.py)
+
 COMPACTION_THRESHOLD = 14336
 DECLARED = 'gemma-4-31b-it-qat-w4a16-ct'
 
@@ -27,7 +32,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--submission', type=Path, required=True)
     ap.add_argument('--data', type=Path, required=True)
-    ap.add_argument('--tasks', required=True, help='comma-separated instance ids')
+    ap.add_argument('--tasks', default='', help='comma-separated instance ids')
+    ap.add_argument('--exclude', default='', help='comma-separated instance ids never chosen (with --screen)')
+    ap.add_argument('--screen', type=int, default=0,
+                    help='choose this many tasks that can be scored here (judge.screen), from every task not excluded')
+    ap.add_argument('--screen-seed', type=int, default=1)
+    ap.add_argument('--screen-workers', type=int, default=3)
+    ap.add_argument('--screen-only', action='store_true', help='stop after choosing the tasks')
+    ap.add_argument('--fetch-snapshots', action='store_true',
+                    help='download a missing snapshot with the kaggle CLI; a screened task not chosen loses it again')
+    ap.add_argument('--drop-snapshots', action='store_true', help="delete each task's snapshot once it is judged")
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--model', default='gemma-26b', help='the model name the gateway serves')
     ap.add_argument('--api-base', default='https://llm.rayflow.dev/v1')
@@ -84,9 +98,11 @@ def main() -> None:
     ev = cfg_y.get('evaluation', cfg_y)
     limits, constraints = build_submission_limits()
     tasks_path = args.data / 'tasks.jsonl'
+    all_tasks = load_tasks(tasks_path)
     wanted = [x.strip() for x in args.tasks.split(',') if x.strip()]
-    tasks = [t for t in load_tasks(tasks_path) if t.instance_id in wanted]
+    tasks = [t for t in all_tasks if t.instance_id in wanted]
     assert len(tasks) == len(wanted), f'missing tasks: {set(wanted) - {t.instance_id for t in tasks}}'
+    assert tasks or args.screen, 'give --tasks or --screen'
     results_dir = args.out / 'results'
     config = EvalConfig(
         tasks_path=tasks_path, snapshots_dir=args.data / 'snapshots', results_dir=results_dir,
@@ -96,23 +112,59 @@ def main() -> None:
         max_turns=int(ev['max_turns']) if ev.get('max_turns') is not None else None,
         limits=limits, generation_constraints=constraints,
         context_cache_config=ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10),
-        events_compaction_config=EventsCompactionConfig(compaction_interval=15, overlap_size=2,
+        events_compaction_config=EventsCompactionConfig(compaction_interval=5, overlap_size=2,
                                                         token_threshold=COMPACTION_THRESHOLD, event_retention_size=5),
         wheels_dir=args.data / 'wheels', verbose=True,
     )
     evaluator = Evaluator(config)
+    judge_cache = args.data / 'judge_cache'
+    snaps = args.data / 'snapshots'
+    fetched: set[str] = set()
+
+    def fetch(task):
+        if (snaps / f'{task.instance_id}.tgz').exists():
+            return
+        import subprocess
+        subprocess.run(['kaggle', 'competitions', 'download', 'gemma-4-developer-agent', '-f',
+                        f'snapshots/{task.instance_id}.tgz', '-p', str(snaps), '-q'], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        fetched.add(task.instance_id)
+
+    def drop(task):
+        (snaps / f'{task.instance_id}.tgz').unlink(missing_ok=True)
+
+    if args.screen:
+        excluded = {x.strip() for x in args.exclude.split(',') if x.strip()}
+        cands = judge.screen_order([t for t in all_tasks if t.instance_id not in excluded], args.screen_seed)
+        tasks, srows = judge.screen(evaluator, cands, args.screen, judge_cache, workers=args.screen_workers,
+                                    prepare=fetch if args.fetch_snapshots else None,
+                                    discard=(lambda t: t.instance_id in fetched and drop(t)) if args.fetch_snapshots else None)
+        with open(args.out / 'screen.csv', 'w', newline='') as sf:
+            sw = csv.DictWriter(sf, list(srows[0]) if srows else ['task_id'])
+            sw.writeheader()
+            sw.writerows(srows)
+        (args.out / 'screened.txt').write_text(','.join(t.instance_id for t in tasks) + '\n', encoding='utf-8')
+        print('== SCREENED', ','.join(t.instance_id for t in tasks), flush=True)
+        if args.screen_only:
+            return
     fields = ['task_id', 'resolved', 'judged', 'official_feasible', 'f2p', 'f2p_failing', 'p2p_broken',
               'required_failing', 'flaky', 'judge_note', 'test_exit_code', 'patch_chars', 'tool_calls', 'llm_calls',
               'duration_s', 'error']
     rows = []
-    judge_cache = args.data / 'judge_cache'
     with open(args.out / 'run.csv', 'w', newline='') as fh:
         wr = csv.DictWriter(fh, fields)
         wr.writeheader()
         for i, task in enumerate(tasks, 1):
             print(f'== TASK {task.instance_id} {time.strftime("%H:%M:%S", time.gmtime())} UTC', flush=True)
+            if args.fetch_snapshots:
+                fetch(task)
             mark = judge.capture_mark()
+            started = time.time()
             r = asyncio.run(evaluator.evaluate_task(task=task, task_index=i, total_tasks=len(tasks)))
+            # the skill's journal, whole answers of every call (the trace loses parallel workers' answers)
+            journals.copy(results_dir / 'traces' / f'trace_{task.instance_id}.json',
+                          args.out / f'journal_{task.instance_id}.jsonl', since=started - 5,
+                          root=os.environ.get('SWE_STATE_ROOT', '/tmp'))
             row = dict(task_id=task.instance_id, resolved=int(bool(r.resolved)), test_exit_code=r.test_exit_code,
                        patch_chars=len(r.agent_patch or ''), tool_calls=r.tool_calls, llm_calls=r.total_llm_calls,
                        duration_s=round(r.duration_seconds, 1), error=(r.error_message or '')[:300])
@@ -131,6 +183,8 @@ def main() -> None:
                 print(f'== JUDGED {task.instance_id}: {judge.short(v)}', flush=True)
             except Exception as e:  # noqa: BLE001
                 row.update(judged=f'judge error: {type(e).__name__}: {e}'[:200])
+            if args.drop_snapshots:
+                drop(task)
             rows.append(row)
             wr.writerow(row)
             fh.flush()

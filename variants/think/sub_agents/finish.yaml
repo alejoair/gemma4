@@ -1,0 +1,8 @@
+name: finish
+description: Submits the patch.
+model: gemma-4-31b-it-qat-w4a16-ct
+include_contents: none
+instruction: !include finish.md
+tools:
+  - submit_patch
+generate_content_config: !include sampling_finish.yaml

@@ -1,5 +1,5 @@
 name: issue_fixer
-description: Fixes the issue by routing it through seven agents, one responsibility each, in the order the fix-issue script gives.
+description: Fixes the issue by routing it through six agents, one responsibility each, in the order the fix-issue script gives.
 model: gemma-4-31b-it-qat-w4a16-ct
 instruction: !include prompts/coordinator.md
 tools:
@@ -12,8 +12,6 @@ tools:
       config_path: sub_agents/reproduce.yaml
   - agent_tool:
       config_path: sub_agents/locate.yaml
-  - agent_tool:
-      config_path: sub_agents/scope.yaml
   - agent_tool:
       config_path: sub_agents/specify.yaml
   - agent_tool:

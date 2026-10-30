@@ -80,3 +80,29 @@ Sources: [Liu et al. 2025](https://arxiv.org/pdf/2509.13941) · [trajectory stud
 - **SoRFT** ([arXiv 2502.20127](https://arxiv.org/pdf/2502.20127)): fine-tuning per subtask (localization, editing).
 
 Most numbers come from abstracts and summaries; check them in the PDFs before citing them in the paper. On 2026-10-09 about 40 of the papers were read in full (method and results); the techniques, numbers and gaps per script are in `docs/scripts_spec.md`, and the claims above that the PDFs contradicted were corrected.
+
+## SWE-Gym (Pan, Wang, Neubig et al., ICML 2025; arXiv 2412.21139), read 10-21
+
+**The environment.** SWE-Gym has 2,438 real tasks from 11 Python repositories, kept apart from SWE-bench's repositories. Each task has the repository at the issue's commit, an executable environment (Docker images, 2.6 GB each), unit tests and the issue's text.
+- A task is kept only when the human patch passes more tests than the original code.
+- Building the environments took about 200 hours of manual dependency setup.
+- SWE-Gym Lite is a subset of 230 easier tasks.
+
+**Two scaffolds.** OpenHands (a free agent with a terminal and an editor) and MoatlessTools (a workflow of fixed stages that narrows the actions and shortens the horizon, as our fast build does).
+
+**Training.** Rejection sampling:
+- 491 successful trajectories from GPT-4o and Claude 3.5 Sonnet (about 19 turns and 18.6k tokens each);
+- fine-tuning of Qwen2.5-Coder 7B, 14B and 32B.
+
+Results:
+- 32B with OpenHands: 7.0% → 20.6% on SWE-bench Verified.
+- Fine-tuning reduced "stuck in a loop" (the same action three turns in a row, about 29% of the zero-shot 32B's runs on Verified) and empty patches.
+- Self-improvement on the model's own trajectories hurt with OpenHands (15.3% → 8.7%) and helped only the 7B with MoatlessTools.
+
+**Verifier.** A 32B model reads a trajectory and answers YES/NO. Best-of-K over sampled runs: Verified 20.6% (K=1) → 32.0% (K=16).
+
+**For this project:**
+- Its tasks come from repositories other than fastapi, rich, requests and httpx. That is the held-out set `docs/score_gap.md` asks for. Running them needs each repository's environment (their images, or our own setup per repository).
+- Best-of-K with a verifier needs K runs per task. Our 5 minutes per task leave no room for it.
+- Its trajectories include Claude's. The project rule is never to train Gemma on Claude's outputs, so only trajectories from other sources, or Gemma's own, could be used, and Gemma's own did not help OpenHands.
+- MoatlessTools supports our design choice: a staged workflow for small models.

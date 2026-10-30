@@ -16,20 +16,31 @@ TIMEOUT = 20
 MAX_OUT = 900
 
 
+# Modules at the top of a repository that run its tooling, not its code (build hooks, task runners)
+TOOL_MODULES = {'setup', 'conftest', 'noxfile', 'fabfile', 'tasks', 'dodo', 'pavement', 'manage', 'versioneer',
+                'hatch_build', 'pdm_build', 'build', 'make', 'runtests', 'run_tests', 'bootstrap', 'release'}
+
+
 def _packages(root):
-    """The repository's top-level importable names (src/ layout included)."""
-    out = set()
-    for base in (root, os.path.join(root, 'src')):
-        try:
-            for name in os.listdir(base):
-                p = os.path.join(base, name)
-                if name.startswith(('.', '_')) or name in ('tests', 'test', 'docs', 'docs_src', 'scripts'):
-                    continue
-                if os.path.isdir(p) and os.path.isfile(os.path.join(p, '__init__.py')):
-                    out.add(name)
-        except OSError:
-            pass
-    return out
+    """The repository's top-level importable names, from each of its import roots (src/, lib/ ... layouts): its
+    packages (namespace packages too) and its top-level modules (audit 10-18 #19: a single-module project never matched
+    the statement's example). A module at the repository root beside a package is tooling (setup.py, pdm_build.py)
+    unless the packaging files declare it."""
+    declared = _repo.declared_packages(root)
+    packages, modules = set(), {}
+    for rel in _repo.iter_py(root, docs=False):
+        mod = _repo.module_name(root, rel)
+        head = mod.split('.')[0]
+        # gk15 (rich_3894): 'benchmarks' (asv's) was named as the repository's package next to rich
+        if not head or head.startswith(('.', '_')) or head in _repo.TEST_DIRS or _repo.is_aux_name(head, root) or \
+                head in ('tools', 'tasks', 'site'):
+            continue
+        if _repo.in_package(root, rel):
+            packages.add(head)
+        elif '.' not in mod:
+            modules[head] = '/' in rel             # src/name.py, not name.py at the repository root
+    return packages | {m for m, below in modules.items() if m not in packages and m not in TOOL_MODULES and (
+        below or not packages or _repo._norm(m) in declared)}
 
 
 def find(root, text):
@@ -59,13 +70,14 @@ def run(root, code):
     path = _state.path('example.py')
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write(code + '\n')
+    limit = _tests._budget(TIMEOUT)
     try:
         p = subprocess.run([sys.executable, '-c', 'import runpy, sys; runpy.run_path(sys.argv[1], run_name="example")',
                             path], cwd=_state.directory(), env=_tests._env(root), capture_output=True, text=True,
-                           timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+                           timeout=limit, stdin=subprocess.DEVNULL)
         out, failed = (p.stdout + p.stderr).strip(), p.returncode != 0
     except subprocess.TimeoutExpired:
-        out, failed = f'(stopped after {TIMEOUT} s)', True
+        out, failed = f'(stopped after {limit:.0f} s)', True
     except OSError as e:
         out, failed = f'(could not run: {e})', True
     out = out.replace(_state.directory() + os.sep, '').replace(root + os.sep, '')

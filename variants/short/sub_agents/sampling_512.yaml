@@ -1,0 +1,8 @@
+# variants/short (10-28, after vf21-vf27): native thinking capped at 256 tokens; docs/design_fast.md, "Short native thinking"
+temperature: 1.0
+top_k: 64
+top_p: 0.95
+max_output_tokens: 2048
+thinking_config:
+  thinking_budget: 256
+  include_thoughts: true

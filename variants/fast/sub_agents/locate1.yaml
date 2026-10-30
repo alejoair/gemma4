@@ -1,0 +1,9 @@
+name: locate1
+description: Chooses where in the code the behaviour of a requirement is decided.
+model: gemma-4-31b-it-qat-w4a16-ct
+# a fresh context per stage agent (docs/design_fast.md): its instruction, the previous agent's last
+# message and its own calls
+include_contents: none
+instruction: !include locate1.md
+skills: [skills/fix-issue]
+generate_content_config: !include sampling_512.yaml

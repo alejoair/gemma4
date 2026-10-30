@@ -1,0 +1,41 @@
+{
+ "task": "rich_3934",
+ "note": "empty in vf4; the reference places are located (the step is tested alone)",
+ "feasible_from_statement": false,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "empty live",
+      "A Live display behaves correctly when what it renders is empty."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "Live.stop",
+      "LiveRender"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}

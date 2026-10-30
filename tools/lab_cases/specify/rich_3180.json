@@ -1,0 +1,41 @@
+{
+ "task": "rich_3180",
+ "note": "empty in vf4; the reference places are located (the step is tested alone)",
+ "feasible_from_statement": true,
+ "agents": [
+  {
+   "agent": "requirements",
+   "calls": [
+    [
+     "req.py",
+     [
+      "Update wrapping logic to fix issues with CJK charcters disappearing when the \"fold\" location sat *within* a double-width character.",
+      "CJK characters should not disappear when the fold location is within a double-width character."
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "locate1",
+   "calls": [
+    [
+     "locate1.py",
+     [
+      "open"
+     ]
+    ],
+    [
+     "locate1.py",
+     [
+      "chop_cells",
+      "divide_line"
+     ]
+    ]
+   ]
+  },
+  {
+   "agent": "specify1",
+   "context": "[requirements] said: done"
+  }
+ ]
+}
